@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbaYa Track - Network Hub</title>
+<style>
+  body { background: #0f0e0d; color: #f0ede8; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .hub { background: #1a1917; border: 1px solid rgba(255,255,255,0.08); padding: 40px; border-radius: 20px; text-align: center; max-width: 400px; width: 100%; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+  .icon { font-size: 48px; margin-bottom: 20px; }
+  h1 { font-size: 24px; margin: 0 0 8px 0; font-weight: 800; letter-spacing: -0.5px; }
+  p { color: #9c9890; font-size: 14px; margin-bottom: 30px; }
+  .btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 18px; margin-bottom: 12px; border-radius: 12px; font-size: 16px; font-weight: 700; cursor: pointer; text-decoration: none; transition: all 0.2s; box-sizing: border-box; }
+  .btn-kiosk { background: #3b82f6; color: #fff; border: none; }
+  .btn-kiosk:hover { background: #2563eb; transform: translateY(-2px); }
+  .btn-dash { background: #242220; color: #fff; border: 1px solid rgba(255,255,255,0.1); }
+  .btn-dash:hover { background: #2e2c29; border-color: rgba(255,255,255,0.2); transform: translateY(-2px); }
+  .status { font-size: 11px; color: #22c55e; margin-top: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+  .dot { width: 6px; height: 6px; background: #22c55e; border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 70% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+</style>
+</head>
+<body>
+<div class="hub">
+  <div class="icon">&#128300;</div>
+  <h1>AbaYa Hub Node</h1>
+  <p>Connected to Local Area Network. Select connection protocol below.</p>
+  
+  <a href="/kiosk.html" class="btn btn-kiosk">&#128241; Open Floor Kiosk</a>
+  <a href="/dashboard.html" class="btn btn-dash">&#128200; Open CEO Dashboard</a>
+  
+  <div class="status"><div class="dot"></div> Server Online & Broadcast Active</div>
+</div>
+</body>
+</html>

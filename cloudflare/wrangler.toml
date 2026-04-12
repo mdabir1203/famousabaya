@@ -1,0 +1,30 @@
+name = "abaya-track"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+FACTORY_TZ = "Asia/Dubai"
+
+# ─── Environment Variables (set via `wrangler secret put`) ───────────────────
+# INGEST_SECRET  — shared secret the factory server sends with every POST
+# CEO_TOKEN      — password the CEO enters to access the dashboard
+
+# ─── D1 Database ─────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding  = "DB"
+database_name = "abaya-db"
+database_id   = "YOUR_D1_DATABASE_ID"   # replace after: wrangler d1 create abaya-db
+
+# ─── R2 Bucket (for shift PDF exports) ───────────────────────────────────────
+[[r2_buckets]]
+binding     = "EXPORTS"
+bucket_name = "abaya-exports"
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
+# After deploying, map these in the Cloudflare dashboard:
+# kiosk.yourdomain.com       → (served by local machine via cloudflared)
+# dashboard.yourdomain.com   → abaya-track worker
+
+[triggers]
+crons = ["0 18 * * *"]   # Auto-send EOD shift summary every day at 6pm factory time

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbaYa Track — CEO Dashboard</title>
+<style>
+:root {
+  --bg:#0f0e0d; --s1:#1a1917; --s2:#242220; --s3:#2e2c29;
+  --bd:rgba(255,255,255,0.08); --bd2:rgba(255,255,255,0.16);
+  --tx:#f0ede8; --tx2:#9c9890; --tx3:#6b6760;
+  --gr:#22c55e; --grb:rgba(34,197,94,0.12);
+  --rd:#ef4444; --rdb:rgba(239,68,68,0.12);
+  --bl:#3b82f6; --blb:rgba(59,130,246,0.15);
+  --am:#f59e0b; --amb:rgba(245,158,11,0.12);
+  --pu:#a78bfa; --pub:rgba(167,139,250,0.12);
+  --fn:'SF Pro Display','Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh}
+
+/* Top Bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:11px 18px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:200}
+.tb-brand{display:flex;align-items:center;gap:10px}
+.tb-logo{width:32px;height:32px;background:linear-gradient(135deg,#d4a574,#a0785a);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.tb-name{font-size:15px;font-weight:600;letter-spacing:-.3px}
+.tb-sub{font-size:11px;color:var(--tx3)}
+.live-badge{display:flex;align-items:center;gap:5px;background:var(--rdb);color:var(--rd);padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--rd);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--am);transition:background .3s;margin-right:5px}
+.conn-dot.online{background:var(--gr);animation:pdot 2s infinite}
+@keyframes pdot{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.4)}70%{box-shadow:0 0 0 5px rgba(34,197,94,0)}}
+
+/* Layout */
+.dash{padding:18px;max-width:1200px;margin:0 auto}
+.dh{font-size:22px;font-weight:700;margin-bottom:4px}
+.ds{font-size:13px;color:var(--tx3);margin-bottom:20px}
+
+/* KPI */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.stat-card{background:linear-gradient(145deg,rgba(36,34,32,.9),rgba(26,25,23,.8));border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:20px;backdrop-filter:blur(12px);transition:all .3s}
+.stat-card:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.12)}
+.stat-lbl{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.stat-val{font-size:32px;font-weight:800;letter-spacing:-1px;margin:8px 0 2px}
+.stat-sub{font-size:12px;color:var(--tx3)}
+
+/* Cards */
+.dash-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.dash-card{background:linear-gradient(145deg,rgba(36,34,32,.9),rgba(26,25,23,.8));border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:20px;backdrop-filter:blur(12px)}
+.dash-card-title{font-size:12px;font-weight:600;margin-bottom:14px;color:var(--tx2);text-transform:uppercase;letter-spacing:.8px}
+
+/* Emp rows */
+.emp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);border-radius:8px;transition:background .15s}
+.emp-row:hover{background:rgba(255,255,255,.03)}
+.emp-av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden}
+.emp-av img{width:100%;height:100%;object-fit:cover}
+.bar-wrap{flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+
+/* Reports */
+.rep-panel{background:linear-gradient(135deg,rgba(59,130,246,.1),rgba(167,139,250,.07));border:1px solid rgba(59,130,246,.25);border-radius:14px;padding:18px;margin-bottom:16px}
+.rep-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.rep-btn{display:flex;align-items:center;gap:6px;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--bd2);background:var(--s2);color:var(--tx);font-family:var(--fn);transition:all .2s}
+.rep-btn:hover{background:var(--blb);border-color:var(--bl);color:var(--bl);transform:translateY(-1px)}
+
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:640px;margin:auto;box-shadow:0 24px 80px rgba(0,0,0,.7);animation:pop .25s ease}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.modal-title{font-size:20px;font-weight:700;margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--tx2);margin-bottom:18px}
+.modal-actions{display:flex;gap:10px;margin-top:16px}
+.btn-export{flex:1;padding:14px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:700;border:none;border-radius:12px;font-size:15px;cursor:pointer;transition:all .2s;font-family:var(--fn)}
+.btn-export:hover{transform:scale(1.01);opacity:.9}
+.btn-close{padding:14px 24px;background:var(--s2);color:var(--tx2);font-weight:600;border:1px solid var(--bd2);border-radius:12px;font-size:14px;cursor:pointer;font-family:var(--fn);transition:all .2s}
+.btn-close:hover{background:var(--s3);color:var(--tx)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:#1e1e1e;border:1px solid var(--bd2);border-radius:12px;padding:12px 20px;font-size:13px;font-weight:500;z-index:1000;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap;max-width:90vw;text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.success{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.1);color:var(--gr)}
+.toast.error{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:var(--rd)}
+.toast.info{border-color:rgba(59,130,246,.4);background:rgba(59,130,246,.1);color:var(--bl)}
+
+@media(max-width:768px){
+  .stat-row{grid-template-columns:1fr 1fr}
+  .dash-row{grid-template-columns:1fr}
+  .rep-btns{flex-direction:column}
+  .rep-btn{justify-content:center}
+}
+@media(max-width:480px){
+  .stat-row{grid-template-columns:1fr 1fr}
+  .stat-val{font-size:24px}
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="tb-brand">
+    <div class="tb-logo">&#129525;</div>
+    <div>
+      <div class="tb-name">AbaYa Track</div>
+      <div class="tb-sub">CEO Dashboard</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="font-size:12px;color:var(--tx3);display:flex;align-items:center">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-label">Connecting...</span>
+    </div>
+    <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+  </div>
+</div>
+
+<div class="dash">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;margin-top:4px">
+    <div class="dh">Production Dashboard</div>
+  </div>
+  <div class="ds" id="dash-date">Loading...</div>
+
+  <!-- CEO Reports Panel -->
+  <div class="rep-panel">
+    <div style="font-size:15px;font-weight:700;color:var(--bl);display:flex;align-items:center;gap:8px">
+      <span>&#128274;</span> Executive CEO Reports
+    </div>
+    <div style="font-size:11px;color:var(--tx2);margin-top:4px">Real-time data &mdash; view report then export directly to WhatsApp</div>
+    <div class="rep-btns">
+      <button class="rep-btn" onclick="openReport('Daily')" id="rep-daily">&#128241; Daily Report</button>
+      <button class="rep-btn" onclick="openReport('Weekly')" id="rep-weekly">&#128196; Weekly Report</button>
+      <button class="rep-btn" onclick="openReport('Monthly')" id="rep-monthly">&#128202; Monthly Report</button>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-lbl">Completed Today</div>
+      <div class="stat-val" id="kpi-completed" style="color:var(--gr)">0</div>
+      <div class="stat-sub">&#8593; Real-time tracking</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Active Workers</div>
+      <div class="stat-val" id="kpi-active" style="color:var(--bl)">0</div>
+      <div class="stat-sub">on the floor now</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Avg Cycle Time</div>
+      <div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div>
+      <div class="stat-sub">per abaya unit</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">In Progress</div>
+      <div class="stat-val" id="kpi-inprog">0</div>
+      <div class="stat-sub">abayas on floor</div>
+    </div>
+  </div>
+
+  <!-- Row: Pareto + Process Efficiency -->
+  <div class="dash-row">
+    <div class="dash-card">
+      <div class="dash-card-title">&#127919; Pareto — Top 20% Workers</div>
+      <div id="pareto-chart"><div style="color:var(--tx3);font-size:13px;text-align:center;padding:20px">No data yet</div></div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-title">Process Efficiency</div>
+      <div id="proc-eff"><div style="color:var(--tx3);font-size:13px;padding:10px">No data yet</div></div>
+    </div>
+  </div>
+
+  <!-- All Employees Performance -->
+  <div class="dash-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="dash-card-title" style="margin-bottom:0">All Employees — Today&rsquo;s Performance</div>
+      <div style="font-size:11px;color:var(--tx3)">&#11088; = Top 20% (Pareto)</div>
+    </div>
+    <div id="emp-perf"><div style="color:var(--tx3);font-size:13px;padding:16px;text-align:center">No sessions recorded yet</div></div>
+  </div>
+
+  <!-- Hourly Output -->
+  <div class="dash-row">
+    <div class="dash-card">
+      <div class="dash-card-title">Hourly Output (6am–6pm)</div>
+      <div id="hourly" style="display:flex;align-items:flex-end;gap:3px;height:80px;margin-top:6px"></div>
+      <div id="hlbl" style="display:flex;gap:3px;margin-top:4px"></div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-title">Live Active Sessions</div>
+      <div id="live-sessions">
+        <div style="font-size:12px;color:var(--tx3);text-align:center;padding:20px">No active sessions</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dash-card" style="margin-bottom:16px">
+    <div class="dash-card-title">Invoice maker — numbers logged</div>
+    <div style="font-size:11px;color:var(--tx2);margin-bottom:10px">Recent completions from this server session (newest first)</div>
+    <div id="recent-invoice-logs" style="max-height:280px;overflow-y:auto"></div>
+  </div>
+
+</div><!-- .dash -->
+
+<!-- REPORT MODAL -->
+<div class="modal-overlay" id="modal-report">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-title">Report</div>
+    <div class="modal-sub" id="modal-sub">Generated on <span id="modal-ts"></span></div>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn-export" onclick="exportReport()">&#128241; Send via WhatsApp</button>
+      <button class="btn-close" onclick="closeReport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="polite"></div>
+
+<script src="/data.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/dashboard.js"></script>
+</body>
+</html>
