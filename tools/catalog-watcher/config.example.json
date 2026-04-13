@@ -1,0 +1,13 @@
+{
+  "watchDir": "C:/Users/Public/AbayaCatalog/DropHere",
+  "processedDir": "C:/Users/Public/AbayaCatalog/Processed",
+  "failedDir": "C:/Users/Public/AbayaCatalog/Failed",
+  "workerUrl": "https://abaya-track.your-subdomain.workers.dev",
+  "ingestSecret": "PASTE_SAME_VALUE_AS_CF_INGEST_SECRET",
+  "employeesUrl": "http://127.0.0.1:3050/api/employees",
+  "alignProcess": "strict",
+  "unknownEmployeeFolder": "error",
+  "debounceMs": 2000,
+  "dailySyncMs": 86400000,
+  "scanOnStart": false
+}

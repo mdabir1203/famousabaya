@@ -1,17 +1,25 @@
 {
   "name": "abaya-server",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "packageManager": "yarn@4.13.0",
+  "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
+    "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
     "express": "^5.2.1",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.3"
   }
 }

@@ -1,3 +1,15 @@
+/** CEO hourly chart buckets (factory wall time, matches FACTORY_TZ on Cloudflare). */
+const FACTORY_HOURLY_START = 9;
+const FACTORY_HOURLY_END = 23;
+
+/**
+ * Official shift windows (reference for staff; charts use full 9–23 span).
+ * Saturday–Thursday: 09:00–13:30, 15:00–20:00, 20:40–23:30.
+ * Friday: 15:00–20:00, 20:40–23:30 (no morning shift).
+ */
+const FACTORY_SHIFT_SCHEDULE_TEXT =
+  'Sat–Thu: 9:00–13:30, 3:00–8:00 pm, 8:40–11:30 pm. Fri: 3:00–8:00 pm, 8:40–11:30 pm.';
+
 const WORK_TYPES = [
   'Tailor (01)',
   'Tailor (02)',
@@ -40,7 +52,7 @@ const EMPLOYEES = [
   {id:'e26',emp_no:135, ac_no:26, name:'ArmanAnasari',  code:'EMP135', barcode:'00000135', process:'Tailor (01)',   color:'#22c55e', initials:'AR'},
 ];
 
-const ABAYAS = [
+var ABAYAS = [
   {id:'a1',code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',     status:'waiting',  process:'Tailor (01)', icon:'&#129509;'},
   {id:'a2',code:'AB-0042',barcode:'AB00000042',design:'Embroidered Ceremonial',  status:'waiting',  process:'Tailor (02)',   icon:'&#10024;'},
   {id:'a3',code:'AB-0043',barcode:'AB00000043',design:'Casual Linen Blend',      status:'progress', process:'Hand Work', icon:'&#129525;'},

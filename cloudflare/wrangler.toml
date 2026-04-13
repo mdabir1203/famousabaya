@@ -3,28 +3,29 @@ main = "src/index.js"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ─── Timezone for factory day boundaries and hourly charts ───────────────────
 [vars]
 FACTORY_TZ = "Asia/Dubai"
 
-# ─── Environment Variables (set via `wrangler secret put`) ───────────────────
-# INGEST_SECRET  — shared secret the factory server sends with every POST
-# CEO_TOKEN      — password the CEO enters to access the dashboard
+# ─── Secrets (set automatically by DEPLOY.ps1, or manually below) ────────────
+# Run from the cloudflare\ folder:
+#   npx wrangler secret put INGEST_SECRET
+#   npx wrangler secret put CEO_TOKEN
+#
+# INGEST_SECRET — shared key between factory server (.env CF_INGEST_SECRET) and this worker
+# CEO_TOKEN     — the CEO's login password (they type this at the dashboard login page)
 
-# ─── D1 Database ─────────────────────────────────────────────────────────────
+# ─── D1 Database (filled in automatically by DEPLOY.ps1) ────────────────────
 [[d1_databases]]
-binding  = "DB"
+binding       = "DB"
 database_name = "abaya-db"
-database_id   = "YOUR_D1_DATABASE_ID"   # replace after: wrangler d1 create abaya-db
+database_id   = "REPLACE_AFTER_RUNNING_DEPLOY"
 
-# ─── R2 Bucket (for shift PDF exports) ───────────────────────────────────────
+# ─── R2 Bucket (for end-of-day report storage) ───────────────────────────────
 [[r2_buckets]]
 binding     = "EXPORTS"
 bucket_name = "abaya-exports"
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
-# After deploying, map these in the Cloudflare dashboard:
-# kiosk.yourdomain.com       → (served by local machine via cloudflared)
-# dashboard.yourdomain.com   → abaya-track worker
-
+# ─── Cron — auto EOD summary at 6pm Dubai time every day ────────────────────
 [triggers]
-crons = ["0 18 * * *"]   # Auto-send EOD shift summary every day at 6pm factory time
+crons = ["0 14 * * *"]

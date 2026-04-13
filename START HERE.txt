@@ -1,0 +1,41 @@
+AbaYa Track — Quick Start
+==========================
+
+FIRST TIME ONLY (do once per PC):
+  1. Install Node.js 18+ from https://nodejs.org  (choose LTS)
+  2. Double-click:  install\INSTALL.bat
+     - Enables Yarn (via corepack), installs PnP dependencies, creates Desktop shortcut.
+     - No internet needed for yarn install — packages are bundled in .yarn\cache.
+  3. Edit .env in this folder if you use Cloudflare:
+       CF_WORKER_URL=https://abaya-track.YOURNAME.workers.dev
+       CF_INGEST_SECRET=your_shared_secret
+     Leave .env unchanged if you are running local-only (no cloud sync).
+
+EVERY DAY — start the software:
+  Double-click "AbaYa Track" on your Desktop.
+     Opens the factory server, the kiosk tab, and the dashboard tab.
+  (Alternative: double-click  install\LAUNCH-ALL.bat)
+
+CATALOG SYNC (office PC only):
+  1. Copy  tools\catalog-watcher\config.example.json
+       to  tools\catalog-watcher\config.json
+  2. Edit the paths and ingestSecret in config.json.
+  3. From then on, LAUNCH-ALL.bat starts the watcher automatically.
+  4. Drop items_export-style .xlsx files into your watchDir to update the catalog.
+     Full guide: docs\OFFICE_LAPTOP.md
+
+OPEN IN BROWSER MANUALLY:
+  Kiosk:     http://localhost:3050/kiosk.html
+  Dashboard: http://localhost:3050/dashboard.html
+  Tablet QR: http://localhost:3050/setup
+  (Replace 3050 with PORT from .env if you changed it.)
+
+DEPLOY KIOSK TO TABLETS (10+ tablets, multiple factories):
+  1. Start the server (LAUNCH-ALL.bat opens the setup page automatically).
+  2. On the setup page, enter each factory name and tablet count.
+  3. Click "Generate QR Codes" then "Print All".
+  4. On each tablet: scan QR with camera → opens kiosk → Add to Home Screen.
+  Guide: docs\DEPLOYMENT_KIOSK_FINGERPRINT.md
+
+FULL IT GUIDE:  docs\INSTALL_WINDOWS.md
+CATALOG FORMAT: docs\CATALOG_EXCEL_SPEC.md

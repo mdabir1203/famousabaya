@@ -17,6 +17,33 @@ socket.on('disconnect', () => {
   showToast('Connection lost — retrying...', 'error');
 });
 
+socket.on('catalog_update', () => {
+  refreshDashboardAbayaCatalog();
+});
+
+function normalizeDashboardAbayaRow(a) {
+  return {
+    id: String(a.id),
+    code: String(a.code),
+    barcode: String(a.barcode),
+    design: String(a.design != null ? a.design : ''),
+    process: String(a.process != null ? a.process : ''),
+    icon: a.icon != null ? String(a.icon) : '',
+    status: a.status || 'waiting',
+  };
+}
+
+function refreshDashboardAbayaCatalog() {
+  fetch('/api/catalog/abayas')
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.abayas)) return;
+      ABAYAS = d.abayas.map(normalizeDashboardAbayaRow);
+      renderAll();
+    })
+    .catch(() => {});
+}
+
 // ─── REAL-TIME STATE ──────────────────────────────────────────────────────────
 socket.on('state_update', (data) => {
   STATE = data;
@@ -192,12 +219,14 @@ function renderRecentInvoiceLogsNode() {
 
 // ─── HOURLY CHART ─────────────────────────────────────────────────────────────
 function renderHourlyChart() {
+  const h0 = typeof FACTORY_HOURLY_START === 'number' ? FACTORY_HOURLY_START : 9;
+  const h1 = typeof FACTORY_HOURLY_END === 'number' ? FACTORY_HOURLY_END : 23;
   const logs = STATE.logs || [];
   const hours = {};
-  for (let h = 6; h <= 18; h++) hours[h] = 0;
+  for (let h = h0; h <= h1; h++) hours[h] = 0;
   logs.forEach(l => {
     const h = new Date(l.end).getHours();
-    if (h >= 6 && h <= 18) hours[h]++;
+    if (h >= h0 && h <= h1) hours[h]++;
   });
   const vals = Object.values(hours);
   const max = Math.max(...vals, 1);
@@ -211,6 +240,11 @@ function renderHourlyChart() {
     '</div>';
   }).join('');
   lbl.innerHTML = Object.keys(hours).map(h => '<div style="flex:1;font-size:9px;color:var(--tx3);text-align:center">' + h + '</div>').join('');
+
+  const sh = document.getElementById('shift-hint');
+  if (sh && typeof FACTORY_SHIFT_SCHEDULE_TEXT === 'string') {
+    sh.textContent = FACTORY_SHIFT_SCHEDULE_TEXT;
+  }
 }
 
 // ─── PARETO ───────────────────────────────────────────────────────────────────
@@ -434,6 +468,7 @@ function showToast(msg, type) {
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
   updateClock();
+  refreshDashboardAbayaCatalog();
   // Refresh live timers every second
   setInterval(() => {
     renderLiveSessions();

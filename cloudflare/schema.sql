@@ -65,3 +65,19 @@ CREATE INDEX IF NOT EXISTS idx_sessions_emp    ON sessions(emp_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_date   ON sessions(day_date);
 CREATE INDEX IF NOT EXISTS idx_sessions_proc   ON sessions(emp_process);
 CREATE INDEX IF NOT EXISTS idx_sessions_end    ON sessions(ended_at);
+
+-- ─── ABAYA CATALOG (office Excel → Worker PUT → D1) ───────────────────────────
+CREATE TABLE IF NOT EXISTS abaya_catalog (
+  id            TEXT    PRIMARY KEY,
+  code          TEXT    NOT NULL UNIQUE,
+  barcode       TEXT    NOT NULL UNIQUE,
+  design        TEXT    NOT NULL DEFAULT '',
+  process       TEXT    NOT NULL,
+  icon          TEXT,
+  updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS catalog_meta (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);

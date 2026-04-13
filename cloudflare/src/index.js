@@ -6,6 +6,8 @@
  *  POST /api/event           ← Factory server pushes session events (ingest)
  *  GET  /api/state           ← CEO dashboard polls for real-time data
  *  GET  /api/report?type=    ← CEO requests shift reports
+ *  GET  /api/catalog/abayas ← Public catalog for factory server (D1)
+ *  PUT  /api/catalog/abayas ← Office watcher (X-Ingest-Secret) replaces catalog
  *  GET  /                    ← Serves the CEO dashboard HTML
  *  GET  /scheduled           ← Cron trigger for EOD summary
  *
@@ -24,7 +26,7 @@
 // ─── CORS HEADERS ─────────────────────────────────────────────────────────────
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Ingest-Secret',
 };
 
@@ -89,6 +91,10 @@ function getFactoryTz(env) {
   const t = env.FACTORY_TZ;
   return typeof t === 'string' && t.trim() ? t.trim() : 'Asia/Dubai';
 }
+
+/** CEO hourly chart: include all hours where completions can occur (shift windows). */
+const FACTORY_HOURLY_START = 9;
+const FACTORY_HOURLY_END = 23;
 
 function factoryDateStringForUnix(env, unixSec) {
   const tz = getFactoryTz(env);
@@ -179,6 +185,93 @@ const SUMMARY_WT_CASES = `
   SUM(CASE WHEN emp_process='Checker' THEN 1 ELSE 0 END) as checker
 `;
 
+// ─── ABAYA CATALOG (D1) ───────────────────────────────────────────────────────
+async function handleCatalogAbayasGet(env) {
+  const verRow = await env.DB.prepare('SELECT v FROM catalog_meta WHERE k = ?').bind('version').first();
+  const version = verRow && verRow.v != null ? String(verRow.v) : '0';
+  const { results } = await env.DB.prepare(
+    'SELECT id, code, barcode, design, process, icon FROM abaya_catalog ORDER BY code ASC'
+  ).all();
+  const abayas = (results || []).map((r) => ({
+    id: r.id,
+    code: r.code,
+    barcode: r.barcode,
+    design: r.design,
+    process: r.process,
+    icon: r.icon != null ? r.icon : '',
+  }));
+  return jsonRes({ ok: true, version, abayas });
+}
+
+async function handleCatalogAbayasPut(request, env) {
+  const secret = request.headers.get('X-Ingest-Secret');
+  if (!secret || secret !== env.INGEST_SECRET) {
+    return errRes('Unauthorized ingest request', 401);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return errRes('Invalid JSON body', 400);
+  }
+
+  const rows = Array.isArray(body) ? body : body && body.abayas;
+  if (!Array.isArray(rows)) {
+    return errRes('Body must be a JSON array or { abayas: [...] }', 400);
+  }
+
+  const norm = [];
+  const seenId = new Set();
+  const seenCode = new Set();
+  const seenBc = new Set();
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || typeof r !== 'object') {
+      return errRes(`Row ${i + 1}: must be an object`, 400);
+    }
+    const id = String(r.id ?? '').trim();
+    const code = String(r.code ?? '').trim();
+    const barcode = String(r.barcode ?? '').trim();
+    const design = String(r.design ?? '').trim();
+    const process = String(r.process ?? '').trim();
+    const iconRaw = r.icon;
+    const icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
+
+    if (!id || !code || !barcode || !process) {
+      return errRes(
+        `Row ${i + 1}: id, code, barcode, and process are required (design may be empty)`,
+        400
+      );
+    }
+    if (seenId.has(id)) return errRes(`Duplicate id in upload: ${id}`, 400);
+    if (seenCode.has(code)) return errRes(`Duplicate code in upload: ${code}`, 400);
+    if (seenBc.has(barcode)) return errRes(`Duplicate barcode in upload: ${barcode}`, 400);
+    seenId.add(id);
+    seenCode.add(code);
+    seenBc.add(barcode);
+    norm.push({ id, code, barcode, design, process, icon });
+  }
+
+  const newVersion = String(Date.now());
+  const stmts = [env.DB.prepare('DELETE FROM abaya_catalog')];
+  for (const r of norm) {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO abaya_catalog (id, code, barcode, design, process, icon, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, unixepoch())`
+      ).bind(r.id, r.code, r.barcode, r.design, r.process, r.icon || null)
+    );
+  }
+  stmts.push(
+    env.DB.prepare('INSERT OR REPLACE INTO catalog_meta (k, v) VALUES (?, ?)').bind('version', newVersion)
+  );
+
+  await env.DB.batch(stmts);
+  return jsonRes({ ok: true, version: newVersion, count: norm.length });
+}
+
 // ─── MAIN FETCH HANDLER ───────────────────────────────────────────────────────
 export default {
   async fetch(request, env, ctx) {
@@ -190,8 +283,26 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    // ── CEO AUTH CHECK (for all /api/* and / except ingest) ──────────────────
-    const isCEORoute = path === '/' || (path.startsWith('/api/') && path !== '/api/event');
+    // ── Catalog API (no CEO token; PUT uses INGEST_SECRET) ─────────────────────
+    if (path === '/api/catalog/abayas') {
+      try {
+        if (request.method === 'GET') {
+          return await handleCatalogAbayasGet(env);
+        }
+        if (request.method === 'PUT') {
+          return await handleCatalogAbayasPut(request, env);
+        }
+        return errRes('Method not allowed', 405);
+      } catch (e) {
+        console.error('Catalog error:', e);
+        return errRes('Catalog error: ' + e.message, 500);
+      }
+    }
+
+    // ── CEO AUTH CHECK (for all /api/* and / except ingest + catalog) ──────────
+    const isCEORoute =
+      path === '/' ||
+      (path.startsWith('/api/') && path !== '/api/event' && path !== '/api/catalog/abayas');
     if (isCEORoute) {
       // Accept token from query param or Authorization header
       const token = url.searchParams.get('token') ||
@@ -371,9 +482,9 @@ async function handleState(request, env, url) {
     `).bind(factoryToday).all(),
     env.DB.prepare(`
       SELECT hour_of_day, COUNT(*) as cnt FROM sessions
-      WHERE day_date = ? AND hour_of_day >= 6 AND hour_of_day <= 18
+      WHERE day_date = ? AND hour_of_day >= ? AND hour_of_day <= ?
       GROUP BY hour_of_day
-    `).bind(factoryToday).all(),
+    `).bind(factoryToday, FACTORY_HOURLY_START, FACTORY_HOURLY_END).all(),
   ]);
 
   // Build active sessions map (keyed by emp_id)
@@ -416,10 +527,12 @@ async function handleState(request, env, url) {
   });
 
   const hourlyToday = {};
-  for (let h = 6; h <= 18; h++) hourlyToday[h] = 0;
+  for (let h = FACTORY_HOURLY_START; h <= FACTORY_HOURLY_END; h++) hourlyToday[h] = 0;
   (hourlyRes.results || []).forEach((row) => {
     const h = Number(row.hour_of_day);
-    if (h >= 6 && h <= 18) hourlyToday[h] = Number(row.cnt) || 0;
+    if (h >= FACTORY_HOURLY_START && h <= FACTORY_HOURLY_END) {
+      hourlyToday[h] = Number(row.cnt) || 0;
+    }
   });
 
   return jsonRes({
@@ -740,8 +853,9 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   </div>
 
   <div class="dash-card">
-    <div class="dct">Hourly Output (6am–6pm)</div>
-    <div id="hourly" style="display:flex;align-items:flex-end;gap:3px;height:72px;margin-top:6px"></div>
+    <div class="dct">Hourly output (9–23, factory shift window)</div>
+    <div style="font-size:10px;color:var(--tx2);line-height:1.35;margin-bottom:8px">Sat–Thu: 9:00–13:30, 15:00–20:00, 20:40–23:30. Fri: 15:00–20:00, 20:40–23:30.</div>
+    <div id="hourly" style="display:flex;align-items:flex-end;gap:2px;height:72px;margin-top:2px"></div>
     <div id="hlbl" style="display:flex;gap:3px;margin-top:4px"></div>
   </div>
 </div>
@@ -912,7 +1026,9 @@ function renderAll() {
   }).join('');
 
   const hours = {};
-  for (let h=6;h<=18;h++) hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
+  for (let h = ${FACTORY_HOURLY_START}; h <= ${FACTORY_HOURLY_END}; h++) {
+    hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
+  }
   const hVals = Object.values(hours);
   const hMax = Math.max(...hVals,1);
   document.getElementById('hourly').innerHTML = Object.entries(hours).map(([h,v])=>{

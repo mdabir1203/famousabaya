@@ -1,16 +1,92 @@
 'use strict';
 
+// ─── TABLET / FACTORY IDENTITY (URL params ?factory=&tablet=) ────────────────
+(function applyTabletIdentity() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const factory = params.get('factory') || '';
+    const tablet = params.get('tablet') || '';
+    if (factory || tablet) {
+      const badge = document.getElementById('tb-tablet-badge');
+      const sub = document.getElementById('tb-sub-label');
+      if (badge) {
+        badge.textContent = [factory, tablet].filter(Boolean).join(' \u2022 ');
+        badge.style.display = 'inline-block';
+      }
+      if (sub && factory) {
+        sub.textContent = factory;
+      }
+    }
+  } catch (_) {}
+})();
+
 const socket = io();
 
+let kioskNavStep = 'fp';
 let selEmp = null;
 let selAbaya = null;
 let selRole = null;
 let activeSessionProcess = null;
 let idleTimer = null;
 
+/** Remaining abaya codes after pasting a column from Excel (FIFO). Survives Start work via sessionStorage. */
+let bcExcelQueue = [];
+var BC_EXCEL_Q_KEY = 'abaya_kiosk_bc_excel_queue_v1';
+
+function loadBcQueueFromStorage() {
+  try {
+    var j = sessionStorage.getItem(BC_EXCEL_Q_KEY);
+    var parsed = j ? JSON.parse(j) : [];
+    bcExcelQueue = Array.isArray(parsed) ? parsed.map(normalizeBcToken).filter(Boolean) : [];
+  } catch (e) {
+    bcExcelQueue = [];
+  }
+}
+
+function persistBcQueue() {
+  try {
+    if (bcExcelQueue.length) sessionStorage.setItem(BC_EXCEL_Q_KEY, JSON.stringify(bcExcelQueue));
+    else sessionStorage.removeItem(BC_EXCEL_Q_KEY);
+  } catch (e) {}
+}
+
+function clearBcExcelQueue(silent) {
+  bcExcelQueue = [];
+  persistBcQueue();
+  updateBcQueueHint();
+  if (!silent) showToast('Excel code list cleared', 'info');
+}
+
 // ─── SOCKET CONNECTION STATUS ─────────────────────────────────────────────────
 socket.on('connect', () => showToast('Connected to AbaYa Server', 'success'));
 socket.on('disconnect', () => showToast('Lost server connection — retrying...', 'error'));
+
+socket.on('catalog_update', () => {
+  refreshKioskAbayaCatalog();
+});
+
+function normalizeKioskAbayaRow(a) {
+  return {
+    id: String(a.id),
+    code: String(a.code),
+    barcode: String(a.barcode),
+    design: String(a.design != null ? a.design : ''),
+    process: String(a.process != null ? a.process : ''),
+    icon: a.icon != null && String(a.icon) !== '' ? String(a.icon) : '&#128142;',
+    status: a.status || 'waiting',
+  };
+}
+
+function refreshKioskAbayaCatalog() {
+  fetch('/api/catalog/abayas')
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.abayas)) return;
+      ABAYAS = d.abayas.map(normalizeKioskAbayaRow);
+      if (kioskNavStep === 'ab') renderAbayaGrid();
+    })
+    .catch(() => {});
+}
 
 // ─── REAL-TIME GRID UPDATE (when server broadcasts state) ─────────────────────
 socket.on('state_update', (data) => {
@@ -104,8 +180,11 @@ function setRole(role) {
 }
 
 function confirmIdentity() {
+  const bin = document.getElementById('bc-input');
+  if (bin) bin.value = '';
   goTo('ab');
   renderAbayaGrid();
+  updateBcQueueHint();
   resetIdleTimer();
 }
 
@@ -124,14 +203,102 @@ function resetFP() {
   document.getElementById('fp-icon').innerHTML = '&#9757;&#65039;';
 }
 
+function splitBcTokens(raw) {
+  return String(raw || '')
+    .replace(/\uFEFF/g, '')
+    .split(/[\r\n\u2028\u2029\t,;]+/)
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(Boolean);
+}
+
+function normalizeBcToken(s) {
+  return String(s || '')
+    .trim()
+    .replace(/^\uFEFF/, '')
+    .toUpperCase();
+}
+
+function updateBcQueueHint() {
+  const wrap = document.getElementById('bc-queue-wrap');
+  if (!wrap) return;
+  const n = bcExcelQueue.length;
+  persistBcQueue();
+  if (n === 0) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.style.display = 'block';
+  wrap.innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:8px">' +
+    '<span style="color:var(--tx2);font-size:12px;line-height:1.4">' +
+    n +
+    ' code' +
+    (n === 1 ? '' : 's') +
+    ' from Excel in queue (kept after each Start work).</span>' +
+    '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">' +
+    '<button type="button" class="bbk" style="min-height:44px" onclick="applyNextFromBcQueue()">Use next code</button>' +
+    '<button type="button" class="bbk" style="min-height:44px;opacity:.85" onclick="clearBcExcelQueue()">Clear list</button>' +
+    '</div></div>';
+}
+
+function applyNextFromBcQueue() {
+  if (!bcExcelQueue.length) return;
+  const el = document.getElementById('bc-input');
+  el.value = bcExcelQueue.shift();
+  updateBcQueueHint();
+  tryManualBarcode();
+}
+
 // ─── ABAYA SCAN ───────────────────────────────────────────────────────────────
 function onBcInput(val) {
+  const el = document.getElementById('bc-input');
+  const tokens = splitBcTokens(val);
+  if (tokens.length > 1) {
+    el.value = normalizeBcToken(tokens[0]);
+    bcExcelQueue = tokens.slice(1).map(normalizeBcToken);
+    updateBcQueueHint();
+    showToast(tokens.length - 1 + ' more code(s) queued from list', 'info');
+    val = el.value;
+  }
   if (val.length >= 7) tryManualBarcode();
   resetIdleTimer();
 }
 
+function onBcPaste() {
+  setTimeout(function () {
+    const el = document.getElementById('bc-input');
+    const tokens = splitBcTokens(el.value);
+    if (tokens.length <= 1) return;
+    el.value = normalizeBcToken(tokens[0]);
+    bcExcelQueue = tokens.slice(1).map(normalizeBcToken);
+    updateBcQueueHint();
+    showToast('Pasted ' + tokens.length + ' codes — using first', 'info');
+    if (el.value.length >= 7) tryManualBarcode();
+  }, 0);
+}
+
 function tryManualBarcode() {
-  const val = document.getElementById('bc-input').value.trim().toUpperCase();
+  const el = document.getElementById('bc-input');
+  let raw = el.value.trim();
+  if (!raw && bcExcelQueue.length) {
+    raw = bcExcelQueue.shift();
+    el.value = raw;
+    updateBcQueueHint();
+  }
+  if (!raw) return;
+
+  const parts = splitBcTokens(raw);
+  let first = normalizeBcToken(parts[0] || raw);
+  if (parts.length > 1) {
+    bcExcelQueue = parts.slice(1).map(normalizeBcToken);
+    el.value = first;
+    updateBcQueueHint();
+  }
+
+  const val = first;
   if (!val) return;
   const a = ABAYAS.find(x => x.code === val || x.barcode === val);
   if (a) selectAbaya(a.id);
@@ -179,6 +346,8 @@ function selectAbaya(id) {
   cards.forEach(c => { if (c.onclick.toString().includes(id)) c.classList.add('sel'); });
 
   setTimeout(() => {
+    const bin = document.getElementById('bc-input');
+    if (bin) bin.value = '';
     // Populate ready screen
     if (selEmp.photo) {
       document.getElementById('rdy-av').innerHTML = '<img src="/' + selEmp.photo + '" alt="">';
@@ -409,9 +578,11 @@ function emitFinishWork(extra) {
 
 // ─── NAV ──────────────────────────────────────────────────────────────────────
 function goTo(s) {
+  kioskNavStep = s;
   document.querySelectorAll('.scr').forEach(e => e.classList.remove('on'));
   const target = document.getElementById('scr-' + s);
   if (target) target.classList.add('on');
+  if (s === 'ab') updateBcQueueHint();
 
   const steps = ['fp', 'id', 'ab', 'rdy', 'wk'];
   const idx = steps.indexOf(s);
@@ -432,6 +603,7 @@ function resetIdleTimer() {
     if (document.getElementById('scr-fp').classList.contains('on')) return;
     document.getElementById('idle-warn').style.display = 'block';
     resetFP();
+    clearBcExcelQueue(true);
     goTo('fp');
     document.getElementById('stepbar').style.display = 'flex';
     showToast('Session timed out — please re-scan', 'error');
@@ -481,7 +653,10 @@ function showToast(msg, type) {
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
+  loadBcQueueFromStorage();
+  updateBcQueueHint();
   renderDemoGrid([]);
   goTo('fp');
   resetIdleTimer();
+  refreshKioskAbayaCatalog();
 });

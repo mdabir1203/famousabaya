@@ -1,9 +1,15 @@
 'use strict';
+const path = require('path');
+const os = require('os');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const path = require('path');
+const QRCode = require('qrcode');
+
+/** Default 3050 — less common than 3000 (fewer clashes); override with PORT in .env */
+const PORT = process.env.PORT || 3050;
 
 const app = express();
 app.use(cors());
@@ -113,19 +119,64 @@ const EMPLOYEES = [
   {id:'e26',emp_no:135, ac_no:26, name:'ArmanAnasari',  code:'EMP135', barcode:'00000135', process:'Tailor (01)',   color:'#22c55e', initials:'AR'},
 ];
 
-const ABAYAS = [
-  {id:'a1',code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',    process:'Tailor (01)'},
-  {id:'a2',code:'AB-0042',barcode:'AB00000042',design:'Embroidered Ceremonial', process:'Tailor (02)'},
-  {id:'a3',code:'AB-0043',barcode:'AB00000043',design:'Casual Linen Blend',     process:'Hand Work'},
-  {id:'a4',code:'AB-0044',barcode:'AB00000044',design:'Royal Velvet Edition',   process:'Stone Work'},
-  {id:'a5',code:'AB-0045',barcode:'AB00000045',design:'Minimal White Abaya',    process:'Button'},
-  {id:'a6',code:'AB-0046',barcode:'AB00000046',design:'Sport Performance',      process:'Embroidery'},
-  {id:'a7',code:'AB-0047',barcode:'AB00000047',design:'Heritage Embossed',      process:'Ari Work'},
-  {id:'a8',code:'AB-0048',barcode:'AB00000048',design:'Silk Ceremonial',        process:'Hand Designing'},
-  {id:'a9',code:'AB-0049',barcode:'AB00000049',design:'Invoice batch',          process:'Invoice maker'},
-  {id:'a10',code:'AB-0050',barcode:'AB00000050',design:'Packaging queue',        process:'Packaging'},
-  {id:'a11',code:'AB-0051',barcode:'AB00000051',design:'QC inspection lot',      process:'Checker'},
+const DEFAULT_ABAYA_CATALOG = [
+  {id:'a1',code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',    process:'Tailor (01)', icon: ''},
+  {id:'a2',code:'AB-0042',barcode:'AB00000042',design:'Embroidered Ceremonial', process:'Tailor (02)', icon: ''},
+  {id:'a3',code:'AB-0043',barcode:'AB00000043',design:'Casual Linen Blend',     process:'Hand Work', icon: ''},
+  {id:'a4',code:'AB-0044',barcode:'AB00000044',design:'Royal Velvet Edition',   process:'Stone Work', icon: ''},
+  {id:'a5',code:'AB-0045',barcode:'AB00000045',design:'Minimal White Abaya',    process:'Button', icon: ''},
+  {id:'a6',code:'AB-0046',barcode:'AB00000046',design:'Sport Performance',      process:'Embroidery', icon: ''},
+  {id:'a7',code:'AB-0047',barcode:'AB00000047',design:'Heritage Embossed',      process:'Ari Work', icon: ''},
+  {id:'a8',code:'AB-0048',barcode:'AB00000048',design:'Silk Ceremonial',        process:'Hand Designing', icon: ''},
+  {id:'a9',code:'AB-0049',barcode:'AB00000049',design:'Invoice batch',          process:'Invoice maker', icon: ''},
+  {id:'a10',code:'AB-0050',barcode:'AB00000050',design:'Packaging queue',        process:'Packaging', icon: ''},
+  {id:'a11',code:'AB-0051',barcode:'AB00000051',design:'QC inspection lot',      process:'Checker', icon: ''},
 ];
+
+let abayaCatalog = DEFAULT_ABAYA_CATALOG.map(function (a) {
+  return { id: a.id, code: a.code, barcode: a.barcode, design: a.design, process: a.process, icon: a.icon || '' };
+});
+let catalogCloudVersion = 'local';
+
+function normalizeAbayaCatalogRows(rows) {
+  return rows.map(function (a) {
+    return {
+      id: String(a.id),
+      code: String(a.code),
+      barcode: String(a.barcode),
+      design: String(a.design != null ? a.design : ''),
+      process: String(a.process != null ? a.process : ''),
+      icon: a.icon != null ? String(a.icon) : '',
+    };
+  });
+}
+
+async function refreshAbayaCatalogFromCloud() {
+  if (!CF_URL) return;
+  try {
+    const res = await fetch(CF_URL + '/api/catalog/abayas', {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      console.warn('[catalog] Worker HTTP', res.status);
+      return;
+    }
+    const j = await res.json();
+    if (!j.ok || !Array.isArray(j.abayas)) return;
+    const ver = j.version != null ? String(j.version) : '0';
+    if (j.abayas.length === 0 && ver === '0') {
+      return;
+    }
+    const prev = catalogCloudVersion;
+    abayaCatalog = normalizeAbayaCatalogRows(j.abayas);
+    catalogCloudVersion = ver;
+    if (prev !== catalogCloudVersion) {
+      io.emit('catalog_update', { version: catalogCloudVersion });
+    }
+  } catch (e) {
+    console.warn('[catalog] refresh failed (non-fatal):', e.message);
+  }
+}
 
 let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
@@ -162,8 +213,8 @@ io.on('connection', (socket) => {
     var is_active = !!ACTIVE_SESSIONS[emp.id];
     var abaya_code = null;
     if (is_active && ACTIVE_SESSIONS[emp.id]) {
-      var abIdx = ABAYAS.findIndex(a => a.id === ACTIVE_SESSIONS[emp.id].abaya_id);
-      abaya_code = abIdx >= 0 ? ABAYAS[abIdx].code : null;
+      var abIdx = abayaCatalog.findIndex(a => a.id === ACTIVE_SESSIONS[emp.id].abaya_id);
+      abaya_code = abIdx >= 0 ? abayaCatalog[abIdx].code : null;
     }
     var session_process = is_active && ACTIVE_SESSIONS[emp.id] ? ACTIVE_SESSIONS[emp.id].process : null;
     callback({ok:true, employee:emp, is_active:is_active, abaya_code:abaya_code, session_process:session_process});
@@ -174,7 +225,7 @@ io.on('connection', (socket) => {
     if (ACTIVE_SESSIONS[emp_id]) return callback({ok:false, error:'Already has active session'});
 
     const emp = EMPLOYEES.find(e => e.id === emp_id);
-    const ab  = ABAYAS.find(a => a.id === abaya_id);
+    const ab  = abayaCatalog.find(a => a.id === abaya_id);
     // Use the role the employee selected on the kiosk, fall back to their default
     const sessionProcess = selectedProcess || (emp ? emp.process : 'Tailor (01)');
     const log_id = 'WL-' + emp_id + '-' + Date.now();
@@ -249,8 +300,8 @@ io.on('connection', (socket) => {
     }
 
     const emp = EMPLOYEES.find(e => e.id === emp_id);
-    const abEnd = ABAYAS.findIndex(a => a.id === record.abaya_id);
-    const abaya_code = abEnd >= 0 ? ABAYAS[abEnd].code : null;
+    const abEnd = abayaCatalog.findIndex(a => a.id === record.abaya_id);
+    const abaya_code = abEnd >= 0 ? abayaCatalog[abEnd].code : null;
 
     delete ACTIVE_SESSIONS[emp_id];
     broadcastState();
@@ -287,8 +338,362 @@ io.on('connection', (socket) => {
   });
 });
 
+app.get('/api/catalog/abayas', (req, res) => {
+  res.json({ ok: true, version: catalogCloudVersion, abayas: abayaCatalog });
+});
+
+/** Minimal fields for office catalog watcher (employee folder names ↔ process alignment). */
+app.get('/api/employees', (req, res) => {
+  res.json({
+    ok: true,
+    employees: EMPLOYEES.map(function (e) {
+      return {
+        id: e.id,
+        name: e.name,
+        code: e.code,
+        emp_no: e.emp_no,
+        ac_no: e.ac_no,
+        process: e.process,
+      };
+    }),
+  });
+});
+
+const CATALOG_INGEST_SECRET = process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
+
+function validateCatalogPutRows(rows) {
+  if (!Array.isArray(rows)) {
+    return { ok: false, error: 'Body must be a JSON array or { abayas: [...] }' };
+  }
+  const norm = [];
+  const seenId = new Set();
+  const seenCode = new Set();
+  const seenBc = new Set();
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || typeof r !== 'object') {
+      return { ok: false, error: 'Row ' + (i + 1) + ': must be an object' };
+    }
+    var id = String(r.id != null ? r.id : '').trim();
+    var code = String(r.code != null ? r.code : '').trim();
+    var barcode = String(r.barcode != null ? r.barcode : '').trim();
+    var design = String(r.design != null ? r.design : '').trim();
+    var process = String(r.process != null ? r.process : '').trim();
+    var iconRaw = r.icon;
+    var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
+    if (!id || !code || !barcode || !process) {
+      return {
+        ok: false,
+        error: 'Row ' + (i + 1) + ': id, code, barcode, and process are required (design may be empty)',
+      };
+    }
+    if (seenId.has(id)) return { ok: false, error: 'Duplicate id in upload: ' + id };
+    if (seenCode.has(code)) return { ok: false, error: 'Duplicate code in upload: ' + code };
+    if (seenBc.has(barcode)) return { ok: false, error: 'Duplicate barcode in upload: ' + barcode };
+    seenId.add(id);
+    seenCode.add(code);
+    seenBc.add(barcode);
+    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
+  }
+  return { ok: true, norm: norm };
+}
+
+/** Same contract as Cloudflare PUT /api/catalog/abayas (office watcher or curl). */
+app.put('/api/catalog/abayas', (req, res) => {
+  if (!CATALOG_INGEST_SECRET) {
+    return res.status(503).json({
+      ok: false,
+      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET or CF_INGEST_SECRET in .env',
+    });
+  }
+  var secret = req.headers['x-ingest-secret'];
+  if (!secret || secret !== CATALOG_INGEST_SECRET) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized ingest request' });
+  }
+  var rows = Array.isArray(req.body) ? req.body : req.body && req.body.abayas;
+  var v = validateCatalogPutRows(rows);
+  if (!v.ok) {
+    return res.status(400).json({ ok: false, error: v.error });
+  }
+  abayaCatalog = normalizeAbayaCatalogRows(v.norm);
+  catalogCloudVersion = String(Date.now());
+  io.emit('catalog_update', { version: catalogCloudVersion });
+  res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
+});
+
+// ─── TABLET SETUP / QR CODE ENDPOINTS ────────────────────────────────────────
+
+function getLanIPs() {
+  const ifaces = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        ips.push({ name, address: iface.address });
+      }
+    }
+  }
+  return ips;
+}
+
+/** Returns detected LAN IPs and server port so the setup page can build kiosk URLs. */
+app.get('/api/server-info', (req, res) => {
+  res.json({ ok: true, ips: getLanIPs(), port: PORT });
+});
+
+/** QR setup page: `/setup` — generates per-tablet QR codes for all factories. */
+app.get('/setup', async (req, res) => {
+  const ips = getLanIPs();
+  const firstIp = ips.length ? ips[0].address : 'localhost';
+
+  // Build one blank QR SVG as a placeholder (real ones generated client-side via JS)
+  // We pre-generate the default kiosk QR server-side so it displays even without JS.
+  let defaultQrSvg = '';
+  try {
+    defaultQrSvg = await QRCode.toString(
+      `http://${firstIp}:${PORT}/kiosk.html`,
+      { type: 'svg', margin: 1, width: 200 }
+    );
+  } catch (_) {}
+
+  const ipOptions = ips
+    .map((i) => `<option value="${i.address}">${i.address} (${i.name})</option>`)
+    .join('') || `<option value="localhost">localhost (no LAN found)</option>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AbaYa Track — Tablet QR Setup</title>
+<style>
+:root{--bg:#0f0e0d;--s1:#1a1917;--s2:#242220;--bd:rgba(255,255,255,.1);--tx:#f0ede8;--tx2:#9c9890;--tx3:#6b6760;--gr:#22c55e;--bl:#3b82f6;--am:#f59e0b;--rd:#ef4444;--fn:'Segoe UI',system-ui,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:var(--fn);padding:0 0 60px}
+.header{background:var(--s1);border-bottom:1px solid var(--bd);padding:16px 24px;display:flex;align-items:center;gap:14px}
+.logo{width:40px;height:40px;background:linear-gradient(135deg,#d4a574,#a0785a);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.header h1{font-size:18px;font-weight:700}
+.header p{font-size:12px;color:var(--tx3);margin-top:2px}
+.container{max-width:960px;margin:0 auto;padding:28px 20px 0}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:24px;margin-bottom:24px}
+.card h2{font-size:15px;font-weight:700;margin-bottom:16px;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px;font-size:11px}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+label{display:block;font-size:12px;color:var(--tx3);margin-bottom:6px}
+input,select{background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-size:14px;padding:9px 12px;width:100%;outline:none}
+input:focus,select:focus{border-color:var(--bl)}
+.field{flex:1;min-width:160px}
+.btn{background:var(--bl);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.btn:hover{opacity:.85}
+.btn-ghost{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
+.btn-print{background:var(--gr)}
+.factories-list{display:flex;flex-direction:column;gap:10px}
+.factory-row{display:flex;gap:10px;align-items:center}
+.factory-row input{flex:1}
+.remove-btn{background:var(--s2);border:1px solid var(--bd);color:var(--tx3);border-radius:6px;width:32px;height:32px;cursor:pointer;font-size:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.remove-btn:hover{color:var(--rd);border-color:var(--rd)}
+.add-btn{font-size:13px;color:var(--bl);background:none;border:none;cursor:pointer;padding:4px 0;text-decoration:underline}
+#qr-output{display:none}
+.qr-section-label{font-size:13px;font-weight:700;color:var(--am);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--bd)}
+.qr-factory-block{margin-bottom:36px}
+.qr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}
+.qr-card{background:var(--s2);border:1px solid var(--bd);border-radius:14px;padding:16px;text-align:center;page-break-inside:avoid}
+.qr-card svg,.qr-card img{width:160px;height:160px;display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:4px}
+.qr-factory-name{font-size:13px;font-weight:700;color:var(--am);margin-bottom:3px}
+.qr-tablet-name{font-size:15px;font-weight:800;margin-bottom:6px}
+.qr-url{font-size:9px;color:var(--tx3);word-break:break-all;line-height:1.4}
+.qr-instruction{font-size:11px;color:var(--tx2);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
+.status-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(34,197,94,.12);color:var(--gr);margin-bottom:16px}
+@media print{
+  body{background:#fff;color:#000;padding:0}
+  .header,.card:first-of-type,.no-print{display:none!important}
+  #qr-output{display:block!important}
+  .qr-card{background:#fff;border:1px solid #ddd;border-radius:8px;break-inside:avoid}
+  .qr-card svg,.qr-card img{width:140px;height:140px}
+  .qr-factory-name,.qr-tablet-name,.qr-url,.qr-instruction{color:#333}
+  .qr-section-label{color:#666;border-bottom:1px solid #ddd}
+  .qr-grid{grid-template-columns:repeat(4,1fr);gap:10px}
+}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">&#129525;</div>
+  <div>
+    <h1>AbaYa Track — Tablet QR Setup</h1>
+    <p>Generate QR codes to deploy the kiosk to tablets across all factories</p>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Server info -->
+  <div class="card no-print">
+    <h2>Server Details</h2>
+    <div class="row">
+      <div class="field">
+        <label>Server LAN IP</label>
+        <select id="sel-ip">${ipOptions}</select>
+      </div>
+      <div class="field" style="max-width:120px">
+        <label>Port</label>
+        <input type="number" id="inp-port" value="${PORT}" min="1" max="65535">
+      </div>
+      <div class="field" style="max-width:220px">
+        <label>Custom base URL (optional — overrides IP+port)</label>
+        <input type="text" id="inp-custom-url" placeholder="https://abaya.yourcompany.com">
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--tx3);margin-top:12px">
+      &#9432; Make sure tablets are on the same Wi-Fi network as this server, or use a Cloudflare Tunnel URL above for cross-network access.
+    </p>
+  </div>
+
+  <!-- Factory config -->
+  <div class="card no-print">
+    <h2>Factories &amp; Tablets</h2>
+    <div id="factories-list" class="factories-list"></div>
+    <button class="add-btn" onclick="addFactory()" style="margin-top:12px">+ Add another factory</button>
+    <div class="row" style="margin-top:20px">
+      <button class="btn" onclick="generateAll()">&#9654; Generate QR Codes</button>
+      <button class="btn btn-ghost btn-print" onclick="window.print()">&#128438; Print All</button>
+    </div>
+  </div>
+
+  <!-- QR output -->
+  <div id="qr-output">
+    <div id="qr-inner"></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+<script>
+// ── Factory row management ───────────────────────────────────────────────────
+let factoryCount = 0;
+const DEFAULT_FACTORIES = [
+  { name: 'Factory 1', tablets: 5 },
+  { name: 'Factory 2', tablets: 5 },
+];
+
+function addFactory(name, tablets) {
+  factoryCount++;
+  const id = factoryCount;
+  const div = document.createElement('div');
+  div.className = 'factory-row';
+  div.id = 'factory-row-' + id;
+  div.innerHTML = \`
+    <input type="text" placeholder="Factory name (e.g. Abu Dhabi Factory)" value="\${name || ''}" id="fname-\${id}">
+    <input type="number" min="1" max="50" value="\${tablets || 5}" id="ftabs-\${id}" style="max-width:80px" title="Number of tablets">
+    <button class="remove-btn" onclick="removeFactory(\${id})" title="Remove">&#215;</button>
+  \`;
+  document.getElementById('factories-list').appendChild(div);
+}
+
+function removeFactory(id) {
+  const el = document.getElementById('factory-row-' + id);
+  if (el) el.remove();
+}
+
+function getFactories() {
+  const rows = document.querySelectorAll('.factory-row');
+  const out = [];
+  rows.forEach(row => {
+    const id = row.id.replace('factory-row-', '');
+    const name = (document.getElementById('fname-' + id) || {}).value || '';
+    const tabs = parseInt((document.getElementById('ftabs-' + id) || {}).value || '5', 10);
+    if (name.trim()) out.push({ name: name.trim(), tablets: Math.max(1, Math.min(50, tabs || 5)) });
+  });
+  return out;
+}
+
+function getBaseUrl() {
+  const custom = document.getElementById('inp-custom-url').value.trim().replace(/\\/$/, '');
+  if (custom) return custom;
+  const ip = document.getElementById('sel-ip').value;
+  const port = document.getElementById('inp-port').value;
+  return 'http://' + ip + ':' + port;
+}
+
+// ── QR generation ────────────────────────────────────────────────────────────
+async function generateAll() {
+  const factories = getFactories();
+  if (!factories.length) { alert('Add at least one factory.'); return; }
+  const base = getBaseUrl();
+  const inner = document.getElementById('qr-inner');
+  inner.innerHTML = '<p style="color:var(--tx3);font-size:13px;padding:10px">Generating QR codes...</p>';
+  document.getElementById('qr-output').style.display = 'block';
+  inner.scrollIntoView({ behavior: 'smooth' });
+
+  let html = '';
+  for (const f of factories) {
+    html += \`<div class="qr-factory-block">
+      <div class="qr-section-label">&#127981; \${esc(f.name)} — \${f.tablets} tablet\${f.tablets !== 1 ? 's' : ''}</div>
+      <div class="qr-grid" id="grid-\${esc(f.name.replace(/\\s+/g, '-'))}"></div>
+    </div>\`;
+  }
+  inner.innerHTML = html;
+
+  for (const f of factories) {
+    const gridId = 'grid-' + esc(f.name.replace(/\\s+/g, '-'));
+    const grid = document.getElementById(gridId);
+    if (!grid) continue;
+    for (let t = 1; t <= f.tablets; t++) {
+      const label = 'T-' + String(t).padStart(2, '0');
+      const url = base + '/kiosk.html?factory=' + encodeURIComponent(f.name) + '&tablet=' + encodeURIComponent(label);
+      const card = document.createElement('div');
+      card.className = 'qr-card';
+      const canvas = document.createElement('canvas');
+      canvas.width = 160; canvas.height = 160;
+      card.appendChild(canvas);
+      card.innerHTML += \`
+        <div class="qr-factory-name">\${esc(f.name)}</div>
+        <div class="qr-tablet-name">Tablet \${esc(label)}</div>
+        <div class="qr-url">\${esc(url)}</div>
+        <div class="qr-instruction">&#128247; Scan with tablet camera<br>or Chrome QR reader</div>
+      \`;
+      grid.appendChild(card);
+      try {
+        await QRCode.toCanvas(canvas, url, { margin: 1, width: 160, color: { dark: '#000000', light: '#ffffff' } });
+      } catch(e) { canvas.style.background = '#333'; }
+    }
+  }
+  document.getElementById('qr-output').style.display = 'block';
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+DEFAULT_FACTORIES.forEach(f => addFactory(f.name, f.tablets));
+
+// Auto-refresh server info
+fetch('/api/server-info').then(r=>r.json()).then(d=>{
+  if (!d.ok) return;
+  const sel = document.getElementById('sel-ip');
+  const portInp = document.getElementById('inp-port');
+  if (d.ips && d.ips.length) {
+    sel.innerHTML = d.ips.map(i=>\`<option value="\${i.address}">\${i.address} (\${i.name})</option>\`).join('');
+  }
+  if (d.port) portInp.value = d.port;
+}).catch(()=>{});
+</script>
+</body>
+</html>`;
+
+  res.send(html);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // START SERVER
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
+  const lanIPs = getLanIPs();
+  const lanIp = lanIPs.length ? lanIPs[0].address : 'localhost';
   console.log(`Abaya Central Server running on http://localhost:${PORT}`);
+  console.log(`  Kiosk:     http://localhost:${PORT}/kiosk.html`);
+  console.log(`  Dashboard: http://localhost:${PORT}/dashboard.html`);
+  console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
+  refreshAbayaCatalogFromCloud();
+  setInterval(refreshAbayaCatalogFromCloud, 60000);
 });

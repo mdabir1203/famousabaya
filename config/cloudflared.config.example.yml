@@ -1,0 +1,12 @@
+# Copy to %USERPROFILE%\.cloudflared\config.yml after Cloudflare gives you a credentials JSON.
+# Replace TUNNEL_UUID and the credentials-file path with YOUR values from the dashboard.
+# Docs: docs/TUNNEL_CREDENTIALS_WINDOWS.md
+
+tunnel: TUNNEL_UUID
+credentials-file: C:\Users\YOUR_WINDOWS_USER\.cloudflared\TUNNEL_UUID.json
+
+ingress:
+  # Must match your public hostname in Cloudflare (e.g. famousabaya.getwaved.ai)
+  - hostname: famousabaya.getwaved.ai
+    service: http://127.0.0.1:3050
+  - service: http_status:404

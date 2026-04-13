@@ -1,0 +1,22 @@
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+.env
+
+# ─── Build output ─────────────────────────────────────────────────────────────
+dist/
+
+# ─── Legacy npm (no longer used — Yarn PnP is used instead) ──────────────────
+node_modules/
+package-lock.json
+
+# ─── Yarn Berry / PnP ─────────────────────────────────────────────────────────
+# Keep: .yarn/releases, .yarn/plugins, .pnp.cjs, .pnp.loader.mjs, yarn.lock
+# Keep: .yarn/cache  (zero-install — enables offline yarn install --immutable)
+# Exclude generated state files that are always rebuilt locally
+.yarn/install-state.gz
+.yarn/build-state.yml
+.yarn/unplugged
+
+# ─── Editor / OS ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.lnk
