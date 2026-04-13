@@ -16,7 +16,20 @@ EVERY DAY — start the software:
      Opens the factory server, the kiosk tab, and the dashboard tab.
   (Alternative: double-click  install\LAUNCH-ALL.bat)
 
-CATALOG SYNC (office PC only):
+BARCODE CATALOG SETUP (do this before first launch):
+  Open .env in Notepad and set:
+    CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
+  Replace the path with the actual location of your items_export.xlsx file.
+  The server loads it automatically at startup and refreshes it every 24 hours.
+
+  Your Excel file needs these columns:
+    - Barcode Display Name  — the unique barcode for each item variant
+    - Item Category         — the work type (must match exactly: Tailor (01), etc.)
+    - Item Name             — optional description shown on kiosk cards
+    - Tier                  — optional grade: Standard, Premium, Luxury, Plain Abaya
+  Full format guide: docs\CATALOG_EXCEL_SPEC.md
+
+CATALOG SYNC via folder watcher (office PC, optional):
   1. Copy  tools\catalog-watcher\config.example.json
        to  tools\catalog-watcher\config.json
   2. Edit the paths and ingestSecret in config.json.
@@ -24,10 +37,15 @@ CATALOG SYNC (office PC only):
   4. Drop items_export-style .xlsx files into your watchDir to update the catalog.
      Full guide: docs\OFFICE_LAPTOP.md
 
-OPEN IN BROWSER MANUALLY:
-  Kiosk:     http://localhost:3050/kiosk.html
-  Dashboard: http://localhost:3050/dashboard.html
-  Tablet QR: http://localhost:3050/setup
+OPEN IN BROWSER MANUALLY (on-site / factory PC):
+  Kiosk:     http://localhost:3000/kiosk.html
+  Dashboard: http://localhost:3000/dashboard.html
+  Tablet QR: http://localhost:3000/setup
+
+LIVE CLOUD URLS (after running cloudflare/DEPLOY.ps1):
+  CEO Dashboard: https://farewellabaya.com
+  Kiosk (HTTPS):  https://kiosk.farewellabaya.com/kiosk.html
+  Dashboard:      https://kiosk.farewellabaya.com/dashboard.html
   (Replace 3050 with PORT from .env if you changed it.)
 
 DEPLOY KIOSK TO TABLETS (10+ tablets, multiple factories):

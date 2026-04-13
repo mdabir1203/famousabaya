@@ -376,8 +376,10 @@ const XLSX_COL_ALIASES = {
   code:    ['code', 'item_code', 'sku', 'abaya_code', 'product_code'],
   barcode: ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'display_name', 'barcode_name'],
   design:  ['design', 'description', 'item_name', 'name', 'title'],
-  process: ['process', 'work_type', 'department', 'role', 'item_category', 'category'],
-  tier:    ['tier', 'grade', 'abaya_tier', 'abaya_grade', 'item_grade', 'abaya_category'],
+  // process is set from folder name by the catalog-watcher, never from Excel columns.
+  process: ['process', 'work_type', 'department', 'role'],
+  // "Item Category" in the factory Excel = abaya quality grade (Standard/Premium/Luxury/Plain Abaya).
+  tier:    ['tier', 'grade', 'abaya_tier', 'abaya_grade', 'item_grade', 'abaya_category', 'item_category', 'category'],
   icon:    ['icon', 'emoji'],
 };
 const XLSX_REVERSE_MAP = {};
@@ -407,7 +409,8 @@ function parseCatalogXlsxFile(filePath) {
     if (!out.id && out.code) {
       out.id = out.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
-    if (out.barcode && out.process) abayas.push(out);
+    // process is set externally (folder name / catalog-watcher); only barcode is required.
+    if (out.barcode) abayas.push(out);
   }
   return abayas;
 }

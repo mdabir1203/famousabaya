@@ -16,14 +16,32 @@ Package manager: Yarn Berry 4 (PnP — no node_modules folder)
    - Creates "AbaYa Track" shortcut on your Desktop.
 
 4) Edit .env in the folder root (same level as server.js):
-   - CF_WORKER_URL = your Cloudflare Worker URL (optional for local-only)
-   - CF_INGEST_SECRET = same secret as on the Worker (optional if not using cloud)
+
+   REQUIRED — point to your barcode catalog file:
+     CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
+   (The server reads this file at startup and every 24 h automatically.)
+
+   Your Excel file needs these columns:
+     - Barcode Display Name  (unique barcode per row — shown on kiosk)
+     - Item Category         (work type: Tailor (01), Hand Work, etc.)
+     - Item Name             (optional description shown on kiosk card)
+     - Tier                  (optional: Standard / Premium / Luxury / Plain Abaya)
+   Full format guide: docs\CATALOG_EXCEL_SPEC.md
+
+   OPTIONAL — Cloudflare cloud sync:
+     CF_WORKER_URL = your Cloudflare Worker URL
+     CF_INGEST_SECRET = same secret as on the Worker
 
 5) Double-click "AbaYa Track" on your Desktop (or install\LAUNCH-ALL.bat).
-   Opens the kiosk and dashboard in your browser, starts the server.
+   Opens the kiosk, dashboard, and tablet QR setup in your browser.
    Leave the server window open while working.
 
-Office PC (catalog Excel upload):
+Kiosk features:
+- Employees scan or type the barcode, or type the item name (e.g. FWAS 3593)
+  to see all matching variants — then tap to choose.
+- Each card shows: Barcode (Item No.), item description, and tier badge.
+
+Office PC (catalog folder watcher — optional):
 - Copy tools\catalog-watcher\config.example.json to config.json and edit it.
 - LAUNCH-ALL.bat will start the watcher automatically from that point.
 - Full steps: docs\OFFICE_LAPTOP.md

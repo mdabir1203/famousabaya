@@ -53,30 +53,35 @@ const HEADER_ALIASES = {
   title: 'design',
 
   // ── process ───────────────────────────────────────────────────────────────────
-  // "Item Category" is the exact column name in the factory Excel export.
+  // Process (work role) is NEVER read from the Excel file.
+  // It is set by alignAbayasToEmployeeProcess() from the folder name.
+  // Only keep these aliases so that if someone explicitly adds a "process" column it maps correctly.
   process: 'process',
   work_type: 'process',
   department: 'process',
   role: 'process',
-  item_category: 'process',
-  category: 'process',
 
   // ── tier (quality grade: Standard, Premium, Luxury, Plain Abaya) ─────────────
+  // "Item Category" is the exact column name in the factory Excel export — it is the
+  // ABAYA category/tier, NOT the employee work process.
   tier: 'tier',
   grade: 'tier',
   abaya_tier: 'tier',
   abaya_grade: 'tier',
   item_grade: 'tier',
   abaya_category: 'tier',
+  item_category: 'tier',
+  category: 'tier',
 
   // ── icon ──────────────────────────────────────────────────────────────────────
   icon: 'icon',
   emoji: 'icon',
 };
 
-// id and code are auto-derived from barcode when absent — only barcode + process
-// must be supplied as explicit columns.
-const REQUIRED_CANONICAL = ['barcode', 'process'];
+// id and code are auto-derived from barcode when absent.
+// process is NEVER read from the Excel file — it is set by alignAbayasToEmployeeProcess()
+// from the folder name. Only barcode is required as an explicit column.
+const REQUIRED_CANONICAL = ['barcode'];
 // Optional canonical fields that may be absent or have duplicate source columns
 // without causing a hard error.
 const OPTIONAL_CANONICAL = new Set(['id', 'code', 'design', 'icon', 'tier']);
@@ -92,7 +97,7 @@ function normHeaderKey(k) {
 function mapNormalizedHeaderToCanonical(normKey) {
   if (!normKey) return null;
   if (HEADER_ALIASES[normKey]) return HEADER_ALIASES[normKey];
-  if (['id', 'code', 'barcode', 'design', 'process', 'icon'].includes(normKey)) return normKey;
+  if (['id', 'code', 'barcode', 'design', 'process', 'tier', 'icon'].includes(normKey)) return normKey;
   return null;
 }
 
@@ -141,8 +146,10 @@ function validateHeadersPresent(columnKeys) {
     throw new Error(
       'Missing required column(s) for: ' +
         missing.join(', ') +
-        '. Required headers: "Barcode Display Name" (or barcode/bc) and "Item Category" (or process/category). ' +
-        'Optional: Item Name / design, id, code / Item Code. See docs/CATALOG_EXCEL_SPEC.md'
+        '. Required header: "Barcode Display Name" (or barcode/bc). ' +
+        'Optional: "Item Name" (design), "Item Category" (tier/grade), id, code. ' +
+        'Note: employee process/work-role comes from the subfolder name, NOT from the Excel file. ' +
+        'See docs/CATALOG_EXCEL_SPEC.md'
     );
   }
   return mapped;
@@ -231,13 +238,14 @@ function parseItemsXlsx(filePath, opts) {
       a.id = a.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
 
-    if (!a.barcode || !a.process) {
+    if (!a.barcode) {
       throw new Error(
-        `Row ${excelRow}: "Barcode Display Name" (barcode) and "Item Category" (process) are required. Got: ${JSON.stringify(a)}`
+        `Row ${excelRow}: "Barcode Display Name" (barcode) is required. Got: ${JSON.stringify(a)}`
       );
     }
-
-    validateProcessValue(a.process, excelRow);
+    // process is NOT validated here — it is set/overridden by alignAbayasToEmployeeProcess()
+    // using the folder name. If a "process" column is somehow present in the Excel and has a
+    // value, it will still be validated when alignAbayasToEmployeeProcess runs in 'strict' mode.
 
     if (seenId.has(a.id)) throw new Error(`Row ${excelRow}: duplicate id ${JSON.stringify(a.id)}`);
     if (seenCode.has(a.code)) throw new Error(`Row ${excelRow}: duplicate code ${JSON.stringify(a.code)}`);

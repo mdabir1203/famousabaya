@@ -33,7 +33,13 @@ The ZIP includes `.yarn/cache` and `yarn.lock` for both the root project and
    - Runs `yarn install` for the factory server and catalog watcher (uses bundled cache — no internet needed).
    - Creates `.env` from `.env.example`.
    - Creates an **AbaYa Track** shortcut on the Desktop.
-4. Edit **`.env`** in the unzip root with **`CF_WORKER_URL`** and **`CF_INGEST_SECRET`** if you use Cloudflare. Leave unchanged for local-only.
+4. Edit **`.env`** in the unzip root:
+   - **Required:** Set `CATALOG_XLSX_PATH` to the full path of your barcode catalog file:
+     ```
+     CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
+     ```
+     The server loads this file at startup and automatically refreshes it every 24 hours.
+   - **Optional (Cloudflare):** Set `CF_WORKER_URL` and `CF_INGEST_SECRET` for cloud sync.
 5. Double-click **AbaYa Track** on the Desktop (or `install\LAUNCH-ALL.bat`) to start everything.
 
 ---
@@ -77,11 +83,21 @@ If Windows shows **tunnel credential not found**, the connector was not register
 
 Double-click the **AbaYa Track** shortcut on the Desktop (created by `INSTALL.bat`), or run `install\LAUNCH-ALL.bat` directly. This starts the factory server, opens the kiosk and dashboard in the browser, and starts the catalog watcher if `tools\catalog-watcher\config.json` exists.
 
+**On-site (factory LAN):**
+
 | URL | Purpose |
 |-----|---------|
-| `http://localhost:3050/kiosk.html` | Floor kiosk (scan barcodes, track sessions) |
-| `http://localhost:3050/dashboard.html` | Manager / CEO live dashboard |
-| `http://localhost:3050/setup` | **Tablet QR Setup** — generate per-tablet QR codes for all factories |
+| `http://localhost:3000/kiosk.html` | Floor kiosk (scan barcodes, track sessions) |
+| `http://localhost:3000/dashboard.html` | Manager / CEO live dashboard |
+| `http://localhost:3000/setup` | **Tablet QR Setup** — generate per-tablet QR codes for all factories |
+
+**Remote / internet (after Cloudflare deploy):**
+
+| URL | Purpose |
+|-----|---------|
+| `https://farewellabaya.com` | CEO analytics dashboard (Cloudflare Worker — any device, any network) |
+| `https://kiosk.farewellabaya.com/kiosk.html` | Factory kiosk over HTTPS (via Cloudflare Tunnel) |
+| `https://kiosk.farewellabaya.com/dashboard.html` | Live manager dashboard over HTTPS |
 
 ---
 
@@ -89,7 +105,11 @@ Double-click the **AbaYa Track** shortcut on the Desktop (created by `INSTALL.ba
 
 | Task | What to do |
 |------|-----------|
-| Update abaya catalog | Drop `.xlsx` into your `watchDir` (employee subfolder or root). The watcher uploads it and moves it to **Processed**. |
+| Update barcode catalog (direct file) | Save your updated `items_export.xlsx` to the path set in `.env` → `CATALOG_XLSX_PATH`. The server re-reads it automatically every 24 h. For instant reload, restart the server — it loads the file within 3 seconds of startup. |
+| Change catalog file location | Edit `CATALOG_XLSX_PATH` in `.env` to the new absolute path. Restart the server. |
+| Update catalog via folder watcher | Drop `.xlsx` into your `watchDir` (employee subfolder or root). The watcher uploads it immediately. |
+| Add a tier/grade to items | Add a **Tier** column to your Excel (`Standard`, `Premium`, `Luxury`, `Plain Abaya`). The kiosk and dashboard show colour-coded badges automatically after the next catalog reload. |
+| Employee can't find an item | On the kiosk scan screen, they can type the **Item Name** (e.g. `FWAS 3593`) — the grid live-filters to show all matching variants. Tap the correct one. |
 | Add or remove an employee | Edit the `EMPLOYEES` array in `server.js` (and the matching array in `public/data.js`). Restart the server. |
 | Change the server port | Set `PORT=XXXX` in `.env`. Restart the server. |
 | Add a package dependency | Run `yarn add <pkg>` in the relevant folder, then re-run `yarn run package:release` to rebuild the ZIP. |
@@ -97,6 +117,7 @@ Double-click the **AbaYa Track** shortcut on the Desktop (created by `INSTALL.ba
 | Build a new ZIP for another PC | From the repo root in PowerShell: `yarn run package:release`. Output: `dist\AbaYa-Track-vX.zip`. |
 | Upgrade Node.js | Install the new LTS from nodejs.org, then re-run `install\INSTALL.bat`. |
 | Change Cloudflare Worker URL or secret | Edit `.env` (`CF_WORKER_URL`, `CF_INGEST_SECRET`) and restart the server. Update `tools\catalog-watcher\config.json` (`workerUrl`, `ingestSecret`) too. |
-| Force a full catalog resync now | Drop any valid `.xlsx` in the watch folder, or restart the catalog watcher (`scanOnStart: true` in `config.json` to auto-trigger on start). |
+| Force a full catalog resync now | Restart the server (picks up `CATALOG_XLSX_PATH` file in 3 s), or drop any valid `.xlsx` in the watch folder. |
 | Check what catalog is loaded | Open `http://localhost:3050/api/catalog/abayas` in a browser while the server is running. |
+| Excel column format | See `docs\CATALOG_EXCEL_SPEC.md` — required: `Barcode Display Name`, `Item Category`. Optional: `Item Name`, `Tier`. |
 | Logs | Each component runs in its own titled cmd window — check the **AbaYa Server** and **AbaYa Catalog Watcher** windows for errors. |

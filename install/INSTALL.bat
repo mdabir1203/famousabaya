@@ -77,12 +77,23 @@ echo.
 echo === Install finished ===
 echo.
 echo NEXT STEPS:
-echo   1. Edit .env with your CF_WORKER_URL and CF_INGEST_SECRET ^(skip if local-only^).
-echo   2. Double-click "AbaYa Track" on your Desktop to launch everything.
+echo   1. Open .env in Notepad and set:
+echo        CATALOG_XLSX_PATH=C:\path\to\your\items_export.xlsx
+echo      ^(e.g.  C:\Users\DELL\Desktop\barcode\items_export.xlsx^)
+echo      The server loads this file at startup and refreshes it every 24 hours.
+echo.
+echo   2. Optional — Cloudflare cloud sync:
+echo        CF_WORKER_URL=https://abaya-track.YOURNAME.workers.dev
+echo        CF_INGEST_SECRET=your_secret
+echo      Skip if running local-only.
+echo.
+echo   3. Double-click "AbaYa Track" on your Desktop to launch everything.
 echo      ^(Or: install\LAUNCH-ALL.bat^)
 echo.
 echo   Kiosk:     http://localhost:3050/kiosk.html
 echo   Dashboard: http://localhost:3050/dashboard.html
+echo   Tablet QR: http://localhost:3050/setup
 echo   Full IT guide: docs\INSTALL_WINDOWS.md
+echo   Catalog format: docs\CATALOG_EXCEL_SPEC.md
 echo.
 pause

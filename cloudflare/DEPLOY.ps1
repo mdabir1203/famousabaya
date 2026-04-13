@@ -186,28 +186,14 @@ Write-Ok "CEO_TOKEN set"
 
 # ── Step 8: Deploy ──────────────────────────────────────────────────────────────
 Write-Step 8 "Deploying Worker to Cloudflare"
-Write-Info "Deploying abaya-track worker..."
+Write-Info "Deploying abaya-track worker to farewellabaya.com..."
 $deployOut = & npx wrangler deploy 2>&1 | Out-String
 Write-Host $deployOut
 
-# Parse the worker URL from deploy output
-$WORKER_URL = ""
-$deployOut -split "`n" | ForEach-Object {
-    if ($_ -match 'https://abaya-track\.[^\s]+\.workers\.dev') {
-        $WORKER_URL = $Matches[0].Trim()
-    }
-    if ($_ -match 'Deployed to (https://[^\s]+)') {
-        if (-not $WORKER_URL) { $WORKER_URL = $Matches[1].Trim() }
-    }
-}
-# Fallback: try to get it from wrangler subdomain
-if (-not $WORKER_URL) {
-    $whoami = & npx wrangler whoami 2>&1 | Out-String
-    $subdomain = ($whoami | Select-String 'subdomain:\s*(\S+)').Matches.Groups[1].Value
-    if ($subdomain) { $WORKER_URL = "https://abaya-track.$subdomain.workers.dev" }
-}
+# Custom domain is declared in wrangler.toml [[custom_domains]] — always use it.
+$WORKER_URL = "https://farewellabaya.com"
 
-Write-Ok "Worker deployed!"
+Write-Ok "Worker deployed! Live at $WORKER_URL"
 
 # ── Step 9: Patch .env ──────────────────────────────────────────────────────────
 Write-Step 9 "Updating factory server .env"
@@ -261,36 +247,37 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║   DEPLOYMENT COMPLETE — CEO Dashboard is LIVE               ║" -ForegroundColor Green
 Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-
-if ($WORKER_URL) {
-    Write-Host "  CEO Dashboard URL:" -ForegroundColor White
-    Write-Host "    $WORKER_URL" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  CEO Login Password (CEO_TOKEN):" -ForegroundColor White
-    Write-Host "    $CEO_TOKEN" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "  Share this with the CEO (works on any phone, any network):" -ForegroundColor White
-    Write-Host ""
-    Write-Host "    URL:      $WORKER_URL" -ForegroundColor Cyan
-    Write-Host "    Password: $CEO_TOKEN" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  The CEO opens the URL, types the password, and sees live data." -ForegroundColor Gray
-    Write-Host "  Dashboard auto-refreshes every 5 seconds." -ForegroundColor Gray
-    Write-Host "  Reports can be sent to WhatsApp with one tap." -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "  NEXT STEP: Restart the factory server so it starts pushing" -ForegroundColor White
-    Write-Host "  live data to Cloudflare:" -ForegroundColor White
-    Write-Host ""
-    Write-Host "    Close the current server window, then double-click:" -ForegroundColor Gray
-    Write-Host "    install\LAUNCH-ALL.bat" -ForegroundColor Yellow
-    Write-Host ""
-} else {
-    Write-Warn "Could not auto-detect worker URL."
-    Write-Warn "Run: npx wrangler deploy   from the cloudflare\ folder"
-    Write-Warn "The URL will appear in the output (e.g. https://abaya-track.xxx.workers.dev)"
-}
+Write-Host "  CEO Dashboard URL:" -ForegroundColor White
+Write-Host "    https://farewellabaya.com" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  CEO Login Password (CEO_TOKEN):" -ForegroundColor White
+Write-Host "    $CEO_TOKEN" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  Share this with the CEO (works on any phone, any network):" -ForegroundColor White
+Write-Host ""
+Write-Host "    URL:      https://farewellabaya.com" -ForegroundColor Cyan
+Write-Host "    Password: $CEO_TOKEN" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  The CEO opens the URL, types the password, and sees live data." -ForegroundColor Gray
+Write-Host "  Dashboard auto-refreshes every 5 seconds." -ForegroundColor Gray
+Write-Host "  Reports can be sent to WhatsApp with one tap." -ForegroundColor Gray
+Write-Host ""
+Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  Factory kiosk (on-site tablets / LAN):" -ForegroundColor White
+Write-Host "    http://<factory-PC-LAN-IP>:3000/kiosk.html" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Factory kiosk (remote HTTPS via Cloudflare Tunnel):" -ForegroundColor White
+Write-Host "    https://kiosk.farewellabaya.com/kiosk.html" -ForegroundColor Cyan
+Write-Host "    (Set up tunnel in Zero Trust: one.dash.cloudflare.com)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host "  NEXT STEP: Restart the factory server so it starts pushing" -ForegroundColor White
+Write-Host "  live data to farewellabaya.com:" -ForegroundColor White
+Write-Host ""
+Write-Host "    Close the current server window, then double-click:" -ForegroundColor Gray
+Write-Host "    install\LAUNCH-ALL.bat" -ForegroundColor Yellow
+Write-Host ""
 
 Write-Host "  Press any key to exit..." -ForegroundColor DarkGray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

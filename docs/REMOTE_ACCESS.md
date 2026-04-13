@@ -2,7 +2,7 @@
 
 This guide is for exposing **AbaYa Track** ([server.js](../server.js); default port **3050**, override with **`PORT`** in `.env`) over **HTTPS** so **authorized people** (e.g. your client) can open the kiosk or dashboard from **any normal internet connection** (home Wi‑Fi, mobile data, office abroad).
 
-**Recommended pattern:** **Named Cloudflare Tunnel** + **Cloudflare Access** (Zero Trust) on a hostname in **your** domain. On-site tablets or PCs can keep using **plain HTTP on the LAN** (`http://<server-LAN-IP>:3050` unless you changed `PORT`).
+**Recommended pattern:** **Named Cloudflare Tunnel** + **Cloudflare Access** (Zero Trust) on a hostname under **farewellabaya.com**. On-site tablets or PCs can keep using **plain HTTP on the LAN** (`http://<server-LAN-IP>:3000` unless you changed `PORT`).
 
 Official references (UI names change over time; use these if steps differ):
 
@@ -23,7 +23,7 @@ Official references (UI names change over time; use these if steps differ):
 
 ---
 
-## Part A — Named tunnel to the Node port (default `localhost:3050`)
+## Part A — Named tunnel to the Node port (`localhost:3000`)
 
 ### 1. Create a tunnel in Zero Trust
 
@@ -48,17 +48,17 @@ If you see **Add a route** with four choices, choose **Published application** (
 
 Still in the tunnel configuration (or **Public hostnames** / **Ingress**):
 
-1. Add a **public hostname**, for example `kiosk.yourdomain.com`.
-2. Set the **service** to **`http://localhost:3050`** (or `http://127.0.0.1:3050`) — **must match** `PORT` in `.env` on that PC (default is **3050**, not 3000).
+1. Add a **public hostname**: subdomain `kiosk`, domain `farewellabaya.com` → full hostname: `1`
+2. Set the **service** to **`http://localhost:3000`** — must match `PORT=3000` in `.env`.
 3. Save. Cloudflare will create or prompt for the **DNS** record (usually a **CNAME** to `xxxx.cfargotunnel.com`).
 
 Wait for DNS to propagate (often a few minutes).
 
-### 2b. Three factories
+### 2b. Multiple factories
 
 Each site runs its own **PC + `server.js` + `cloudflared`**. Use **one tunnel per factory** (or one tunnel with multiple **public hostnames** / ingress rules if a single connector can reach all origins — usually **one connector machine per site** is simplest):
 
-- Example hostnames: `factory1.yourdomain.com`, `factory2.yourdomain.com`, `factory3.yourdomain.com`, each pointing to that site’s `http://localhost:3050` (or whatever `PORT` is on that machine).
+- Example hostnames: `factory1.farewellabaya.com`, `factory2.farewellabaya.com`, `factory3.farewellabaya.com`, each pointing to that site’s `http://localhost:3000` (or whatever `PORT` is on that machine).
 - Use the **same Cloudflare Access application** (or cloned policies) so the client’s login works for every hostname.
 
 **Central “CEO” analytics** without visiting each factory: your **Cloudflare Worker** CEO dashboard ([cloudflare](../cloudflare)) is already a separate global URL; tunnels are for the **live floor** kiosk/dashboard at each location.
@@ -72,8 +72,8 @@ tunnel: YOUR_TUNNEL_UUID
 credentials-file: C:\Users\YOUR_USER\.cloudflared\YOUR_TUNNEL_UUID.json
 
 ingress:
-  - hostname: kiosk.yourdomain.com
-    service: http://localhost:3050
+  - hostname: kiosk.farewellabaya.com
+    service: http://localhost:3000
   - service: http_status:404
 ```
 
@@ -88,10 +88,10 @@ Default config location on Windows: **`%USERPROFILE%\.cloudflared\config.yml`**.
 
 ### 5. Start the app
 
-On the same PC, start AbaYa as usual ([install/START-AbaYa-Server.bat](../install/START-AbaYa-Server.bat) or `npm start`).
+On the same PC, start AbaYa as usual (`install\LAUNCH-ALL.bat`).
 
 Check **without** Access first (if Cloudflare allows temporarily):  
-`https://kiosk.yourdomain.com/kiosk.html`  
+`https://kiosk.farewellabaya.com/kiosk.html`  
 If it loads, the tunnel and origin are correct.
 
 ---
@@ -102,7 +102,7 @@ If it loads, the tunnel and origin are correct.
 
 1. In Zero Trust, go to **Access** → **Applications**.
 2. **Add an application** → **Self-hosted** (or **SaaS** / **Browser** per current UI).
-3. **Application domain:** `kiosk.yourdomain.com` (same hostname as the tunnel). You can scope to the whole host or path later if you split kiosk vs dashboard.
+3. **Application domain:** `kiosk.farewellabaya.com` (same hostname as the tunnel). You can scope to the whole host or path later if you split kiosk vs dashboard.
 4. **Policies:** Add a rule such as:
    - **Allow** emails ending in `@clientcompany.com`, **or**
    - **Allow** specific emails (client + your team), **or**
@@ -111,14 +111,14 @@ If it loads, the tunnel and origin are correct.
 
 ### After Access is on
 
-- Client opens **`https://kiosk.yourdomain.com/kiosk.html`** (or `/dashboard.html`) from **mobile data** or any Wi‑Fi, signs in, and should see the same UI as on the LAN.
+- Client opens **`https://kiosk.farewellabaya.com/kiosk.html`** (or `/dashboard.html`) from **mobile data** or any Wi‑Fi, signs in, and should see the same UI as on the LAN.
 - **Socket.IO** (live updates) uses WebSockets/long polling. Cloudflare **generally supports** WebSockets on proxied hostnames; if live updates fail only through the tunnel, check [Cloudflare WebSockets](https://developers.cloudflare.com/network/websockets/) and tunnel logs.
 
 ---
 
 ## Part C — On-site LAN (unchanged)
 
-- Tablets or kiosks on the factory network: **`http://<SERVER_LAN_IP>:3050/kiosk.html`** (or your `PORT`)
+- Tablets or kiosks on the factory network: **`http://<SERVER_LAN_IP>:3000/kiosk.html`** (or your `PORT`)
 - Windows Firewall: allow **inbound TCP** on that **PORT** from the **tablet subnet** if needed (see [DEPLOYMENT_KIOSK_FINGERPRINT.md](DEPLOYMENT_KIOSK_FINGERPRINT.md)).
 - No Access step on LAN unless you intentionally put everything behind the tunnel only.
 
@@ -129,7 +129,7 @@ If it loads, the tunnel and origin are correct.
 For **internal** tests you may use:
 
 ```bash
-cloudflared tunnel --url http://localhost:3050
+cloudflared tunnel --url http://localhost:3000
 ```
 
 This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** on your brand domain, and is **not** a substitute for **Part A + B** when the client must test from anywhere with a **stable, controlled** URL.
@@ -161,7 +161,7 @@ This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** 
 
 | Symptom | What to check |
 |--------|----------------|
-| **502 / error origin** | Is `node server.js` running? Tunnel service up? Service URL matches **`PORT`** (default `http://localhost:3050`)? |
+| **502 / error origin** | Is `node server.js` running? Tunnel service up? Service URL matches **`PORT`** (default `http://localhost:3000`)? |
 | **Tunnel credential not found** | [TUNNEL_CREDENTIALS_WINDOWS.md](TUNNEL_CREDENTIALS_WINDOWS.md) — re-run **Install connector** in Zero Trust; fix `config.yml` **`credentials-file`**. |
 | **DNS not resolving** | CNAME for `kiosk…` points to tunnel; propagation delay. |
 | **Access loop or 403** | Policy includes client’s email / IdP; application domain matches hostname. |

@@ -2,6 +2,12 @@ name = "abaya-track"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
+account_id = "cac65f11aecab7f7dc4446390d49f4f2"
+
+# ─── Custom domain — CEO dashboard lives at https://farewellabaya.com ────────
+# Cloudflare manages DNS and TLS automatically. No manual DNS record needed.
+[[custom_domains]]
+name = "farewellabaya.com"
 
 # ─── Timezone for factory day boundaries and hourly charts ───────────────────
 [vars]
