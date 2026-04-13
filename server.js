@@ -1,6 +1,7 @@
 'use strict';
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const http = require('http');
@@ -120,17 +121,17 @@ const EMPLOYEES = [
 ];
 
 const DEFAULT_ABAYA_CATALOG = [
-  {id:'a1',code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',    process:'Tailor (01)', icon: ''},
-  {id:'a2',code:'AB-0042',barcode:'AB00000042',design:'Embroidered Ceremonial', process:'Tailor (02)', icon: ''},
-  {id:'a3',code:'AB-0043',barcode:'AB00000043',design:'Casual Linen Blend',     process:'Hand Work', icon: ''},
-  {id:'a4',code:'AB-0044',barcode:'AB00000044',design:'Royal Velvet Edition',   process:'Stone Work', icon: ''},
-  {id:'a5',code:'AB-0045',barcode:'AB00000045',design:'Minimal White Abaya',    process:'Button', icon: ''},
-  {id:'a6',code:'AB-0046',barcode:'AB00000046',design:'Sport Performance',      process:'Embroidery', icon: ''},
-  {id:'a7',code:'AB-0047',barcode:'AB00000047',design:'Heritage Embossed',      process:'Ari Work', icon: ''},
-  {id:'a8',code:'AB-0048',barcode:'AB00000048',design:'Silk Ceremonial',        process:'Hand Designing', icon: ''},
-  {id:'a9',code:'AB-0049',barcode:'AB00000049',design:'Invoice batch',          process:'Invoice maker', icon: ''},
-  {id:'a10',code:'AB-0050',barcode:'AB00000050',design:'Packaging queue',        process:'Packaging', icon: ''},
-  {id:'a11',code:'AB-0051',barcode:'AB00000051',design:'QC inspection lot',      process:'Checker', icon: ''},
+  {id:'a1', code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',    process:'Tailor (01)',    tier:'Standard',   icon: ''},
+  {id:'a2', code:'AB-0042',barcode:'AB00000042',design:'Embroidered Ceremonial', process:'Tailor (02)',    tier:'Premium',    icon: ''},
+  {id:'a3', code:'AB-0043',barcode:'AB00000043',design:'Casual Linen Blend',     process:'Hand Work',     tier:'Plain Abaya',icon: ''},
+  {id:'a4', code:'AB-0044',barcode:'AB00000044',design:'Royal Velvet Edition',   process:'Stone Work',    tier:'Luxury',     icon: ''},
+  {id:'a5', code:'AB-0045',barcode:'AB00000045',design:'Minimal White Abaya',    process:'Button',        tier:'Plain Abaya',icon: ''},
+  {id:'a6', code:'AB-0046',barcode:'AB00000046',design:'Sport Performance',      process:'Embroidery',    tier:'Standard',   icon: ''},
+  {id:'a7', code:'AB-0047',barcode:'AB00000047',design:'Heritage Embossed',      process:'Ari Work',      tier:'Premium',    icon: ''},
+  {id:'a8', code:'AB-0048',barcode:'AB00000048',design:'Silk Ceremonial',        process:'Hand Designing',tier:'Luxury',     icon: ''},
+  {id:'a9', code:'AB-0049',barcode:'AB00000049',design:'Invoice batch',          process:'Invoice maker', tier:'',           icon: ''},
+  {id:'a10',code:'AB-0050',barcode:'AB00000050',design:'Packaging queue',        process:'Packaging',     tier:'',           icon: ''},
+  {id:'a11',code:'AB-0051',barcode:'AB00000051',design:'QC inspection lot',      process:'Checker',       tier:'',           icon: ''},
 ];
 
 let abayaCatalog = DEFAULT_ABAYA_CATALOG.map(function (a) {
@@ -146,6 +147,7 @@ function normalizeAbayaCatalogRows(rows) {
       barcode: String(a.barcode),
       design: String(a.design != null ? a.design : ''),
       process: String(a.process != null ? a.process : ''),
+      tier: a.tier != null ? String(a.tier) : '',
       icon: a.icon != null ? String(a.icon) : '',
     };
   });
@@ -360,6 +362,77 @@ app.get('/api/employees', (req, res) => {
 });
 
 const CATALOG_INGEST_SECRET = process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
+
+// ─── LOCAL XLSX CATALOG LOADER ────────────────────────────────────────────────
+// Set CATALOG_XLSX_PATH in .env to a local items_export.xlsx.
+// The server reads it at startup and refreshes every CATALOG_XLSX_INTERVAL_MS (default 24 h).
+const CATALOG_XLSX_PATH = process.env.CATALOG_XLSX_PATH || '';
+const CATALOG_XLSX_INTERVAL_MS = Math.max(Number(process.env.CATALOG_XLSX_INTERVAL_MS) || 0, 3600000) || 86400000;
+
+// Column aliases mirror catalog-parse.js — keep in sync.
+// "Barcode Display Name" and "Item Category" are the factory Excel column names.
+const XLSX_COL_ALIASES = {
+  id:      ['id', 'abaya_id', 'item_id'],
+  code:    ['code', 'item_code', 'sku', 'abaya_code', 'product_code'],
+  barcode: ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'display_name', 'barcode_name'],
+  design:  ['design', 'description', 'item_name', 'name', 'title'],
+  process: ['process', 'work_type', 'department', 'role', 'item_category', 'category'],
+  tier:    ['tier', 'grade', 'abaya_tier', 'abaya_grade', 'item_grade', 'abaya_category'],
+  icon:    ['icon', 'emoji'],
+};
+const XLSX_REVERSE_MAP = {};
+for (const [field, aliases] of Object.entries(XLSX_COL_ALIASES)) {
+  for (const alias of aliases) {
+    XLSX_REVERSE_MAP[alias.toLowerCase().replace(/[\s\u00a0-]+/g, '_')] = field;
+  }
+}
+
+function parseCatalogXlsxFile(filePath) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
+  const sheetName = wb.SheetNames.includes('Items') ? 'Items' : wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: false });
+  const abayas = [];
+  for (const row of rows) {
+    const out = { id: '', code: '', barcode: '', design: '', process: '', tier: '', icon: '' };
+    for (const [k, v] of Object.entries(row)) {
+      const norm = k.trim().toLowerCase().replace(/[\s\u00a0-]+/g, '_');
+      const field = XLSX_REVERSE_MAP[norm];
+      // For optional fields (design, tier, icon, id, code) use first non-empty value only.
+      if (field && out[field] === '') out[field] = String(v || '').trim();
+    }
+    if (!out.id && !out.code && !out.barcode) continue;
+    // Auto-derive code → barcode; id → slug of code.
+    if (!out.code && out.barcode) out.code = out.barcode;
+    if (!out.id && out.code) {
+      out.id = out.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+    if (out.barcode && out.process) abayas.push(out);
+  }
+  return abayas;
+}
+
+function loadCatalogFromXlsxFile() {
+  if (!CATALOG_XLSX_PATH) return;
+  const resolved = path.isAbsolute(CATALOG_XLSX_PATH)
+    ? CATALOG_XLSX_PATH
+    : path.join(__dirname, CATALOG_XLSX_PATH);
+  if (!fs.existsSync(resolved)) {
+    console.warn('[catalog-xlsx] File not found:', resolved);
+    return;
+  }
+  try {
+    const abayas = parseCatalogXlsxFile(resolved);
+    if (abayas.length === 0) { console.warn('[catalog-xlsx] No valid rows found in', resolved); return; }
+    abayaCatalog = normalizeAbayaCatalogRows(abayas);
+    catalogCloudVersion = String(Date.now());
+    io.emit('catalog_update', { version: catalogCloudVersion });
+    console.log('[catalog-xlsx] Loaded', abayas.length, 'items from', resolved);
+  } catch (e) {
+    console.error('[catalog-xlsx] Parse error (non-fatal):', e.message);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function validateCatalogPutRows(rows) {
   if (!Array.isArray(rows)) {
@@ -696,4 +769,10 @@ server.listen(PORT, () => {
   console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
+  // Local xlsx catalog: load at startup then refresh daily
+  if (CATALOG_XLSX_PATH) {
+    setTimeout(loadCatalogFromXlsxFile, 3000);
+    setInterval(loadCatalogFromXlsxFile, CATALOG_XLSX_INTERVAL_MS);
+    console.log(`  Catalog:   ${path.resolve(__dirname, CATALOG_XLSX_PATH)} (refreshes every ${Math.round(CATALOG_XLSX_INTERVAL_MS / 3600000)}h)`);
+  }
 });

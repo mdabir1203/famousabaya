@@ -28,9 +28,23 @@ function normalizeDashboardAbayaRow(a) {
     barcode: String(a.barcode),
     design: String(a.design != null ? a.design : ''),
     process: String(a.process != null ? a.process : ''),
+    tier: a.tier != null ? String(a.tier) : '',
     icon: a.icon != null ? String(a.icon) : '',
     status: a.status || 'waiting',
   };
+}
+
+function dashTierBadge(tier) {
+  if (!tier) return '';
+  var slug = tier.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  var colors = {
+    'standard':    'background:#1e3a5f;color:#93c5fd',
+    'premium':     'background:#3b1f6b;color:#c4b5fd',
+    'luxury':      'background:#4a1a00;color:#fcd34d',
+    'plain-abaya': 'background:#1f2937;color:#9ca3af',
+  };
+  var style = colors[slug] || 'background:var(--s2);color:var(--tx2)';
+  return '<span style="display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;' + style + '">' + tier + '</span>';
 }
 
 function refreshDashboardAbayaCatalog() {
@@ -104,7 +118,11 @@ function renderLiveSessions() {
       '<div class="emp-av" style="background:' + (emp.photo ? 'transparent' : emp.color) + '">' + avHtml + '</div>' +
       '<div style="flex:1">' +
         '<div style="font-size:13px;font-weight:600">' + emp.name + '</div>' +
-        '<div style="font-size:11px;color:var(--tx3)">' + emp.code + ' &middot; <span style="color:var(--tx2);font-weight:600">' + sessionProcess + '</span> &middot; ' + (ab ? ab.code : '—') + '</div>' +
+        '<div style="font-size:11px;color:var(--tx3);display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:2px">' +
+          emp.code + ' &middot; <span style="color:var(--tx2);font-weight:600">' + sessionProcess + '</span>' +
+          (ab ? ' &middot; ' + escapeHtml(ab.code) : '') +
+          (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') +
+        '</div>' +
       '</div>' +
       '<div style="text-align:right">' +
         '<div style="font-size:14px;font-weight:700;color:var(--gr)">' + fmtHMS(elapsed) + '</div>' +
@@ -372,7 +390,7 @@ function openReport(type) {
       return '<div style="display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px;align-items:start">' +
         '<span style="color:var(--tx3)">' + t + '</span>' +
         '<span style="font-weight:600">' + (emp ? escapeHtml(emp.name) : '—') + '</span>' +
-        '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : '—') + '</span>' +
+        '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : '—') + (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') + '</span>' +
         '<span style="color:var(--bl);font-weight:600">' + escapeHtml(String(logProcess)) + '</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(l.duration_sec) + '</span>' +
         formatInvoiceCellHtml(l) +

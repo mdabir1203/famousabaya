@@ -72,9 +72,16 @@ function normalizeKioskAbayaRow(a) {
     barcode: String(a.barcode),
     design: String(a.design != null ? a.design : ''),
     process: String(a.process != null ? a.process : ''),
+    tier: a.tier != null ? String(a.tier) : '',
     icon: a.icon != null && String(a.icon) !== '' ? String(a.icon) : '&#128142;',
     status: a.status || 'waiting',
   };
+}
+
+function tierBadgeHtml(tier) {
+  if (!tier) return '';
+  var slug = tier.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return '<span class="ab-tier ab-tier-' + slug + '">' + tier + '</span>';
 }
 
 function refreshKioskAbayaCatalog() {
@@ -263,7 +270,8 @@ function onBcInput(val) {
     showToast(tokens.length - 1 + ' more code(s) queued from list', 'info');
     val = el.value;
   }
-  if (val.length >= 7) tryManualBarcode();
+  // Live-filter the grid as the employee types (item name OR barcode)
+  filterAbayaGrid(normalizeBcToken(val));
   resetIdleTimer();
 }
 
@@ -271,12 +279,13 @@ function onBcPaste() {
   setTimeout(function () {
     const el = document.getElementById('bc-input');
     const tokens = splitBcTokens(el.value);
-    if (tokens.length <= 1) return;
-    el.value = normalizeBcToken(tokens[0]);
-    bcExcelQueue = tokens.slice(1).map(normalizeBcToken);
-    updateBcQueueHint();
-    showToast('Pasted ' + tokens.length + ' codes — using first', 'info');
-    if (el.value.length >= 7) tryManualBarcode();
+    if (tokens.length > 1) {
+      el.value = normalizeBcToken(tokens[0]);
+      bcExcelQueue = tokens.slice(1).map(normalizeBcToken);
+      updateBcQueueHint();
+      showToast('Pasted ' + tokens.length + ' codes — using first', 'info');
+    }
+    filterAbayaGrid(normalizeBcToken(el.value));
   }, 0);
 }
 
@@ -300,9 +309,25 @@ function tryManualBarcode() {
 
   const val = first;
   if (!val) return;
-  const a = ABAYAS.find(x => x.code === val || x.barcode === val);
-  if (a) selectAbaya(a.id);
-  else showToast('Abaya "' + val + '" not found', 'error');
+
+  // Exact code/barcode match → auto-select
+  const exact = ABAYAS.find(x => x.code === val || x.barcode === val);
+  if (exact) { selectAbaya(exact.id); return; }
+
+  // Partial match — filter grid and tell employee to tap the right variant
+  const roleFilter = selRole || (selEmp ? selEmp.process : '');
+  const partial = ABAYAS.filter(function (x) {
+    return x.process === roleFilter && (
+      x.barcode.toUpperCase().includes(val) ||
+      x.design.toUpperCase().includes(val)
+    );
+  });
+  filterAbayaGrid(val);
+  if (partial.length > 1) {
+    showToast(partial.length + ' items match "' + val + '" — tap the one you need', 'info');
+  } else if (partial.length === 0) {
+    showToast('Item "' + val + '" not found', 'error');
+  }
 }
 
 function renderAbayaGrid() {
@@ -320,15 +345,78 @@ function renderAbayaGrid() {
   document.getElementById('ab-empty').style.display = 'none';
   grid.innerHTML = procAbayas.map(a =>
     '<div class="ab-card" onclick="selectAbaya(\'' + a.id + '\')">' +
+      '<div class="ab-card-bc-lbl">Item No.</div>' +
       '<div class="ab-card-bc">' + a.barcode + '</div>' +
-      '<div style="display:flex;align-items:center;gap:6px">' +
-        '<span style="font-size:16px">' + a.icon + '</span>' +
-        '<div class="ab-card-code">' + a.code + '</div>' +
+      '<div class="ab-card-des">' +
+        (a.icon ? '<span style="margin-right:4px">' + a.icon + '</span>' : '') +
+        a.design +
       '</div>' +
-      '<div class="ab-card-des">' + a.design + '</div>' +
+      '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
+        '<div class="ab-card-code">' + a.code + '</div>' +
+        tierBadgeHtml(a.tier) +
+      '</div>' +
     '</div>'
   ).join('');
 }
+
+// ─── LIVE ITEM SEARCH ────────────────────────────────────────────────────────
+// Called on every keystroke in bc-input. Filters the ab-grid by:
+//  1. Exact barcode / code match          → auto-selects immediately
+//  2. Barcode starts-with / contains      → shows matched cards
+//  3. Item Name (design) contains query   → shows matched cards
+//  Empty query restores the full role grid.
+function filterAbayaGrid(query) {
+  if (!selEmp) return;
+  const q = (query || '').trim().toUpperCase();
+  if (!q) { renderAbayaGrid(); return; }
+
+  const roleFilter = selRole || selEmp.process;
+  const pool = ABAYAS.filter(a => a.process === roleFilter);
+
+  const matches = pool.filter(function (a) {
+    const bc  = a.barcode.toUpperCase();
+    const cod = a.code.toUpperCase();
+    const des = a.design.toUpperCase();
+    return bc === q || cod === q ||
+           bc.startsWith(q) || des.includes(q) || bc.includes(q);
+  });
+
+  const grid    = document.getElementById('ab-grid');
+  const emptyEl = document.getElementById('ab-empty');
+
+  if (matches.length === 0) {
+    grid.style.display = 'none';
+    grid.innerHTML = '';
+    if (emptyEl) {
+      emptyEl.style.display = 'block';
+      emptyEl.innerHTML = '&#128269; No items match <strong>' + q + '</strong> — try the full barcode or a different item name.';
+    }
+    return;
+  }
+
+  // Exact barcode/code match → auto-select without showing the grid
+  const exact = matches.find(a => a.barcode.toUpperCase() === q || a.code.toUpperCase() === q);
+  if (exact) { selectAbaya(exact.id); return; }
+
+  // Multiple partial matches → show filtered cards so employee taps the right variant
+  grid.style.display = 'grid';
+  if (emptyEl) emptyEl.style.display = 'none';
+  grid.innerHTML = matches.map(function (a) {
+    return '<div class="ab-card" onclick="selectAbaya(\'' + a.id + '\')">' +
+      '<div class="ab-card-bc-lbl">Item No.</div>' +
+      '<div class="ab-card-bc">' + a.barcode + '</div>' +
+      '<div class="ab-card-des">' +
+        (a.icon ? '<span style="margin-right:4px">' + a.icon + '</span>' : '') +
+        a.design +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
+        '<div class="ab-card-code">' + a.code + '</div>' +
+        tierBadgeHtml(a.tier) +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function selectAbaya(id) {
   const ab = ABAYAS.find(a => a.id === id);

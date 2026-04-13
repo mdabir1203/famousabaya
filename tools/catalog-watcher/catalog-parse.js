@@ -19,36 +19,67 @@ const PROCESS_WHITELIST = new Set([
 
 /** Normalized header (lowercase, underscores) -> canonical field */
 const HEADER_ALIASES = {
+  // ── id ───────────────────────────────────────────────────────────────────────
+  // Optional: auto-derived from barcode when absent.
   id: 'id',
   abaya_id: 'id',
   item_id: 'id',
 
+  // ── code ─────────────────────────────────────────────────────────────────────
+  // Optional: auto-derived from barcode when absent.
   code: 'code',
   item_code: 'code',
   sku: 'code',
   abaya_code: 'code',
   product_code: 'code',
 
+  // ── barcode ───────────────────────────────────────────────────────────────────
+  // "Barcode Display Name" is the exact column name in the factory Excel export.
   barcode: 'barcode',
   bar_code: 'barcode',
   bc: 'barcode',
+  barcode_display_name: 'barcode',
+  display_name: 'barcode',
+  barcode_name: 'barcode',
 
+  // ── design (description shown on kiosk card) ──────────────────────────────────
+  // "Item Name" is the exact column name in the factory Excel export.
+  // If both "Item Name" and "Description" exist the first non-empty value is used
+  // (no hard error for optional fields).
   design: 'design',
   description: 'design',
   item_name: 'design',
   name: 'design',
   title: 'design',
 
+  // ── process ───────────────────────────────────────────────────────────────────
+  // "Item Category" is the exact column name in the factory Excel export.
   process: 'process',
   work_type: 'process',
   department: 'process',
   role: 'process',
+  item_category: 'process',
+  category: 'process',
 
+  // ── tier (quality grade: Standard, Premium, Luxury, Plain Abaya) ─────────────
+  tier: 'tier',
+  grade: 'tier',
+  abaya_tier: 'tier',
+  abaya_grade: 'tier',
+  item_grade: 'tier',
+  abaya_category: 'tier',
+
+  // ── icon ──────────────────────────────────────────────────────────────────────
   icon: 'icon',
   emoji: 'icon',
 };
 
-const REQUIRED_CANONICAL = ['id', 'code', 'barcode', 'process'];
+// id and code are auto-derived from barcode when absent — only barcode + process
+// must be supplied as explicit columns.
+const REQUIRED_CANONICAL = ['barcode', 'process'];
+// Optional canonical fields that may be absent or have duplicate source columns
+// without causing a hard error.
+const OPTIONAL_CANONICAL = new Set(['id', 'code', 'design', 'icon', 'tier']);
 
 function normHeaderKey(k) {
   return String(k != null ? k : '')
@@ -86,15 +117,22 @@ function validateHeadersPresent(columnKeys) {
     mapped.get(canon).push(k);
   }
 
-  const ambiguous = [];
+  const requiredAmbiguous = [];
   for (const [canon, originals] of mapped) {
-    if (originals.length > 1) {
-      ambiguous.push(`${canon} (columns: ${originals.map((x) => JSON.stringify(x)).join(', ')})`);
+    if (originals.length > 1 && !OPTIONAL_CANONICAL.has(canon)) {
+      requiredAmbiguous.push(`${canon} (columns: ${originals.map((x) => JSON.stringify(x)).join(', ')})`);
+    } else if (originals.length > 1) {
+      // Optional field with multiple matching columns — use first non-empty value per row.
+      console.warn(
+        '[catalog-parse] Multiple columns map to optional field "' + canon + '": ' +
+          originals.map((x) => JSON.stringify(x)).join(', ') +
+          ' — first non-empty value per row will be used.'
+      );
     }
   }
-  if (ambiguous.length) {
+  if (requiredAmbiguous.length) {
     throw new Error(
-      'Each logical field must map from at most one column. Fix: ' + ambiguous.join('; ')
+      'Each logical field must map from at most one column. Fix: ' + requiredAmbiguous.join('; ')
     );
   }
 
@@ -103,7 +141,8 @@ function validateHeadersPresent(columnKeys) {
     throw new Error(
       'Missing required column(s) for: ' +
         missing.join(', ') +
-        '. Expected headers (any one label per field): Abaya ID / id; Item Code / code; Barcode; Design (optional); Process; Icon (optional). See docs/CATALOG_EXCEL_SPEC.md'
+        '. Required headers: "Barcode Display Name" (or barcode/bc) and "Item Category" (or process/category). ' +
+        'Optional: Item Name / design, id, code / Item Code. See docs/CATALOG_EXCEL_SPEC.md'
     );
   }
   return mapped;
@@ -116,6 +155,7 @@ function rowToCanonical(rowObj, excelRowNumber, headerToCanonical) {
     barcode: [],
     design: [],
     process: [],
+    tier: [],
     icon: [],
   };
 
@@ -127,15 +167,16 @@ function rowToCanonical(rowObj, excelRowNumber, headerToCanonical) {
     sources[canon].push({ header, value: s });
   }
 
-  const out = { id: '', code: '', barcode: '', design: '', process: '', icon: '' };
-  for (const c of ['id', 'code', 'barcode', 'design', 'process', 'icon']) {
+  const out = { id: '', code: '', barcode: '', design: '', process: '', tier: '', icon: '' };
+  for (const c of ['id', 'code', 'barcode', 'design', 'process', 'tier', 'icon']) {
     const arr = sources[c];
     const nonEmpty = arr.filter((x) => x.value !== '');
-    if (nonEmpty.length > 1) {
+    if (nonEmpty.length > 1 && !OPTIONAL_CANONICAL.has(c)) {
       throw new Error(
         `Row ${excelRowNumber}: multiple columns map to "${c}": ${nonEmpty.map((x) => x.header).join(', ')}`
       );
     }
+    // For optional fields with multiple sources, use the first non-empty value.
     out[c] = nonEmpty.length ? nonEmpty[0].value : '';
   }
 
@@ -183,9 +224,16 @@ function parseItemsXlsx(filePath, opts) {
 
     if (!a.id && !a.code && !a.barcode) continue;
 
-    if (!a.id || !a.code || !a.barcode || !a.process) {
+    // Auto-derive code from barcode when no explicit code column.
+    if (!a.code && a.barcode) a.code = a.barcode;
+    // Auto-derive id from code (slug) when no explicit id column.
+    if (!a.id && a.code) {
+      a.id = a.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
+
+    if (!a.barcode || !a.process) {
       throw new Error(
-        `Row ${excelRow}: id, code, barcode, and process are required (design may be empty). Got: ${JSON.stringify(a)}`
+        `Row ${excelRow}: "Barcode Display Name" (barcode) and "Item Category" (process) are required. Got: ${JSON.stringify(a)}`
       );
     }
 
@@ -205,6 +253,7 @@ function parseItemsXlsx(filePath, opts) {
       barcode: a.barcode,
       design: a.design,
       process: a.process,
+      tier: a.tier,
       icon: a.icon,
     });
   }

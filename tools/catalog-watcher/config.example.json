@@ -9,5 +9,5 @@
   "unknownEmployeeFolder": "error",
   "debounceMs": 2000,
   "dailySyncMs": 86400000,
-  "scanOnStart": false
+  "scanOnStart": true
 }

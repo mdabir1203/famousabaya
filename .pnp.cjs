@@ -33,7 +33,8 @@ const RAW_RUNTIME_STATE =
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
           ["qrcode", "npm:1.5.4"],\
-          ["socket.io", "npm:4.8.3"]\
+          ["socket.io", "npm:4.8.3"],\
+          ["xlsx", "npm:0.18.5"]\
         ],\
         "linkType": "SOFT"\
       }]\
@@ -86,7 +87,8 @@ const RAW_RUNTIME_STATE =
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
           ["qrcode", "npm:1.5.4"],\
-          ["socket.io", "npm:4.8.3"]\
+          ["socket.io", "npm:4.8.3"],\
+          ["xlsx", "npm:0.18.5"]\
         ],\
         "linkType": "SOFT"\
       }]\
@@ -107,6 +109,15 @@ const RAW_RUNTIME_STATE =
           ["accepts", "npm:2.0.0"],\
           ["mime-types", "npm:3.0.2"],\
           ["negotiator", "npm:1.0.0"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["adler-32", [\
+      ["npm:1.3.1", {\
+        "packageLocation": "./.yarn/cache/adler-32-npm-1.3.1-8493d3a628-c1b7185526.zip/node_modules/adler-32/",\
+        "packageDependencies": [\
+          ["adler-32", "npm:1.3.1"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -215,6 +226,17 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["cfb", [\
+      ["npm:1.2.2", {\
+        "packageLocation": "./.yarn/cache/cfb-npm-1.2.2-df6fc7d448-87f6d9c387.zip/node_modules/cfb/",\
+        "packageDependencies": [\
+          ["adler-32", "npm:1.3.1"],\
+          ["cfb", "npm:1.2.2"],\
+          ["crc-32", "npm:1.2.2"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["cliui", [\
       ["npm:6.0.0", {\
         "packageLocation": "./.yarn/cache/cliui-npm-6.0.0-488b2414c6-35229b1bb4.zip/node_modules/cliui/",\
@@ -223,6 +245,15 @@ const RAW_RUNTIME_STATE =
           ["string-width", "npm:4.2.3"],\
           ["strip-ansi", "npm:6.0.1"],\
           ["wrap-ansi", "npm:6.2.0"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["codepage", [\
+      ["npm:1.15.0", {\
+        "packageLocation": "./.yarn/cache/codepage-npm-1.15.0-bde3a4eb54-2455b48230.zip/node_modules/codepage/",\
+        "packageDependencies": [\
+          ["codepage", "npm:1.15.0"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -289,6 +320,15 @@ const RAW_RUNTIME_STATE =
           ["cors", "npm:2.8.6"],\
           ["object-assign", "npm:4.1.1"],\
           ["vary", "npm:1.1.2"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["crc-32", [\
+      ["npm:1.2.2", {\
+        "packageLocation": "./.yarn/cache/crc-32-npm-1.2.2-28bdc12bcc-11dcf4a2e7.zip/node_modules/crc-32/",\
+        "packageDependencies": [\
+          ["crc-32", "npm:1.2.2"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -533,6 +573,15 @@ const RAW_RUNTIME_STATE =
         "packageLocation": "./.yarn/cache/forwarded-npm-0.2.0-6473dabe35-9b67c3fac8.zip/node_modules/forwarded/",\
         "packageDependencies": [\
           ["forwarded", "npm:0.2.0"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["frac", [\
+      ["npm:1.1.2", {\
+        "packageLocation": "./.yarn/cache/frac-npm-1.1.2-7e88efac4e-640740eb58.zip/node_modules/frac/",\
+        "packageDependencies": [\
+          ["frac", "npm:1.1.2"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -1130,6 +1179,16 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["ssf", [\
+      ["npm:0.11.2", {\
+        "packageLocation": "./.yarn/cache/ssf-npm-0.11.2-e6437eb624-c3fd24a90d.zip/node_modules/ssf/",\
+        "packageDependencies": [\
+          ["frac", "npm:1.1.2"],\
+          ["ssf", "npm:0.11.2"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["statuses", [\
       ["npm:2.0.2", {\
         "packageLocation": "./.yarn/cache/statuses-npm-2.0.2-2d84c63b8c-a9947d98ad.zip/node_modules/statuses/",\
@@ -1218,6 +1277,24 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["wmf", [\
+      ["npm:1.0.2", {\
+        "packageLocation": "./.yarn/cache/wmf-npm-1.0.2-15d4e3e93c-3fa5806f38.zip/node_modules/wmf/",\
+        "packageDependencies": [\
+          ["wmf", "npm:1.0.2"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["word", [\
+      ["npm:0.3.0", {\
+        "packageLocation": "./.yarn/cache/word-npm-0.3.0-da20365d4a-c6da2a9f7a.zip/node_modules/word/",\
+        "packageDependencies": [\
+          ["word", "npm:0.3.0"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["wrap-ansi", [\
       ["npm:6.2.0", {\
         "packageLocation": "./.yarn/cache/wrap-ansi-npm-6.2.0-439a7246d8-baad244e6e.zip/node_modules/wrap-ansi/",\
@@ -1261,6 +1338,22 @@ const RAW_RUNTIME_STATE =
           "@types/utf-8-validate",\
           "bufferutil",\
           "utf-8-validate"\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["xlsx", [\
+      ["npm:0.18.5", {\
+        "packageLocation": "./.yarn/cache/xlsx-npm-0.18.5-f70d417ac6-787cfa7703.zip/node_modules/xlsx/",\
+        "packageDependencies": [\
+          ["adler-32", "npm:1.3.1"],\
+          ["cfb", "npm:1.2.2"],\
+          ["codepage", "npm:1.15.0"],\
+          ["crc-32", "npm:1.2.2"],\
+          ["ssf", "npm:0.11.2"],\
+          ["wmf", "npm:1.0.2"],\
+          ["word", "npm:0.3.0"],\
+          ["xlsx", "npm:0.18.5"]\
         ],\
         "linkType": "HARD"\
       }]\
