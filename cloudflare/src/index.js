@@ -190,7 +190,7 @@ async function handleCatalogAbayasGet(env) {
   const verRow = await env.DB.prepare('SELECT v FROM catalog_meta WHERE k = ?').bind('version').first();
   const version = verRow && verRow.v != null ? String(verRow.v) : '0';
   const { results } = await env.DB.prepare(
-    'SELECT id, code, barcode, design, process, icon FROM abaya_catalog ORDER BY code ASC'
+    'SELECT id, code, barcode, design, process, icon FROM abaya_catalog ORDER BY code ASC, barcode ASC'
   ).all();
   const abayas = (results || []).map((r) => ({
     id: r.id,
@@ -223,7 +223,6 @@ async function handleCatalogAbayasPut(request, env) {
 
   const norm = [];
   const seenId = new Set();
-  const seenCode = new Set();
   const seenBc = new Set();
 
   for (let i = 0; i < rows.length; i++) {
@@ -239,19 +238,19 @@ async function handleCatalogAbayasPut(request, env) {
     const iconRaw = r.icon;
     const icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
 
-    if (!id || !code || !barcode || !process) {
+    if (!barcode || !process) {
       return errRes(
-        `Row ${i + 1}: id, code, barcode, and process are required (design may be empty)`,
+        `Row ${i + 1}: barcode and process are required (design may be empty)`,
         400
       );
     }
-    if (seenId.has(id)) return errRes(`Duplicate id in upload: ${id}`, 400);
-    if (seenCode.has(code)) return errRes(`Duplicate code in upload: ${code}`, 400);
+    const finalCode = code || barcode;
+    const finalId = id || barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (seenId.has(finalId)) return errRes(`Duplicate id in upload: ${finalId}`, 400);
     if (seenBc.has(barcode)) return errRes(`Duplicate barcode in upload: ${barcode}`, 400);
-    seenId.add(id);
-    seenCode.add(code);
+    seenId.add(finalId);
     seenBc.add(barcode);
-    norm.push({ id, code, barcode, design, process, icon });
+    norm.push({ id: finalId, code: finalCode, barcode, design, process, icon });
   }
 
   const newVersion = String(Date.now());
@@ -268,7 +267,18 @@ async function handleCatalogAbayasPut(request, env) {
     env.DB.prepare('INSERT OR REPLACE INTO catalog_meta (k, v) VALUES (?, ?)').bind('version', newVersion)
   );
 
-  await env.DB.batch(stmts);
+  try {
+    await env.DB.batch(stmts);
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e || '');
+    if (msg.includes('UNIQUE constraint failed: abaya_catalog.code')) {
+      return errRes(
+        'Catalog DB schema still enforces unique code. Apply migration cloudflare/migrations/0005_allow_duplicate_abaya_code.sql and retry.',
+        400
+      );
+    }
+    throw e;
+  }
   return jsonRes({ ok: true, version: newVersion, count: norm.length });
 }
 

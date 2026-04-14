@@ -15,8 +15,8 @@ if not exist ".pnp.cjs" (
   exit /b 1
 )
 
-:: ── Read PORT from .env (default 3050) ────────────────────────────────────────
-set ABA_PORT=3050
+:: ── Read PORT from .env (default 3000) ────────────────────────────────────────
+set ABA_PORT=3000
 if exist ".env" (
   for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if /i "%%A"=="PORT" set "ABA_PORT=%%B"

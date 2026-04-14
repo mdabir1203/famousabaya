@@ -1,6 +1,6 @@
 # Remote access to the factory server (production-first)
 
-This guide is for exposing **AbaYa Track** ([server.js](../server.js); default port **3050**, override with **`PORT`** in `.env`) over **HTTPS** so **authorized people** (e.g. your client) can open the kiosk or dashboard from **any normal internet connection** (home Wi‑Fi, mobile data, office abroad).
+This guide is for exposing **AbaYa Track** ([server.js](../server.js); default port **3000**, override with **`PORT`** in `.env`) over **HTTPS** so **authorized people** (e.g. your client) can open the kiosk or dashboard from **any normal internet connection** (home Wi‑Fi, mobile data, office abroad).
 
 **Recommended pattern:** **Named Cloudflare Tunnel** + **Cloudflare Access** (Zero Trust) on a hostname under **farewellabaya.com**. On-site tablets or PCs can keep using **plain HTTP on the LAN** (`http://<server-LAN-IP>:3000` unless you changed `PORT`).
 
@@ -23,7 +23,7 @@ Official references (UI names change over time; use these if steps differ):
 
 ---
 
-## Part A — Named tunnel to the Node port (`localhost:3000`)
+## Part A — Named tunnel to the Node port (`127.0.0.1:3000`)
 
 ### 1. Create a tunnel in Zero Trust
 
@@ -49,7 +49,7 @@ If you see **Add a route** with four choices, choose **Published application** (
 Still in the tunnel configuration (or **Public hostnames** / **Ingress**):
 
 1. Add a **public hostname**: subdomain `kiosk`, domain `farewellabaya.com` → full hostname: `1`
-2. Set the **service** to **`http://localhost:3000`** — must match `PORT=3000` in `.env`.
+2. Set the **service** to **`http://127.0.0.1:3000`** — must match `PORT` in `.env` (default `3000`).
 3. Save. Cloudflare will create or prompt for the **DNS** record (usually a **CNAME** to `xxxx.cfargotunnel.com`).
 
 Wait for DNS to propagate (often a few minutes).
@@ -58,7 +58,7 @@ Wait for DNS to propagate (often a few minutes).
 
 Each site runs its own **PC + `server.js` + `cloudflared`**. Use **one tunnel per factory** (or one tunnel with multiple **public hostnames** / ingress rules if a single connector can reach all origins — usually **one connector machine per site** is simplest):
 
-- Example hostnames: `factory1.farewellabaya.com`, `factory2.farewellabaya.com`, `factory3.farewellabaya.com`, each pointing to that site’s `http://localhost:3000` (or whatever `PORT` is on that machine).
+- Example hostnames: `factory1.farewellabaya.com`, `factory2.farewellabaya.com`, `factory3.farewellabaya.com`, each pointing to that site’s `http://127.0.0.1:3000` (or whatever `PORT` is on that machine).
 - Use the **same Cloudflare Access application** (or cloned policies) so the client’s login works for every hostname.
 
 **Central “CEO” analytics** without visiting each factory: your **Cloudflare Worker** CEO dashboard ([cloudflare](../cloudflare)) is already a separate global URL; tunnels are for the **live floor** kiosk/dashboard at each location.
@@ -73,7 +73,21 @@ credentials-file: C:\Users\YOUR_USER\.cloudflared\YOUR_TUNNEL_UUID.json
 
 ingress:
   - hostname: kiosk.farewellabaya.com
-    service: http://localhost:3000
+    service: http://127.0.0.1:3000
+    originRequest:
+      noHappyEyeballs: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 90s
+  - hostname: "*.farewellabaya.com"
+    service: http://127.0.0.1:3000
+    originRequest:
+      noHappyEyeballs: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 90s
   - service: http_status:404
 ```
 
@@ -124,23 +138,85 @@ If it loads, the tunnel and origin are correct.
 
 ---
 
+## Part C2 — Persistent connection hardening (mobile-first)
+
+For phone clients on changing 4G/5G/Wi-Fi paths, apply all of these:
+
+1. **Run cloudflared as a Windows service** (not an interactive console window).
+2. Confirm tunnel ingress points to the real app port (`http://127.0.0.1:3000` unless `PORT` changed).
+3. Keep app process stable (launch with `install\LAUNCH-ALL.bat`; avoid manual terminal closes).
+4. Verify Access app is bound to the exact hostname used by client (`kiosk.farewellabaya.com`).
+5. Keep client on one canonical URL (avoid switching between hostname variants during session).
+6. Confirm dashboard fallback API responds through tunnel:
+   - `https://kiosk.farewellabaya.com/api/state`
+   - Must return JSON with `ok: true`.
+
+Windows service checks:
+
+```powershell
+sc query cloudflared
+sc qc cloudflared
+```
+
+If not installed as service, complete Cloudflare "service install" flow and reboot once to verify persistence.
+
+---
+
 ## Part D — Quick tunnel (debug only, not client production)
 
 For **internal** tests you may use:
 
 ```bash
-cloudflared tunnel --url http://localhost:3000
+cloudflared tunnel --url http://127.0.0.1:3000
 ```
 
 This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** on your brand domain, and is **not** a substitute for **Part A + B** when the client must test from anywhere with a **stable, controlled** URL.
 
 ---
 
-## Part E — Optional alternatives (no Cloudflare Tunnel)
+## Part E — IPv6/AAAA and MTU hardening
+
+Use this when mobile clients connect but drop quickly, especially on cellular.
+
+### 1) AAAA record policy for unstable IPv6 routes
+
+If your ISP/router/path has bad IPv6, keep only IPv4 for tunnel hostnames:
+
+1. In Cloudflare DNS, inspect each public hostname used by the tunnel.
+2. If AAAA exists and IPv6 is unstable, remove AAAA for that hostname.
+3. Keep the proxied CNAME to `<tunnel-id>.cfargotunnel.com`.
+4. Re-test from cellular after 60-300 seconds of DNS propagation.
+
+CLI checks (WSL):
+
+```bash
+dig +short A kiosk.farewellabaya.com
+dig +short AAAA kiosk.farewellabaya.com
+```
+
+### 2) TCP MSS clamping on origin router
+
+If PMTU black-hole behavior exists on mobile carriers, enable MSS clamping at egress.
+
+Linux router example:
+
+```bash
+sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+```
+
+Verify:
+
+```bash
+sudo iptables -t mangle -S | rg TCPMSS
+```
+
+---
+
+## Part F — Optional alternatives (no Cloudflare Tunnel)
 
 | Approach | When to use |
 |----------|-------------|
-| **Tailscale / Headscale** | Only trusted devices; client installs mesh app; use MagicDNS or `100.x` IP to `http://...:3050` (or your `PORT`). Not “open in any browser without agent” unless combined with something else. |
+| **Tailscale / Headscale** | Only trusted devices; client installs mesh app; use MagicDNS or `100.x` IP to `http://...:3000` (or your `PORT`). Not “open in any browser without agent” unless combined with something else. |
 | **Self-hosted WireGuard** | Same idea: private IPs; you operate the VPN server. |
 | **Host Node on a VPS + TLS** | App runs in the cloud; kiosks must reach that host (different deployment model). |
 
@@ -154,6 +230,7 @@ This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** 
 - [ ] **CEO Worker** dashboard remains **token-protected** as today ([cloudflare](../cloudflare)); tunnel is for the **Node** app, not a replacement for Worker auth.
 - [ ] Optional: extra **IP allowlist** on the Access policy for sensitive phases; **rate limiting** / **WAF** rules on the zone if you expect abuse.
 - [ ] Test once from **mobile data** (off factory Wi‑Fi): login → kiosk → start/finish a test session if possible.
+- [ ] Ingress includes root host and wildcard host (if used), and each maps to `http://127.0.0.1:3000` with `originRequest.noHappyEyeballs: true`.
 
 ---
 
@@ -161,7 +238,7 @@ This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** 
 
 | Symptom | What to check |
 |--------|----------------|
-| **502 / error origin** | Is `node server.js` running? Tunnel service up? Service URL matches **`PORT`** (default `http://localhost:3000`)? |
+| **502 / error origin** | Is `node server.js` running? Tunnel service up? Service URL matches **`PORT`** (default `http://127.0.0.1:3000`)? |
 | **Tunnel credential not found** | [TUNNEL_CREDENTIALS_WINDOWS.md](TUNNEL_CREDENTIALS_WINDOWS.md) — re-run **Install connector** in Zero Trust; fix `config.yml` **`credentials-file`**. |
 | **DNS not resolving** | CNAME for `kiosk…` points to tunnel; propagation delay. |
 | **Access loop or 403** | Policy includes client’s email / IdP; application domain matches hostname. |
@@ -169,6 +246,23 @@ This prints a temporary **`trycloudflare.com`** URL. It **changes**, is **not** 
 | **Works on Wi‑Fi but not 4G** | Often DNS or captive portal; try another network or disable VPN on phone for test. |
 
 ---
+
+## Validation (cellular + tunnel)
+
+Use this short test after any DNS/tunnel change:
+
+1. From WSL:
+
+```bash
+curl -v --http1.1 --connect-timeout 10 --max-time 20 https://kiosk.farewellabaya.com/api/state
+```
+
+Expected: HTTP `200` with JSON `ok: true`.
+
+2. On phone mobile data:
+   - Open `https://kiosk.farewellabaya.com/dashboard.html` for 10-15 minutes.
+   - Page must not drop to 5xx.
+   - If websocket reconnects, fallback `/api/state` must keep data visible.
 
 ## Related docs
 

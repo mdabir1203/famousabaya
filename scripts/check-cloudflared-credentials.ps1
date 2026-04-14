@@ -34,7 +34,7 @@ if (Test-Path $config) {
 
 $envFile = Join-Path (Split-Path $PSScriptRoot -Parent) '.env'
 if (Test-Path $envFile) {
-  $port = '3050'
+  $port = '3000'
   Get-Content $envFile | ForEach-Object {
     if ($_ -match '^\s*PORT\s*=\s*(.+)\s*$') { $port = $matches[1].Trim() }
   }

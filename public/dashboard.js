@@ -1,20 +1,84 @@
 'use strict';
 
-const socket = io();
+const socket = io({
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 10000,
+  timeout: 20000,
+});
 
 let STATE = { active: {}, logs: [], perf: [] };
 let dashInterval = null;
+let fallbackPollTimer = null;
+let fallbackConsecutiveErrors = 0;
+let fallbackMode = false;
+
+function applyFallbackState(state) {
+  if (!state || typeof state !== 'object') return;
+  STATE = state;
+  renderAll();
+}
+
+function fetchStateFallback() {
+  fetch('/api/state', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d || !d.ok || !d.state) return;
+      fallbackConsecutiveErrors = 0;
+      applyFallbackState(d.state);
+    })
+    .catch(() => {
+      fallbackConsecutiveErrors += 1;
+      if (fallbackConsecutiveErrors % 3 === 0) {
+        showToast('Still trying to restore live connection...', 'info');
+      }
+    });
+}
+
+function startFallbackPolling() {
+  if (fallbackPollTimer) return;
+  fallbackMode = true;
+  fetchStateFallback();
+  fallbackPollTimer = setInterval(fetchStateFallback, 3000);
+}
+
+function stopFallbackPolling() {
+  fallbackMode = false;
+  fallbackConsecutiveErrors = 0;
+  if (fallbackPollTimer) {
+    clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+}
 
 // ─── CONNECTION ───────────────────────────────────────────────────────────────
 socket.on('connect', () => {
   document.getElementById('conn-dot').classList.add('online');
   document.getElementById('conn-label').textContent = 'Live';
-  showToast('Dashboard connected', 'success');
+  if (fallbackMode) {
+    showToast('Live connection restored', 'success');
+  } else {
+    showToast('Dashboard connected', 'success');
+  }
+  stopFallbackPolling();
 });
 socket.on('disconnect', () => {
   document.getElementById('conn-dot').classList.remove('online');
-  document.getElementById('conn-label').textContent = 'Offline';
-  showToast('Connection lost — retrying...', 'error');
+  document.getElementById('conn-label').textContent = 'Fallback';
+  showToast('Live socket lost — switching to fallback sync...', 'error');
+  startFallbackPolling();
+});
+
+socket.on('connect_error', () => {
+  document.getElementById('conn-dot').classList.remove('online');
+  document.getElementById('conn-label').textContent = 'Fallback';
+  startFallbackPolling();
+});
+
+socket.io.on('reconnect_attempt', () => {
+  if (!fallbackPollTimer) startFallbackPolling();
 });
 
 socket.on('catalog_update', () => {
@@ -60,8 +124,7 @@ function refreshDashboardAbayaCatalog() {
 
 // ─── REAL-TIME STATE ──────────────────────────────────────────────────────────
 socket.on('state_update', (data) => {
-  STATE = data;
-  renderAll();
+  applyFallbackState(data);
 });
 
 function renderAll() {

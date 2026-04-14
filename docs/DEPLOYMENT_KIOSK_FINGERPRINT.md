@@ -20,8 +20,8 @@ This guide covers running the floor kiosk on **Lenovo Android tablets**, keeping
    - `CF_WORKER_URL` — your Worker base URL (e.g. `https://abaya-track.example.workers.dev`)
    - `CF_INGEST_SECRET` — same secret configured on the Worker
 4. **Start the server**:
-   - Default port: `3050` (override with `PORT` in `.env` if needed).
-   - Example: `PORT=3050 node server.js` (adjust for your shell on Windows).
+   - Default port: `3000` (override with `PORT` in `.env` if needed).
+   - Example: `PORT=3000 node server.js` (adjust for your shell on Windows).
 5. **Firewall**: allow inbound TCP on the chosen port from the **tablet subnet** only, if possible.
 6. **HTTPS for remote access**: use **Cloudflare Tunnel + Access** on your domain (recommended) — see [REMOTE_ACCESS.md](REMOTE_ACCESS.md). On LAN, HTTP to the server IP is usually enough for tablets; TLS terminates at Cloudflare for the public hostname.
 
@@ -47,7 +47,7 @@ Codes must match **abaya code** or **barcode** in `public/data.js` (e.g. `AB-004
 1. Start the AbaYa Track server (`LAUNCH-ALL.bat` or `START-AbaYa-Server.bat`).
 2. Open the **QR Setup page** in a browser on the server PC:
    ```
-   http://localhost:3050/setup
+   http://localhost:3000/setup
    ```
    (The setup URL is also printed in the server console window every time the server starts.)
 3. On the setup page:
@@ -84,7 +84,7 @@ The `factory` and `tablet` parameters are displayed in the kiosk top bar for eas
 
 | Scenario | Recommended URL to put in setup page |
 |----------|---------------------------------------|
-| All tablets on same Wi-Fi | `http://<LAN-IP>:3050` (auto-detected) |
+| All tablets on same Wi-Fi | `http://<LAN-IP>:3000` (auto-detected) |
 | Tablets in a different building / VLAN | VPN to the server, or use Cloudflare Tunnel |
 | Tablets over the internet | Cloudflare Tunnel `https://` URL — see [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 

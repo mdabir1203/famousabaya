@@ -220,9 +220,8 @@ function parseItemsXlsx(filePath, opts) {
   const columnKeys = Object.keys(rows[0]);
   validateHeadersPresent(columnKeys);
 
-  const seenId = new Set();
-  const seenCode = new Set();
-  const seenBc = new Set();
+  const seenById = new Map();
+  const seenByBarcode = new Map();
   const abayas = [];
 
   for (let i = 0; i < rows.length; i++) {
@@ -231,30 +230,51 @@ function parseItemsXlsx(filePath, opts) {
 
     if (!a.id && !a.code && !a.barcode) continue;
 
-    // Auto-derive code from barcode when no explicit code column.
-    if (!a.code && a.barcode) a.code = a.barcode;
-    // Auto-derive id from code (slug) when no explicit id column.
-    if (!a.id && a.code) {
-      a.id = a.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    }
-
     if (!a.barcode) {
       throw new Error(
         `Row ${excelRow}: "Barcode Display Name" (barcode) is required. Got: ${JSON.stringify(a)}`
       );
     }
+    // Auto-derive code from barcode when no explicit code column.
+    if (!a.code) a.code = a.barcode;
+    // Auto-derive id from barcode (not code) so repeated product codes are supported.
+    if (!a.id) {
+      a.id = a.barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    }
     // process is NOT validated here — it is set/overridden by alignAbayasToEmployeeProcess()
     // using the folder name. If a "process" column is somehow present in the Excel and has a
     // value, it will still be validated when alignAbayasToEmployeeProcess runs in 'strict' mode.
 
-    if (seenId.has(a.id)) throw new Error(`Row ${excelRow}: duplicate id ${JSON.stringify(a.id)}`);
-    if (seenCode.has(a.code)) throw new Error(`Row ${excelRow}: duplicate code ${JSON.stringify(a.code)}`);
-    if (seenBc.has(a.barcode)) {
+    const signature = JSON.stringify({
+      id: a.id,
+      code: a.code,
+      barcode: a.barcode,
+      design: a.design,
+      process: a.process,
+      tier: a.tier,
+      icon: a.icon,
+    });
+
+    const prevId = seenById.get(a.id);
+    if (prevId && prevId.signature !== signature) {
+      throw new Error(`Row ${excelRow}: duplicate id ${JSON.stringify(a.id)}`);
+    }
+    const prevBarcode = seenByBarcode.get(a.barcode);
+    if (prevBarcode && prevBarcode.signature !== signature) {
       throw new Error(`Row ${excelRow}: duplicate barcode ${JSON.stringify(a.barcode)}`);
     }
-    seenId.add(a.id);
-    seenCode.add(a.code);
-    seenBc.add(a.barcode);
+
+    // Some exports contain fully repeated rows; keep first and skip exact duplicates.
+    if (prevId || prevBarcode) {
+      console.warn(
+        `[catalog-parse] Row ${excelRow}: skipped exact duplicate for code ${JSON.stringify(a.code)}`
+      );
+      continue;
+    }
+
+    const meta = { signature, row: excelRow };
+    seenById.set(a.id, meta);
+    seenByBarcode.set(a.barcode, meta);
     abayas.push({
       id: a.id,
       code: a.code,

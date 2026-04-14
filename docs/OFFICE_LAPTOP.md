@@ -12,10 +12,10 @@ Two audiences: **office staff** (simple) and **IT** (one-time setup).
 **Excel format (same standard as `items_export.xlsx`):**
 
 - Follow **[CATALOG_EXCEL_SPEC.md](CATALOG_EXCEL_SPEC.md)**. A sample workbook is in **[samples/items_export.xlsx](samples/items_export.xlsx)** (sheet **`Items`**, or the first sheet if `Items` is missing).
-- Reference headers (row 1): **Abaya ID**, **Item Code**, **Barcode**, **Design**, **Process**, **Icon** (Design and Icon optional). Other allowed header names are listed in the spec.
-- Every data row must have **id**, **code**, **barcode**, and **process**. **design** can be empty.
-- **id**, **code**, and **barcode** must each be unique in the file.
-- **process** must match a kiosk role exactly (for example `Tailor (01)`, `Invoice maker`, `Checker` — same spelling as in the factory app).
+- Minimum required header is **Barcode Display Name** (`barcode`).
+- Common optional headers: **Item Name** (`design`), **Item Category** (`tier`), **Process**, **Icon**.
+- `id` and `code` are optional and auto-derived from barcode if omitted.
+- `process` is optional. If file is in an employee folder and watcher uses `alignProcess: strict` (default), process must match the employee role exactly.
 
 ---
 
@@ -33,6 +33,7 @@ On a machine with Wrangler, from the repo `cloudflare` folder:
 
 ```bash
 wrangler d1 execute abaya-db --remote --file=migrations/0004_abaya_catalog.sql
+wrangler d1 execute abaya-db --remote --file=migrations/0005_allow_duplicate_abaya_code.sql
 ```
 
 (Use your real D1 database name if it is not `abaya-db`.)
@@ -45,7 +46,7 @@ Then deploy the Worker so `GET/PUT /api/catalog/abayas` is live.
 2. In that folder, run:
 
    ```bash
-   npm install
+   yarn install
    ```
 
 3. Copy `config.example.json` to **`config.json`** in the same folder.
@@ -65,7 +66,7 @@ Then deploy the Worker so `GET/PUT /api/catalog/abayas` is live.
 
    Optional: `node watch-catalog.js "D:\path\to\config.json"` if config is not beside the script.
 
-6. Optional QA: from `tools/catalog-watcher`, run `npm run validate-sample` to confirm the repo sample `docs/samples/items_export.xlsx` parses correctly (no upload).
+6. Optional QA: from `tools/catalog-watcher`, run `yarn run validate-sample` to confirm the repo sample `docs/samples/items_export.xlsx` parses correctly (no upload).
 
 ### Windows Task Scheduler (run at logon)
 
@@ -90,7 +91,7 @@ Then deploy the Worker so `GET/PUT /api/catalog/abayas` is live.
 
 | Symptom | What to check |
 |--------|----------------|
-| File goes to **Failed** | See [CATALOG_EXCEL_SPEC.md](CATALOG_EXCEL_SPEC.md): required columns, no duplicate logical columns, **Process** must be an exact whitelist match, unique id/code/barcode. Check console output from `watch-catalog.js`. |
+| File goes to **Failed** | See [CATALOG_EXCEL_SPEC.md](CATALOG_EXCEL_SPEC.md): required `Barcode Display Name`, no conflicting duplicates, and for employee folders with `alignProcess: strict`, row `Process` must match the folder employee role. Check console output from `watch-catalog.js`. |
 | `401 Unauthorized` | `ingestSecret` in `config.json` does not match Worker `INGEST_SECRET`. |
 | Kiosks still show old list | Factory must have `CF_WORKER_URL` set; wait up to 60s or refresh the kiosk page. |
 | Empty catalog on kiosks | Worker D1 has no rows yet; run migration; upload a valid `.xlsx`. Factory keeps its built-in default until the cloud catalog is non-empty or version is not `0`. |

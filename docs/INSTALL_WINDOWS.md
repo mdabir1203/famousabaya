@@ -34,10 +34,11 @@ The ZIP includes `.yarn/cache` and `yarn.lock` for both the root project and
    - Creates `.env` from `.env.example`.
    - Creates an **AbaYa Track** shortcut on the Desktop.
 4. Edit **`.env`** in the unzip root:
-   - **Required:** Set `CATALOG_XLSX_PATH` to the full path of your barcode catalog file:
+   - **Required:** Set `CATALOG_XLSX_PATH` to your catalog source. The repo sample works out-of-the-box:
      ```
-     CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
+     CATALOG_XLSX_PATH=./docs/samples/items_export.xlsx
      ```
+     You can later switch to an absolute Windows path like `C:\Users\DELL\Desktop\barcode\items_export.xlsx`.
      The server loads this file at startup and automatically refreshes it every 24 hours.
    - **Optional (Cloudflare):** Set `CF_WORKER_URL` and `CF_INGEST_SECRET` for cloud sync.
 5. Double-click **AbaYa Track** on the Desktop (or `install\LAUNCH-ALL.bat`) to start everything.
@@ -118,6 +119,6 @@ Double-click the **AbaYa Track** shortcut on the Desktop (created by `INSTALL.ba
 | Upgrade Node.js | Install the new LTS from nodejs.org, then re-run `install\INSTALL.bat`. |
 | Change Cloudflare Worker URL or secret | Edit `.env` (`CF_WORKER_URL`, `CF_INGEST_SECRET`) and restart the server. Update `tools\catalog-watcher\config.json` (`workerUrl`, `ingestSecret`) too. |
 | Force a full catalog resync now | Restart the server (picks up `CATALOG_XLSX_PATH` file in 3 s), or drop any valid `.xlsx` in the watch folder. |
-| Check what catalog is loaded | Open `http://localhost:3050/api/catalog/abayas` in a browser while the server is running. |
-| Excel column format | See `docs\CATALOG_EXCEL_SPEC.md` — required: `Barcode Display Name`, `Item Category`. Optional: `Item Name`, `Tier`. |
+| Check what catalog is loaded | Open `http://localhost:3000/api/catalog/abayas` in a browser while the server is running. |
+| Excel column format | See `docs\CATALOG_EXCEL_SPEC.md` — required: `Barcode Display Name`. Optional: `Item Name`, `Item Category` (tier), `Process`, `Icon`, plus optional `id`/`code`. |
 | Logs | Each component runs in its own titled cmd window — check the **AbaYa Server** and **AbaYa Catalog Watcher** windows for errors. |

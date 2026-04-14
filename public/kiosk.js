@@ -227,6 +227,17 @@ function normalizeBcToken(s) {
     .toUpperCase();
 }
 
+function normalizeSearchKey(s) {
+  return String(s || '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function compactSearchKey(s) {
+  return normalizeSearchKey(s).replace(/[^A-Z0-9]/g, '');
+}
+
 function updateBcQueueHint() {
   const wrap = document.getElementById('bc-queue-wrap');
   if (!wrap) return;
@@ -309,24 +320,67 @@ function tryManualBarcode() {
 
   const val = first;
   if (!val) return;
+  const qNorm = normalizeSearchKey(val);
+  const qCompact = compactSearchKey(val);
 
-  // Exact code/barcode match → auto-select
-  const exact = ABAYAS.find(x => x.code === val || x.barcode === val);
-  if (exact) { selectAbaya(exact.id); return; }
+  // Exact barcode match auto-selects; exact code only auto-selects when unique in selected role.
+  const roleFilter = selRole || (selEmp ? selEmp.process : '');
+  const exactBarcode = ABAYAS.find(function (x) {
+    if (x.process !== roleFilter) return false;
+    var bc = String(x.barcode || '');
+    return normalizeSearchKey(bc) === qNorm || compactSearchKey(bc) === qCompact;
+  });
+  if (exactBarcode) { selectAbaya(exactBarcode.id); return; }
+  const exactCodeMatches = ABAYAS.filter(function (x) {
+    if (x.process !== roleFilter) return false;
+    var code = String(x.code || '');
+    return normalizeSearchKey(code) === qNorm || compactSearchKey(code) === qCompact;
+  });
+  if (exactCodeMatches.length === 1) { selectAbaya(exactCodeMatches[0].id); return; }
 
   // Partial match — filter grid and tell employee to tap the right variant
-  const roleFilter = selRole || (selEmp ? selEmp.process : '');
   const partial = ABAYAS.filter(function (x) {
+    var code = String(x.code || '');
+    var bc = String(x.barcode || '');
+    var des = String(x.design || '');
+    var codeNorm = normalizeSearchKey(code);
+    var bcNorm = normalizeSearchKey(bc);
+    var desNorm = normalizeSearchKey(des);
+    var codeCompact = compactSearchKey(code);
+    var bcCompact = compactSearchKey(bc);
+    var desCompact = compactSearchKey(des);
     return x.process === roleFilter && (
-      x.barcode.toUpperCase().includes(val) ||
-      x.design.toUpperCase().includes(val)
+      codeNorm.includes(qNorm) ||
+      bcNorm.includes(qNorm) ||
+      desNorm.includes(qNorm) ||
+      codeCompact.includes(qCompact) ||
+      bcCompact.includes(qCompact) ||
+      desCompact.includes(qCompact)
     );
   });
   filterAbayaGrid(val);
   if (partial.length > 1) {
     showToast(partial.length + ' items match "' + val + '" — tap the one you need', 'info');
   } else if (partial.length === 0) {
-    showToast('Item "' + val + '" not found', 'error');
+    const crossProcess = ABAYAS.filter(function (x) {
+      var code = String(x.code || '');
+      var bc = String(x.barcode || '');
+      var des = String(x.design || '');
+      return (
+        normalizeSearchKey(code).includes(qNorm) ||
+        normalizeSearchKey(bc).includes(qNorm) ||
+        normalizeSearchKey(des).includes(qNorm) ||
+        compactSearchKey(code).includes(qCompact) ||
+        compactSearchKey(bc).includes(qCompact) ||
+        compactSearchKey(des).includes(qCompact)
+      );
+    });
+    if (crossProcess.length) {
+      var processHints = [...new Set(crossProcess.map(function (r) { return r.process; }))].slice(0, 3).join(', ');
+      showToast('Item found in different process: ' + processHints, 'info');
+    } else {
+      showToast('Item "' + val + '" not found', 'error');
+    }
   }
 }
 
@@ -367,18 +421,29 @@ function renderAbayaGrid() {
 //  Empty query restores the full role grid.
 function filterAbayaGrid(query) {
   if (!selEmp) return;
-  const q = (query || '').trim().toUpperCase();
+  const q = normalizeSearchKey(query || '');
+  const qCompact = compactSearchKey(query || '');
   if (!q) { renderAbayaGrid(); return; }
 
   const roleFilter = selRole || selEmp.process;
   const pool = ABAYAS.filter(a => a.process === roleFilter);
 
   const matches = pool.filter(function (a) {
-    const bc  = a.barcode.toUpperCase();
-    const cod = a.code.toUpperCase();
-    const des = a.design.toUpperCase();
-    return bc === q || cod === q ||
-           bc.startsWith(q) || des.includes(q) || bc.includes(q);
+    const bc = normalizeSearchKey(a.barcode);
+    const cod = normalizeSearchKey(a.code);
+    const des = normalizeSearchKey(a.design);
+    const bcCompact = compactSearchKey(a.barcode);
+    const codCompact = compactSearchKey(a.code);
+    const desCompact = compactSearchKey(a.design);
+    return (
+      bc === q || cod === q || bcCompact === qCompact || codCompact === qCompact ||
+      cod.startsWith(q) || cod.includes(q) ||
+      bc.startsWith(q) || bc.includes(q) ||
+      des.includes(q) ||
+      codCompact.startsWith(qCompact) || codCompact.includes(qCompact) ||
+      bcCompact.startsWith(qCompact) || bcCompact.includes(qCompact) ||
+      desCompact.includes(qCompact)
+    );
   });
 
   const grid    = document.getElementById('ab-grid');
@@ -394,9 +459,19 @@ function filterAbayaGrid(query) {
     return;
   }
 
-  // Exact barcode/code match → auto-select without showing the grid
-  const exact = matches.find(a => a.barcode.toUpperCase() === q || a.code.toUpperCase() === q);
-  if (exact) { selectAbaya(exact.id); return; }
+  // Exact barcode match auto-selects; exact code only if unique among matches.
+  const exactBarcode = matches.find(function (a) {
+    const bc = normalizeSearchKey(a.barcode);
+    const bcCompact = compactSearchKey(a.barcode);
+    return bc === q || bcCompact === qCompact;
+  });
+  if (exactBarcode) { selectAbaya(exactBarcode.id); return; }
+  const exactCodeMatches = matches.filter(function (a) {
+    const cod = normalizeSearchKey(a.code);
+    const codCompact = compactSearchKey(a.code);
+    return cod === q || codCompact === qCompact;
+  });
+  if (exactCodeMatches.length === 1) { selectAbaya(exactCodeMatches[0].id); return; }
 
   // Multiple partial matches → show filtered cards so employee taps the right variant
   grid.style.display = 'grid';

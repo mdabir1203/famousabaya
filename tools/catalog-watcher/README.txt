@@ -22,8 +22,13 @@ Layout (items_export.xlsx format — see docs/CATALOG_EXCEL_SPEC.md):
 
 Either list employees in config.json ("employees": [ { "id", "name", "code", "emp_no", "ac_no", "process" }, ... ])
   or keep the main Node server running so the watcher can GET /api/employees for folder matching.
-For local-only installs, set workerUrl to http://127.0.0.1:3050 and set CATALOG_INGEST_SECRET
+For local-only installs, set workerUrl to http://127.0.0.1:3000 and set CATALOG_INGEST_SECRET
 or CF_INGEST_SECRET in the server's .env (same value as ingestSecret in config.json).
 
 A full-tree resync runs every 24 hours (dailySyncMs) and on file add/change (debounced).
 Set scanOnStart to true in config.json to process any .xlsx already in the tree shortly after start.
+
+archiveMode controls how source files are handled after upload:
+  - "move" (legacy): moves .xlsx into Processed
+  - "copy" (recommended for daily alignment): copies to Processed, keeps source in watchDir
+  - "none": keeps source in place and does not archive

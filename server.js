@@ -9,8 +9,8 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const QRCode = require('qrcode');
 
-/** Default 3050 — less common than 3000 (fewer clashes); override with PORT in .env */
-const PORT = process.env.PORT || 3050;
+/** Default 3000; override with PORT in .env */
+const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.use(cors());
@@ -18,7 +18,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const SOCKET_PING_INTERVAL_MS = Number(process.env.SOCKET_PING_INTERVAL_MS) > 0
+  ? Number(process.env.SOCKET_PING_INTERVAL_MS)
+  : 25000;
+const SOCKET_PING_TIMEOUT_MS = Number(process.env.SOCKET_PING_TIMEOUT_MS) > 0
+  ? Number(process.env.SOCKET_PING_TIMEOUT_MS)
+  : 60000;
+
+const io = new Server(server, {
+  cors: { origin: '*' },
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  pingInterval: SOCKET_PING_INTERVAL_MS,
+  pingTimeout: SOCKET_PING_TIMEOUT_MS,
+});
 
 // ─── CLOUDFLARE PUSH LAYER ────────────────────────────────────────────────────
 // Set these in a .env file or environment variables before starting the server:
@@ -187,27 +200,44 @@ let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0})
 const AC_MAP = {};
 EMPLOYEES.forEach(e => AC_MAP[e.ac_no] = e);
 
-// Broadcast full state to all connected dashboard and kiosk clients
-function broadcastState() {
-  io.emit('state_update', {
+function getRealtimeState() {
+  return {
     active: ACTIVE_SESSIONS,
     logs: COMPLETED_LOGS,
-    perf: EMP_PERF
-  });
+    perf: EMP_PERF,
+    generated_at: Date.now(),
+  };
+}
+
+// Broadcast full state to all connected dashboard and kiosk clients
+function broadcastState() {
+  io.emit('state_update', getRealtimeState());
+}
+
+function logSocketSignal(kind, details) {
+  try {
+    console.log('[socket]', kind, JSON.stringify(details));
+  } catch (e) {
+    console.log('[socket]', kind, details);
+  }
 }
 
 // ============================================================
 // WEBSOCKET ROUTES
 // ============================================================
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  const transport = socket.conn && socket.conn.transport ? socket.conn.transport.name : 'unknown';
+  logSocketSignal('connect', {
+    id: socket.id,
+    transport,
+    ip: socket.handshake.address || '',
+    ua: socket.handshake.headers && socket.handshake.headers['user-agent']
+      ? String(socket.handshake.headers['user-agent']).slice(0, 180)
+      : '',
+  });
   
   // Immediately send current state to the single new client
-  socket.emit('state_update', {
-    active: ACTIVE_SESSIONS,
-    logs: COMPLETED_LOGS,
-    perf: EMP_PERF
-  });
+  socket.emit('state_update', getRealtimeState());
 
   socket.on('req_lookup', (ac_no, callback) => {
     var emp = AC_MAP[ac_no];
@@ -335,13 +365,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+  socket.on('disconnect', (reason) => {
+    logSocketSignal('disconnect', {
+      id: socket.id,
+      reason: String(reason || 'unknown'),
+      transport: socket.conn && socket.conn.transport ? socket.conn.transport.name : 'unknown',
+    });
+  });
+});
+
+io.engine.on('connection_error', (err) => {
+  logSocketSignal('engine_connection_error', {
+    code: err && err.code,
+    message: err && err.message ? String(err.message).slice(0, 220) : '',
+    context: err && err.context && err.context.message ? String(err.context.message).slice(0, 220) : '',
   });
 });
 
 app.get('/api/catalog/abayas', (req, res) => {
   res.json({ ok: true, version: catalogCloudVersion, abayas: abayaCatalog });
+});
+
+/** HTTP fallback for dashboards when websocket connectivity is unstable. */
+app.get('/api/state', (req, res) => {
+  res.json({ ok: true, state: getRealtimeState() });
 });
 
 /** Minimal fields for office catalog watcher (employee folder names ↔ process alignment). */
@@ -404,10 +451,10 @@ function parseCatalogXlsxFile(filePath) {
       if (field && out[field] === '') out[field] = String(v || '').trim();
     }
     if (!out.id && !out.code && !out.barcode) continue;
-    // Auto-derive code → barcode; id → slug of code.
+    // Auto-derive code from barcode; id from barcode slug (supports repeated product codes).
     if (!out.code && out.barcode) out.code = out.barcode;
-    if (!out.id && out.code) {
-      out.id = out.code.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!out.id && out.barcode) {
+      out.id = out.barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
     // process is set externally (folder name / catalog-watcher); only barcode is required.
     if (out.barcode) abayas.push(out);
@@ -443,7 +490,6 @@ function validateCatalogPutRows(rows) {
   }
   const norm = [];
   const seenId = new Set();
-  const seenCode = new Set();
   const seenBc = new Set();
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
@@ -457,17 +503,17 @@ function validateCatalogPutRows(rows) {
     var process = String(r.process != null ? r.process : '').trim();
     var iconRaw = r.icon;
     var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
-    if (!id || !code || !barcode || !process) {
+    if (!barcode || !process) {
       return {
         ok: false,
-        error: 'Row ' + (i + 1) + ': id, code, barcode, and process are required (design may be empty)',
+        error: 'Row ' + (i + 1) + ': barcode and process are required (design may be empty)',
       };
     }
+    if (!code) code = barcode;
+    if (!id) id = barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (seenId.has(id)) return { ok: false, error: 'Duplicate id in upload: ' + id };
-    if (seenCode.has(code)) return { ok: false, error: 'Duplicate code in upload: ' + code };
     if (seenBc.has(barcode)) return { ok: false, error: 'Duplicate barcode in upload: ' + barcode };
     seenId.add(id);
-    seenCode.add(code);
     seenBc.add(barcode);
     norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
   }
@@ -517,248 +563,34 @@ app.get('/api/server-info', (req, res) => {
   res.json({ ok: true, ips: getLanIPs(), port: PORT });
 });
 
-/** QR setup page: `/setup` — generates per-tablet QR codes for all factories. */
-app.get('/setup', async (req, res) => {
-  const ips = getLanIPs();
-  const firstIp = ips.length ? ips[0].address : 'localhost';
-
-  // Build one blank QR SVG as a placeholder (real ones generated client-side via JS)
-  // We pre-generate the default kiosk QR server-side so it displays even without JS.
-  let defaultQrSvg = '';
+/**
+ * QR code as SVG: GET /api/qr?url=<encoded-url>&size=256
+ * Used by setup.html — server-side generation via the qrcode package (no CDN needed).
+ */
+app.get('/api/qr', async (req, res) => {
+  const url = String(req.query.url || '').trim();
+  if (!url) return res.status(400).send('Missing ?url= parameter');
+  const size = Math.min(Math.max(parseInt(req.query.size) || 256, 64), 512);
   try {
-    defaultQrSvg = await QRCode.toString(
-      `http://${firstIp}:${PORT}/kiosk.html`,
-      { type: 'svg', margin: 1, width: 200 }
-    );
-  } catch (_) {}
-
-  const ipOptions = ips
-    .map((i) => `<option value="${i.address}">${i.address} (${i.name})</option>`)
-    .join('') || `<option value="localhost">localhost (no LAN found)</option>`;
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AbaYa Track — Tablet QR Setup</title>
-<style>
-:root{--bg:#0f0e0d;--s1:#1a1917;--s2:#242220;--bd:rgba(255,255,255,.1);--tx:#f0ede8;--tx2:#9c9890;--tx3:#6b6760;--gr:#22c55e;--bl:#3b82f6;--am:#f59e0b;--rd:#ef4444;--fn:'Segoe UI',system-ui,sans-serif}
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font-family:var(--fn);padding:0 0 60px}
-.header{background:var(--s1);border-bottom:1px solid var(--bd);padding:16px 24px;display:flex;align-items:center;gap:14px}
-.logo{width:40px;height:40px;background:linear-gradient(135deg,#d4a574,#a0785a);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
-.header h1{font-size:18px;font-weight:700}
-.header p{font-size:12px;color:var(--tx3);margin-top:2px}
-.container{max-width:960px;margin:0 auto;padding:28px 20px 0}
-.card{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:24px;margin-bottom:24px}
-.card h2{font-size:15px;font-weight:700;margin-bottom:16px;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px;font-size:11px}
-.row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
-label{display:block;font-size:12px;color:var(--tx3);margin-bottom:6px}
-input,select{background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-size:14px;padding:9px 12px;width:100%;outline:none}
-input:focus,select:focus{border-color:var(--bl)}
-.field{flex:1;min-width:160px}
-.btn{background:var(--bl);color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
-.btn:hover{opacity:.85}
-.btn-ghost{background:var(--s2);color:var(--tx);border:1px solid var(--bd)}
-.btn-print{background:var(--gr)}
-.factories-list{display:flex;flex-direction:column;gap:10px}
-.factory-row{display:flex;gap:10px;align-items:center}
-.factory-row input{flex:1}
-.remove-btn{background:var(--s2);border:1px solid var(--bd);color:var(--tx3);border-radius:6px;width:32px;height:32px;cursor:pointer;font-size:16px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.remove-btn:hover{color:var(--rd);border-color:var(--rd)}
-.add-btn{font-size:13px;color:var(--bl);background:none;border:none;cursor:pointer;padding:4px 0;text-decoration:underline}
-#qr-output{display:none}
-.qr-section-label{font-size:13px;font-weight:700;color:var(--am);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--bd)}
-.qr-factory-block{margin-bottom:36px}
-.qr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px}
-.qr-card{background:var(--s2);border:1px solid var(--bd);border-radius:14px;padding:16px;text-align:center;page-break-inside:avoid}
-.qr-card svg,.qr-card img{width:160px;height:160px;display:block;margin:0 auto 10px;border-radius:8px;background:#fff;padding:4px}
-.qr-factory-name{font-size:13px;font-weight:700;color:var(--am);margin-bottom:3px}
-.qr-tablet-name{font-size:15px;font-weight:800;margin-bottom:6px}
-.qr-url{font-size:9px;color:var(--tx3);word-break:break-all;line-height:1.4}
-.qr-instruction{font-size:11px;color:var(--tx2);margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)}
-.status-badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:rgba(34,197,94,.12);color:var(--gr);margin-bottom:16px}
-@media print{
-  body{background:#fff;color:#000;padding:0}
-  .header,.card:first-of-type,.no-print{display:none!important}
-  #qr-output{display:block!important}
-  .qr-card{background:#fff;border:1px solid #ddd;border-radius:8px;break-inside:avoid}
-  .qr-card svg,.qr-card img{width:140px;height:140px}
-  .qr-factory-name,.qr-tablet-name,.qr-url,.qr-instruction{color:#333}
-  .qr-section-label{color:#666;border-bottom:1px solid #ddd}
-  .qr-grid{grid-template-columns:repeat(4,1fr);gap:10px}
-}
-</style>
-</head>
-<body>
-<div class="header">
-  <div class="logo">&#129525;</div>
-  <div>
-    <h1>AbaYa Track — Tablet QR Setup</h1>
-    <p>Generate QR codes to deploy the kiosk to tablets across all factories</p>
-  </div>
-</div>
-
-<div class="container">
-
-  <!-- Server info -->
-  <div class="card no-print">
-    <h2>Server Details</h2>
-    <div class="row">
-      <div class="field">
-        <label>Server LAN IP</label>
-        <select id="sel-ip">${ipOptions}</select>
-      </div>
-      <div class="field" style="max-width:120px">
-        <label>Port</label>
-        <input type="number" id="inp-port" value="${PORT}" min="1" max="65535">
-      </div>
-      <div class="field" style="max-width:220px">
-        <label>Custom base URL (optional — overrides IP+port)</label>
-        <input type="text" id="inp-custom-url" placeholder="https://abaya.yourcompany.com">
-      </div>
-    </div>
-    <p style="font-size:11px;color:var(--tx3);margin-top:12px">
-      &#9432; Make sure tablets are on the same Wi-Fi network as this server, or use a Cloudflare Tunnel URL above for cross-network access.
-    </p>
-  </div>
-
-  <!-- Factory config -->
-  <div class="card no-print">
-    <h2>Factories &amp; Tablets</h2>
-    <div id="factories-list" class="factories-list"></div>
-    <button class="add-btn" onclick="addFactory()" style="margin-top:12px">+ Add another factory</button>
-    <div class="row" style="margin-top:20px">
-      <button class="btn" onclick="generateAll()">&#9654; Generate QR Codes</button>
-      <button class="btn btn-ghost btn-print" onclick="window.print()">&#128438; Print All</button>
-    </div>
-  </div>
-
-  <!-- QR output -->
-  <div id="qr-output">
-    <div id="qr-inner"></div>
-  </div>
-
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-<script>
-// ── Factory row management ───────────────────────────────────────────────────
-let factoryCount = 0;
-const DEFAULT_FACTORIES = [
-  { name: 'Factory 1', tablets: 5 },
-  { name: 'Factory 2', tablets: 5 },
-];
-
-function addFactory(name, tablets) {
-  factoryCount++;
-  const id = factoryCount;
-  const div = document.createElement('div');
-  div.className = 'factory-row';
-  div.id = 'factory-row-' + id;
-  div.innerHTML = \`
-    <input type="text" placeholder="Factory name (e.g. Abu Dhabi Factory)" value="\${name || ''}" id="fname-\${id}">
-    <input type="number" min="1" max="50" value="\${tablets || 5}" id="ftabs-\${id}" style="max-width:80px" title="Number of tablets">
-    <button class="remove-btn" onclick="removeFactory(\${id})" title="Remove">&#215;</button>
-  \`;
-  document.getElementById('factories-list').appendChild(div);
-}
-
-function removeFactory(id) {
-  const el = document.getElementById('factory-row-' + id);
-  if (el) el.remove();
-}
-
-function getFactories() {
-  const rows = document.querySelectorAll('.factory-row');
-  const out = [];
-  rows.forEach(row => {
-    const id = row.id.replace('factory-row-', '');
-    const name = (document.getElementById('fname-' + id) || {}).value || '';
-    const tabs = parseInt((document.getElementById('ftabs-' + id) || {}).value || '5', 10);
-    if (name.trim()) out.push({ name: name.trim(), tablets: Math.max(1, Math.min(50, tabs || 5)) });
-  });
-  return out;
-}
-
-function getBaseUrl() {
-  const custom = document.getElementById('inp-custom-url').value.trim().replace(/\\/$/, '');
-  if (custom) return custom;
-  const ip = document.getElementById('sel-ip').value;
-  const port = document.getElementById('inp-port').value;
-  return 'http://' + ip + ':' + port;
-}
-
-// ── QR generation ────────────────────────────────────────────────────────────
-async function generateAll() {
-  const factories = getFactories();
-  if (!factories.length) { alert('Add at least one factory.'); return; }
-  const base = getBaseUrl();
-  const inner = document.getElementById('qr-inner');
-  inner.innerHTML = '<p style="color:var(--tx3);font-size:13px;padding:10px">Generating QR codes...</p>';
-  document.getElementById('qr-output').style.display = 'block';
-  inner.scrollIntoView({ behavior: 'smooth' });
-
-  let html = '';
-  for (const f of factories) {
-    html += \`<div class="qr-factory-block">
-      <div class="qr-section-label">&#127981; \${esc(f.name)} — \${f.tablets} tablet\${f.tablets !== 1 ? 's' : ''}</div>
-      <div class="qr-grid" id="grid-\${esc(f.name.replace(/\\s+/g, '-'))}"></div>
-    </div>\`;
+    const svg = await QRCode.toString(url, {
+      type: 'svg',
+      margin: 1,
+      width: size,
+      color: { dark: '#000000', light: '#ffffff' },
+    });
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(svg);
+  } catch (e) {
+    res.status(500).send('QR generation failed: ' + e.message);
   }
-  inner.innerHTML = html;
-
-  for (const f of factories) {
-    const gridId = 'grid-' + esc(f.name.replace(/\\s+/g, '-'));
-    const grid = document.getElementById(gridId);
-    if (!grid) continue;
-    for (let t = 1; t <= f.tablets; t++) {
-      const label = 'T-' + String(t).padStart(2, '0');
-      const url = base + '/kiosk.html?factory=' + encodeURIComponent(f.name) + '&tablet=' + encodeURIComponent(label);
-      const card = document.createElement('div');
-      card.className = 'qr-card';
-      const canvas = document.createElement('canvas');
-      canvas.width = 160; canvas.height = 160;
-      card.appendChild(canvas);
-      card.innerHTML += \`
-        <div class="qr-factory-name">\${esc(f.name)}</div>
-        <div class="qr-tablet-name">Tablet \${esc(label)}</div>
-        <div class="qr-url">\${esc(url)}</div>
-        <div class="qr-instruction">&#128247; Scan with tablet camera<br>or Chrome QR reader</div>
-      \`;
-      grid.appendChild(card);
-      try {
-        await QRCode.toCanvas(canvas, url, { margin: 1, width: 160, color: { dark: '#000000', light: '#ffffff' } });
-      } catch(e) { canvas.style.background = '#333'; }
-    }
-  }
-  document.getElementById('qr-output').style.display = 'block';
-}
-
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Init ─────────────────────────────────────────────────────────────────────
-DEFAULT_FACTORIES.forEach(f => addFactory(f.name, f.tablets));
-
-// Auto-refresh server info
-fetch('/api/server-info').then(r=>r.json()).then(d=>{
-  if (!d.ok) return;
-  const sel = document.getElementById('sel-ip');
-  const portInp = document.getElementById('inp-port');
-  if (d.ips && d.ips.length) {
-    sel.innerHTML = d.ips.map(i=>\`<option value="\${i.address}">\${i.address} (\${i.name})</option>\`).join('');
-  }
-  if (d.port) portInp.value = d.port;
-}).catch(()=>{});
-</script>
-</body>
-</html>`;
-
-  res.send(html);
 });
+
+/** Setup page: redirect to the static PWA at /setup.html */
+app.get('/setup', (req, res) => {
+  res.redirect('/setup.html');
+});
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -770,6 +602,7 @@ server.listen(PORT, () => {
   console.log(`  Kiosk:     http://localhost:${PORT}/kiosk.html`);
   console.log(`  Dashboard: http://localhost:${PORT}/dashboard.html`);
   console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
+  console.log(`  Socket.IO: pingInterval=${SOCKET_PING_INTERVAL_MS}ms pingTimeout=${SOCKET_PING_TIMEOUT_MS}ms`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
   // Local xlsx catalog: load at startup then refresh daily

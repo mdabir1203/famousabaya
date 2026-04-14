@@ -17,15 +17,17 @@ Package manager: Yarn Berry 4 (PnP — no node_modules folder)
 
 4) Edit .env in the folder root (same level as server.js):
 
-   REQUIRED — point to your barcode catalog file:
-     CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
+   REQUIRED — set your catalog source (repo sample works immediately):
+     CATALOG_XLSX_PATH=./docs/samples/items_export.xlsx
+   (You can switch to an absolute Windows path later, e.g. C:\Users\DELL\Desktop\barcode\items_export.xlsx.)
    (The server reads this file at startup and every 24 h automatically.)
 
-   Your Excel file needs these columns:
-     - Barcode Display Name  (unique barcode per row — shown on kiosk)
-     - Item Category         (work type: Tailor (01), Hand Work, etc.)
-     - Item Name             (optional description shown on kiosk card)
-     - Tier                  (optional: Standard / Premium / Luxury / Plain Abaya)
+  Required Excel column:
+    - Barcode Display Name  (unique barcode per row — shown on kiosk)
+  Common optional columns:
+    - Item Name             (optional description shown on kiosk card)
+    - Item Category         (optional abaya tier/grade)
+    - Process               (optional; checked when watcher alignProcess is strict for employee folders)
    Full format guide: docs\CATALOG_EXCEL_SPEC.md
 
    OPTIONAL — Cloudflare cloud sync:

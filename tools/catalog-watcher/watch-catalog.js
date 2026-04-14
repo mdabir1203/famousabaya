@@ -79,7 +79,7 @@ function resolveEmployeeFromFolderName(folderName, employees) {
 }
 
 async function fetchEmployees(cfg) {
-  const url = String(cfg.employeesUrl || 'http://127.0.0.1:3050/api/employees').replace(/\/$/, '');
+  const url = String(cfg.employeesUrl || 'http://127.0.0.1:3000/api/employees').replace(/\/$/, '');
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     const j = await res.json();
@@ -119,6 +119,17 @@ async function moveToDir(src, destDir, subPrefix) {
       throw e;
     }
   }
+  return dest;
+}
+
+async function copyToDir(src, destDir, subPrefix) {
+  await fs.promises.mkdir(destDir, { recursive: true });
+  const base = path.basename(src);
+  let dest = path.join(destDir, base);
+  if (fs.existsSync(dest)) {
+    dest = path.join(destDir, `${subPrefix || Date.now()}_${base}`);
+  }
+  await fs.promises.copyFile(src, dest);
   return dest;
 }
 
@@ -163,7 +174,6 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
   const unknownFolder = String(cfg.unknownEmployeeFolder || 'error').toLowerCase();
 
   const byId = new Map();
-  const byCode = new Map();
   const byBc = new Map();
   const sourceFiles = [];
 
@@ -195,14 +205,6 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
           );
         }
       }
-      if (byCode.has(row.code)) {
-        const prev = byCode.get(row.code);
-        if (prev.filePath !== filePath) {
-          throw new Error(
-            `Duplicate Item Code ${JSON.stringify(row.code)} in ${filePath} and ${prev.filePath}.`
-          );
-        }
-      }
       if (byBc.has(row.barcode)) {
         const prev = byBc.get(row.barcode);
         if (prev.filePath !== filePath) {
@@ -213,7 +215,6 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
       }
       const tagged = { ...row, filePath };
       byId.set(row.id, tagged);
-      byCode.set(row.code, tagged);
       byBc.set(row.barcode, tagged);
     }
     sourceFiles.push(filePath);
@@ -245,11 +246,22 @@ async function rebuildAndUpload(cfg, employees, reason) {
     }
     await uploadCatalog(cfg, abayas);
     console.log('[catalog-watcher] Uploaded', abayas.length, 'items from', sourceFiles.length, 'file(s)');
+    const archiveMode = String(cfg.archiveMode || 'move').toLowerCase();
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     for (const fp of sourceFiles) {
-      await moveToDir(fp, cfg.processedDir, stamp);
+      if (archiveMode === 'copy') {
+        await copyToDir(fp, cfg.processedDir, stamp);
+      } else if (archiveMode === 'move') {
+        await moveToDir(fp, cfg.processedDir, stamp);
+      }
     }
-    console.log('[catalog-watcher] Moved source file(s) to Processed');
+    if (archiveMode === 'copy') {
+      console.log('[catalog-watcher] Copied source file(s) to Processed (source retained for daily alignment)');
+    } else if (archiveMode === 'move') {
+      console.log('[catalog-watcher] Moved source file(s) to Processed');
+    } else {
+      console.log('[catalog-watcher] archiveMode=none; source file(s) kept in place');
+    }
   } catch (e) {
     console.error('[catalog-watcher] FAILED:', e.message);
     console.error('[catalog-watcher] Files left in place for correction; next daily sync or file change will retry.');

@@ -38,6 +38,7 @@
 
   "alignProcess": "strict",
   "unknownEmployeeFolder": "error",
+  "archiveMode": "copy",
   "debounceMs": 2000,
   "dailySyncMs": 86400000,
   "scanOnStart": true

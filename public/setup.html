@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f0e0d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Timedilemma">
+<meta name="description" content="Timedilemma — generate QR codes to deploy AbaYa Track kiosk tablets across factories">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="icon" type="image/svg+xml" href="/icons/timedilemma.svg">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<title>AbaYa Track — Tablet QR Setup</title>
+<style>
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+:root {
+  --bg:   #0d0c0b;
+  --s1:   #181614;
+  --s2:   #221f1c;
+  --s3:   #2c2824;
+  --bd:   rgba(255,255,255,.09);
+  --tx:   #f0ede8;
+  --tx2:  #a09890;
+  --tx3:  #6b635c;
+  --gold: #c9a05a;
+  --gold2:#e8c87a;
+  --blu:  #3b82f6;
+  --grn:  #22c55e;
+  --red:  #ef4444;
+  --r:    14px;
+  --fn:   'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--tx);
+  font-family: var(--fn);
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom, 24px);
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header {
+  background: var(--s1);
+  border-bottom: 1px solid var(--bd);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+.logo {
+  width: 42px; height: 42px;
+  background: linear-gradient(135deg, #c9a05a, #8a6235);
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; flex-shrink: 0;
+}
+.header-text h1 { font-size: 16px; font-weight: 700; }
+.header-text p  { font-size: 11px; color: var(--tx3); margin-top: 1px; }
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.wrap { max-width: 880px; margin: 0 auto; padding: 24px 16px; }
+
+/* ── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--s1);
+  border: 1px solid var(--bd);
+  border-radius: var(--r);
+  padding: 20px;
+  margin-bottom: 18px;
+}
+.card-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--tx3);
+  margin-bottom: 16px;
+}
+
+/* ── Form controls ──────────────────────────────────────────────────────── */
+.row    { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.field  { flex: 1; min-width: 150px; }
+label   { display: block; font-size: 11px; color: var(--tx3); margin-bottom: 5px; }
+input, select {
+  background: var(--s2);
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  color: var(--tx);
+  font-size: 13px;
+  padding: 9px 11px;
+  width: 100%;
+  outline: none;
+  transition: border-color .15s;
+}
+input:focus, select:focus { border-color: var(--gold); }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--gold); color: #111;
+  border: none; border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px; font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .15s, transform .1s;
+  user-select: none;
+}
+.btn:hover  { opacity: .88; }
+.btn:active { transform: scale(.97); }
+.btn-ghost  { background: var(--s2); color: var(--tx); border: 1px solid var(--bd); }
+.btn-ghost:hover { border-color: var(--gold); }
+.btn-grn    { background: var(--grn); color: #fff; }
+.btn-sm     { padding: 6px 12px; font-size: 12px; }
+.btn-icon   { padding: 7px 10px; border-radius: 7px; }
+
+/* ── Factory list ───────────────────────────────────────────────────────── */
+#factories-list { display: flex; flex-direction: column; gap: 8px; }
+.factory-row {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--s2);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.factory-row input  { flex: 1; }
+.factory-row .tabs-input { flex: 0; min-width: 64px; text-align: center; }
+.rm-btn {
+  background: none; border: none;
+  color: var(--tx3); font-size: 18px;
+  cursor: pointer; border-radius: 6px;
+  padding: 2px 6px; line-height: 1;
+  flex-shrink: 0;
+  transition: color .12s;
+}
+.rm-btn:hover { color: var(--red); }
+.add-link {
+  font-size: 12px; color: var(--gold);
+  background: none; border: none;
+  cursor: pointer; padding: 6px 2px;
+  text-decoration: underline;
+  display: inline-block;
+}
+
+/* ── QR Output ──────────────────────────────────────────────────────────── */
+#qr-output { display: none; }
+.qr-header-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+  margin-bottom: 18px;
+}
+.qr-header-bar h2 { font-size: 14px; font-weight: 700; }
+.factory-block { margin-bottom: 32px; }
+.factory-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700;
+  color: var(--gold2);
+  text-transform: uppercase; letter-spacing: .5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--bd);
+  margin-bottom: 14px;
+}
+.qr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+/* ── QR card ────────────────────────────────────────────────────────────── */
+.qr-card {
+  background: var(--s2);
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  padding: 14px;
+  text-align: center;
+  page-break-inside: avoid;
+  break-inside: avoid;
+  transition: border-color .2s;
+}
+.qr-card:hover { border-color: var(--gold); }
+.qr-img-wrap {
+  width: 160px; height: 160px;
+  margin: 0 auto 10px;
+  background: #fff;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+.qr-img-wrap img {
+  width: 100%; height: 100%;
+  display: block;
+}
+.qr-spinner {
+  width: 28px; height: 28px;
+  border: 3px solid rgba(0,0,0,.12);
+  border-top-color: #555;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  position: absolute;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.qr-factory-lbl { font-size: 10px; color: var(--gold); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+.qr-tablet-lbl  { font-size: 16px; font-weight: 800; margin-bottom: 4px; }
+.qr-url-txt     { font-size: 8px; color: var(--tx3); word-break: break-all; line-height: 1.4; margin-bottom: 8px; }
+.qr-actions     { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(60px);
+  background: var(--s1); border: 1px solid var(--bd); border-radius: 40px;
+  padding: 9px 18px; font-size: 13px; font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  pointer-events: none; z-index: 999;
+  transition: transform .25s cubic-bezier(.34,1.56,.64,1), opacity .25s;
+  opacity: 0;
+}
+#toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+#toast.err  { border-color: var(--red); color: var(--red); }
+#toast.ok   { border-color: var(--grn); color: var(--grn); }
+
+/* ── Print ──────────────────────────────────────────────────────────────── */
+@media print {
+  body        { background: #fff; color: #000; }
+  .no-print, .header { display: none !important; }
+  #qr-output  { display: block !important; }
+  .qr-card    { background: #fff; border: 1px solid #ccc; border-radius: 6px; }
+  .qr-img-wrap{ background: #fff; }
+  .qr-grid    { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .qr-actions { display: none; }
+  .qr-factory-lbl, .qr-tablet-lbl, .qr-url-txt { color: #333 !important; }
+  .factory-label { color: #555 !important; border-color: #ccc !important; }
+  .qr-header-bar { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="header no-print">
+  <div class="logo">🪡</div>
+  <div class="header-text">
+    <h1>AbaYa Track — Tablet QR Setup</h1>
+    <p>Deploy the kiosk to tablets across all factories in seconds</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Server details -->
+  <div class="card no-print">
+    <div class="card-title">Server Details</div>
+    <div class="row">
+      <div class="field">
+        <label>Server Host</label>
+        <select id="sel-ip"><option value="loading...">Detecting…</option></select>
+      </div>
+      <div class="field" style="max-width:100px">
+        <label>Port</label>
+        <input type="number" id="inp-port" value="3000" min="1" max="65535">
+      </div>
+      <div class="field">
+        <label>Custom URL (overrides IP+port)</label>
+        <input type="text" id="inp-custom-url" placeholder="https://kiosk.farewellabaya.com" autocomplete="off">
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--tx3);margin-top:10px">
+      ℹ︎ Tablets must be on the same Wi-Fi, or use a Cloudflare Tunnel URL above for remote access.
+    </p>
+  </div>
+
+  <!-- Factories -->
+  <div class="card no-print">
+    <div class="card-title">Factories &amp; Tablets</div>
+    <div id="factories-list"></div>
+    <div style="margin-top:10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <button class="add-link" onclick="addFactory()">+ Add factory</button>
+    </div>
+    <div class="row" style="margin-top:18px">
+      <button class="btn" id="btn-generate" onclick="generateAll()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3m4 0h-4m0 0v3m0 4v-4"/></svg>
+        Generate QR Codes
+      </button>
+      <button class="btn btn-ghost" onclick="window.print()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Print All
+      </button>
+    </div>
+  </div>
+
+  <!-- QR output -->
+  <div id="qr-output">
+    <div class="qr-header-bar no-print">
+      <h2 id="qr-summary"></h2>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="downloadAllZip()" id="btn-dl-all">⬇ Download All</button>
+        <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨 Print</button>
+      </div>
+    </div>
+    <div id="qr-inner"></div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── Utilities ────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); }
+
+let _toastTimer;
+const PUBLIC_BASE_URL = 'https://farewellabaya.com';
+function toast(msg, type = 'ok', ms = 2800) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.className = ''; }, ms);
+}
+
+// ── Server info ──────────────────────────────────────────────────────────────
+async function loadServerInfo() {
+  try {
+    const d = await fetch('/api/server-info').then(r => r.json());
+    if (!d.ok) return;
+    const sel = document.getElementById('sel-ip');
+    if (d.ips && d.ips.length) {
+      sel.innerHTML = d.ips
+        .map(i => `<option value="${esc(i.address)}">${esc(i.address)} (${esc(i.name)})</option>`)
+        .join('');
+    } else {
+      sel.innerHTML = `<option value="${esc(PUBLIC_BASE_URL)}">${esc(PUBLIC_BASE_URL)} (public hostname)</option>`;
+    }
+    if (d.port) document.getElementById('inp-port').value = d.port;
+  } catch { /* server may still be booting */ }
+}
+
+function getBaseUrl() {
+  const cu = (document.getElementById('inp-custom-url').value || '').trim().replace(/\/$/, '');
+  if (cu) return cu;
+  const ip   = (document.getElementById('sel-ip').value || '').trim();
+  if (/^https?:\/\//i.test(ip)) return ip.replace(/\/$/, '');
+  const port = document.getElementById('inp-port').value;
+  return PUBLIC_BASE_URL;
+}
+
+// ── Factory management ───────────────────────────────────────────────────────
+let _fid = 0;
+function addFactory(name = '', tablets = 5) {
+  const id = ++_fid;
+  const div = document.createElement('div');
+  div.className = 'factory-row';
+  div.id = 'fr-' + id;
+  div.innerHTML = `
+    <input type="text" id="fn-${id}" placeholder="Factory name (e.g. Dubai Factory)" value="${esc(name)}" autocomplete="off">
+    <input type="number" id="ft-${id}" class="tabs-input" value="${tablets}" min="1" max="50" title="Number of tablets">
+    <button class="rm-btn" onclick="rmFactory(${id})" title="Remove">×</button>`;
+  document.getElementById('factories-list').appendChild(div);
+}
+function rmFactory(id) {
+  const el = document.getElementById('fr-' + id);
+  if (el) el.remove();
+}
+function getFactories() {
+  return [...document.querySelectorAll('.factory-row')]
+    .map(row => {
+      const id = row.id.replace('fr-', '');
+      const name = (document.getElementById('fn-' + id) || {}).value || '';
+      const tabs = parseInt((document.getElementById('ft-' + id) || {}).value || '5', 10);
+      if (!name.trim()) return null;
+      return { name: name.trim(), tablets: Math.min(50, Math.max(1, tabs || 5)) };
+    })
+    .filter(Boolean);
+}
+
+// ── QR generation ────────────────────────────────────────────────────────────
+// Uses /api/qr?url=... — server generates the SVG with the qrcode package.
+// No CDN dependency; works offline once the server is running.
+
+function kioskUrl(base, factory, tablet) {
+  return base + '/kiosk.html?factory=' + encodeURIComponent(factory) + '&tablet=' + encodeURIComponent(tablet);
+}
+
+function makeQrCard(factory, tabletLabel, url) {
+  const qrSrc = '/api/qr?url=' + encodeURIComponent(url) + '&size=256';
+
+  const card = document.createElement('div');
+  card.className = 'qr-card';
+  card.dataset.factory = factory;
+  card.dataset.tablet  = tabletLabel;
+  card.dataset.url     = url;
+
+  card.innerHTML = `
+    <div class="qr-img-wrap">
+      <span class="qr-spinner" id="sp-${slug(factory)}-${slug(tabletLabel)}"></span>
+      <img
+        src="${esc(qrSrc)}"
+        alt="QR code for ${esc(tabletLabel)} at ${esc(factory)}"
+        loading="lazy"
+        onload="this.previousElementSibling.style.display='none'"
+        onerror="this.previousElementSibling.style.display='none';this.alt='QR failed — check server'"
+      >
+    </div>
+    <div class="qr-factory-lbl">${esc(factory)}</div>
+    <div class="qr-tablet-lbl">Tablet ${esc(tabletLabel)}</div>
+    <div class="qr-url-txt">${esc(url)}</div>
+    <div class="qr-actions no-print">
+      <button class="btn btn-ghost btn-sm btn-icon" title="Download SVG" onclick="dlSvg(this)">⬇ SVG</button>
+      <button class="btn btn-ghost btn-sm btn-icon" title="Copy URL" onclick="copyUrl(this)">📋 Copy</button>
+    </div>`;
+  return card;
+}
+
+async function generateAll() {
+  const factories = getFactories();
+  if (!factories.length) { toast('Add at least one factory first', 'err'); return; }
+
+  const base   = getBaseUrl();
+  const inner  = document.getElementById('qr-inner');
+  const output = document.getElementById('qr-output');
+
+  inner.innerHTML = '';
+  output.style.display = 'block';
+
+  let totalCards = 0;
+  for (const f of factories) {
+    const block = document.createElement('div');
+    block.className = 'factory-block';
+    block.innerHTML = `
+      <div class="factory-label">
+        🏭 ${esc(f.name)}
+        <span style="color:var(--tx3);font-weight:400;text-transform:none;letter-spacing:0">— ${f.tablets} tablet${f.tablets !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="qr-grid" id="grid-${slug(f.name)}"></div>`;
+    inner.appendChild(block);
+
+    const grid = document.getElementById('grid-' + slug(f.name));
+    for (let t = 1; t <= f.tablets; t++) {
+      const label = 'T-' + String(t).padStart(2, '0');
+      const url   = kioskUrl(base, f.name, label);
+      grid.appendChild(makeQrCard(f.name, label, url));
+      totalCards++;
+    }
+  }
+
+  const total = factories.reduce((s, f) => s + f.tablets, 0);
+  document.getElementById('qr-summary').textContent =
+    `${factories.length} factor${factories.length !== 1 ? 'ies' : 'y'} · ${total} QR code${total !== 1 ? 's' : ''} generated`;
+
+  output.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  toast(`✓ ${total} QR codes generated`, 'ok');
+}
+
+// ── Per-card actions ─────────────────────────────────────────────────────────
+async function dlSvg(btn) {
+  const card = btn.closest('.qr-card');
+  const url  = card.dataset.url;
+  const factory = card.dataset.factory;
+  const tablet  = card.dataset.tablet;
+  try {
+    const svg = await fetch('/api/qr?url=' + encodeURIComponent(url) + '&size=512').then(r => r.text());
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = slug(factory) + '-' + slug(tablet) + '-qr.svg';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('SVG downloaded', 'ok');
+  } catch { toast('Download failed', 'err'); }
+}
+
+async function copyUrl(btn) {
+  const url = btn.closest('.qr-card').dataset.url;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('URL copied!', 'ok');
+  } catch {
+    toast(url, 'ok', 5000);
+  }
+}
+
+// ── Download all SVGs as individual files ─────────────────────────────────────
+async function downloadAllZip() {
+  const cards = [...document.querySelectorAll('.qr-card')];
+  if (!cards.length) { toast('Generate QR codes first', 'err'); return; }
+  toast('Downloading ' + cards.length + ' SVG files…', 'ok', 4000);
+  for (const card of cards) {
+    await new Promise(r => setTimeout(r, 120)); // small stagger
+    const url     = card.dataset.url;
+    const factory = card.dataset.factory;
+    const tablet  = card.dataset.tablet;
+    try {
+      const svg = await fetch('/api/qr?url=' + encodeURIComponent(url) + '&size=512').then(r => r.text());
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = slug(factory) + '-' + slug(tablet) + '-qr.svg';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { /* skip failed */ }
+  }
+  toast('All SVGs downloaded', 'ok');
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+loadServerInfo();
+document.getElementById('inp-custom-url').value = PUBLIC_BASE_URL;
+[
+  { name: 'Factory 1', tablets: 5 },
+  { name: 'Factory 2', tablets: 5 },
+].forEach(f => addFactory(f.name, f.tablets));
+</script>
+</body>
+</html>

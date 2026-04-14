@@ -4,9 +4,10 @@
   "failedDir": "C:/Users/Public/AbayaCatalog/Failed",
   "workerUrl": "https://abaya-track.your-subdomain.workers.dev",
   "ingestSecret": "PASTE_SAME_VALUE_AS_CF_INGEST_SECRET",
-  "employeesUrl": "http://127.0.0.1:3050/api/employees",
+  "employeesUrl": "http://127.0.0.1:3000/api/employees",
   "alignProcess": "strict",
   "unknownEmployeeFolder": "error",
+  "archiveMode": "copy",
   "debounceMs": 2000,
   "dailySyncMs": 86400000,
   "scanOnStart": true

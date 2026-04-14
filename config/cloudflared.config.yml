@@ -1,0 +1,26 @@
+# Copy to %USERPROFILE%\.cloudflared\config.yml after Cloudflare gives you a credentials JSON.
+# Replace TUNNEL_UUID and the credentials-file path with YOUR values from the dashboard.
+# Docs: docs/TUNNEL_CREDENTIALS_WINDOWS.md
+
+tunnel: 
+credentials-file: C:\Users\YOUR_WINDOWS_USER\.cloudflared\TUNNEL_UUID.json
+
+ingress:
+  # Must match your public hostname(s) in Cloudflare DNS.
+  - hostname: farewellabaya.com
+    service: http://127.0.0.1:3000
+    originRequest:
+      noHappyEyeballs: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 90s
+  - hostname: "*.farewellabaya.com"
+    service: http://127.0.0.1:3000
+    originRequest:
+      noHappyEyeballs: true
+      connectTimeout: 30s
+      tlsTimeout: 10s
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 90s
+  - service: http_status:404

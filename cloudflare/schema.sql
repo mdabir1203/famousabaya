@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_end    ON sessions(ended_at);
 -- ─── ABAYA CATALOG (office Excel → Worker PUT → D1) ───────────────────────────
 CREATE TABLE IF NOT EXISTS abaya_catalog (
   id            TEXT    PRIMARY KEY,
-  code          TEXT    NOT NULL UNIQUE,
+  code          TEXT    NOT NULL,
   barcode       TEXT    NOT NULL UNIQUE,
   design        TEXT    NOT NULL DEFAULT '',
   process       TEXT    NOT NULL,

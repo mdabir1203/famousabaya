@@ -17,8 +17,8 @@ Ignore everything else until you have done **these 5 steps on the factory PC** (
 
 5. In the same tunnel page, under **Public hostnames** (or **Published application**), set:
    - **Hostname:** `famousabaya.getwaved.ai`
-   - **Service / URL:** `http://127.0.0.1:3050`  
-   (If you changed `PORT` in `.env`, use that port instead of `3050`.)
+   - **Service / URL:** `http://127.0.0.1:3000`  
+   (If you changed `PORT` in `.env`, use that port instead of `3000`.)
 
 Then open **`https://famousabaya.getwaved.ai/kiosk.html`** in a browser.
 
@@ -45,8 +45,8 @@ From the AbaYa repo folder you can also run:
 | Problem | Fix |
 |--------|-----|
 | **Credential not found** | Step **4** again. Same Windows user as when you start `cloudflared`. |
-| **502 / bad gateway** | AbaYa not running, or wrong port in step **5** (must match `.env` `PORT`, default **3050**). |
-| **You use a `config.yml`** | Open `C:\Users\<You>\.cloudflared\config.yml`. Line **`credentials-file:`** must point to the **real path** of that **`.json`**. See [config/cloudflared.config.example.yml](../config/cloudflared.config.example.yml). |
+| **502 / bad gateway** | AbaYa not running, or wrong port in step **5** (must match `.env` `PORT`, default **3000**). |
+| **You use a `config.yml`** | Open `C:\Users\<You>\.cloudflared\config.yml`. Line **`credentials-file:`** must point to the **real path** of that **`.json`**. See [config/cloudflared.config.yml](../config/cloudflared.config.yml). |
 
 ---
 

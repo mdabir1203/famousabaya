@@ -18,15 +18,17 @@ EVERY DAY — start the software:
 
 BARCODE CATALOG SETUP (do this before first launch):
   Open .env in Notepad and set:
-    CATALOG_XLSX_PATH=C:\Users\DELL\Desktop\barcode\items_export.xlsx
-  Replace the path with the actual location of your items_export.xlsx file.
+    CATALOG_XLSX_PATH=./docs/samples/items_export.xlsx
+  This sample file is included in repo and can be imported immediately.
+  Replace with your own absolute path later if needed.
   The server loads it automatically at startup and refreshes it every 24 hours.
 
-  Your Excel file needs these columns:
+  Your Excel file needs this required column:
     - Barcode Display Name  — the unique barcode for each item variant
-    - Item Category         — the work type (must match exactly: Tailor (01), etc.)
+  Common optional columns:
     - Item Name             — optional description shown on kiosk cards
-    - Tier                  — optional grade: Standard, Premium, Luxury, Plain Abaya
+    - Item Category         — optional abaya tier/grade
+    - Process               — optional; used for employee-folder strict validation in watcher flow
   Full format guide: docs\CATALOG_EXCEL_SPEC.md
 
 CATALOG SYNC via folder watcher (office PC, optional):
@@ -46,7 +48,7 @@ LIVE CLOUD URLS (after running cloudflare/DEPLOY.ps1):
   CEO Dashboard: https://farewellabaya.com
   Kiosk (HTTPS):  https://kiosk.farewellabaya.com/kiosk.html
   Dashboard:      https://kiosk.farewellabaya.com/dashboard.html
-  (Replace 3050 with PORT from .env if you changed it.)
+  (Replace 3000 with PORT from .env if you changed it.)
 
 DEPLOY KIOSK TO TABLETS (10+ tablets, multiple factories):
   1. Start the server (LAUNCH-ALL.bat opens the setup page automatically).

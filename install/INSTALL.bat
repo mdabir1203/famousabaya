@@ -78,8 +78,8 @@ echo === Install finished ===
 echo.
 echo NEXT STEPS:
 echo   1. Open .env in Notepad and set:
-echo        CATALOG_XLSX_PATH=C:\path\to\your\items_export.xlsx
-echo      ^(e.g.  C:\Users\DELL\Desktop\barcode\items_export.xlsx^)
+echo        CATALOG_XLSX_PATH=./docs/samples/items_export.xlsx
+echo      ^(or set an absolute path, e.g. C:\Users\DELL\Desktop\barcode\items_export.xlsx^)
 echo      The server loads this file at startup and refreshes it every 24 hours.
 echo.
 echo   2. Optional — Cloudflare cloud sync:
@@ -90,9 +90,9 @@ echo.
 echo   3. Double-click "AbaYa Track" on your Desktop to launch everything.
 echo      ^(Or: install\LAUNCH-ALL.bat^)
 echo.
-echo   Kiosk:     http://localhost:3050/kiosk.html
-echo   Dashboard: http://localhost:3050/dashboard.html
-echo   Tablet QR: http://localhost:3050/setup
+echo   Kiosk:     http://localhost:3000/kiosk.html
+echo   Dashboard: http://localhost:3000/dashboard.html
+echo   Tablet QR: http://localhost:3000/setup
 echo   Full IT guide: docs\INSTALL_WINDOWS.md
 echo   Catalog format: docs\CATALOG_EXCEL_SPEC.md
 echo.
