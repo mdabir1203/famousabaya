@@ -15,6 +15,7 @@ Copy config.example.json to config.json, edit paths and secrets, then: node watc
 
 Layout (items_export.xlsx format — see docs/CATALOG_EXCEL_SPEC.md):
   Option A — single file at the watch root (replaces full catalog when uploaded).
+    If the sheet has no Process column, rows get defaultCatalogProcess from config.json (default Tailor (01)).
   Option B — one subfolder per employee (folder name = employee name, code, id, emp_no, or ac_no),
     each folder may contain .xlsx exports; all files are merged into one catalog upload.
     Process column must match that employee's role (alignProcess: strict), or set alignProcess
@@ -24,6 +25,10 @@ Either list employees in config.json ("employees": [ { "id", "name", "code", "em
   or keep the main Node server running so the watcher can GET /api/employees for folder matching.
 For local-only installs, set workerUrl to http://127.0.0.1:3000 and set CATALOG_INGEST_SECRET
 or CF_INGEST_SECRET in the server's .env (same value as ingestSecret in config.json).
+
+Office laptop on Tailscale: set employeesUrl to http://100.x.x.x:3000/api/employees
+  (replace 100.x.x.x with the factory PC's Tailscale IP from "tailscale ip -4").
+  See docs/TAILSCALE_HYBRID.md for full setup.
 
 A full-tree resync runs every 24 hours (dailySyncMs) and on file add/change (debounced).
 Set scanOnStart to true in config.json to process any .xlsx already in the tree shortly after start.

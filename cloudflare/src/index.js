@@ -6,10 +6,13 @@
  *  POST /api/event           ← Factory server pushes session events (ingest)
  *  GET  /api/state           ← CEO dashboard polls for real-time data
  *  GET  /api/report?type=    ← CEO requests shift reports
- *  GET  /api/catalog/abayas ← Public catalog for factory server (D1)
+ *  GET  /api/catalog/abayas ← Public catalog for factory server (D1) + short Cache-Control
  *  PUT  /api/catalog/abayas ← Office watcher (X-Ingest-Secret) replaces catalog
  *  GET  /                    ← Serves the CEO dashboard HTML
  *  GET  /scheduled           ← Cron trigger for EOD summary
+ *
+ * Rate limits (wrangler.toml ratelimits): INGEST_RATE_LIMIT, CATALOG_PUT_RATE_LIMIT,
+ * CEO_READ_RATE_LIMIT — optional at runtime if binding missing (e.g. very old wrangler).
  *
  * Environment variables (set via `wrangler secret put`):
  *   INGEST_SECRET  — used by factory server to authenticate POSTs
@@ -30,11 +33,21 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Ingest-Secret',
 };
 
-function jsonRes(data, status = 200) {
+function jsonRes(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...CORS },
+    headers: { 'Content-Type': 'application/json', ...CORS, ...extraHeaders },
   });
+}
+
+/** Cloudflare Rate Limiting binding (optional in older wrangler / local dev). */
+async function rateLimitOr429(rl, key, message) {
+  if (!rl || typeof rl.limit !== 'function') return null;
+  const out = await rl.limit({ key });
+  if (out && out.success === false) {
+    return errRes(message || 'Too many requests. Try again shortly.', 429);
+  }
+  return null;
 }
 
 function errRes(msg, status = 400) {
@@ -200,14 +213,25 @@ async function handleCatalogAbayasGet(env) {
     process: r.process,
     icon: r.icon != null ? r.icon : '',
   }));
-  return jsonRes({ ok: true, version, abayas });
+  return jsonRes(
+    { ok: true, version, abayas },
+    200,
+    { 'Cache-Control': 'public, max-age=10, stale-while-revalidate=120' }
+  );
 }
 
 async function handleCatalogAbayasPut(request, env) {
-  const secret = request.headers.get('X-Ingest-Secret');
-  if (!secret || secret !== env.INGEST_SECRET) {
+  const secret = (request.headers.get('X-Ingest-Secret') || '').trim();
+  if (!secret || secret !== (env.INGEST_SECRET || '').trim()) {
     return errRes('Unauthorized ingest request', 401);
   }
+
+  const rlBlock = await rateLimitOr429(
+    env.CATALOG_PUT_RATE_LIMIT,
+    'catalog-put',
+    'Too many catalog uploads. Wait and retry.'
+  );
+  if (rlBlock) return rlBlock;
 
   let body;
   try {
@@ -224,6 +248,7 @@ async function handleCatalogAbayasPut(request, env) {
   const norm = [];
   const seenId = new Set();
   const seenBc = new Set();
+  const defaultCatalogProcess = String(env.DEFAULT_CATALOG_PROCESS ?? 'Tailor (01)').trim() || 'Tailor (01)';
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -234,20 +259,19 @@ async function handleCatalogAbayasPut(request, env) {
     const code = String(r.code ?? '').trim();
     const barcode = String(r.barcode ?? '').trim();
     const design = String(r.design ?? '').trim();
-    const process = String(r.process ?? '').trim();
+    let process = String(r.process ?? '').trim();
     const iconRaw = r.icon;
     const icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
 
-    if (!barcode || !process) {
-      return errRes(
-        `Row ${i + 1}: barcode and process are required (design may be empty)`,
-        400
-      );
+    if (!barcode) {
+      continue;
+    }
+    if (!process) {
+      process = defaultCatalogProcess;
     }
     const finalCode = code || barcode;
     const finalId = id || barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    if (seenId.has(finalId)) return errRes(`Duplicate id in upload: ${finalId}`, 400);
-    if (seenBc.has(barcode)) return errRes(`Duplicate barcode in upload: ${barcode}`, 400);
+    if (seenId.has(finalId) || seenBc.has(barcode)) continue;
     seenId.add(finalId);
     seenBc.add(barcode);
     norm.push({ id: finalId, code: finalCode, barcode, design, process, icon });
@@ -315,9 +339,9 @@ export default {
       (path.startsWith('/api/') && path !== '/api/event' && path !== '/api/catalog/abayas');
     if (isCEORoute) {
       // Accept token from query param or Authorization header
-      const token = url.searchParams.get('token') ||
-        (request.headers.get('Authorization') || '').replace('Bearer ', '');
-      if (token !== env.CEO_TOKEN) {
+      const token = (url.searchParams.get('token') ||
+        (request.headers.get('Authorization') || '').replace('Bearer ', '')).trim();
+      if (token !== (env.CEO_TOKEN || '').trim()) {
         // Serve the login page if no token
         const loginHtml = getLoginPage(url.origin);
         return new Response(loginHtml, {
@@ -325,6 +349,12 @@ export default {
           headers: { 'Content-Type': 'text/html; charset=utf-8' },
         });
       }
+      const ceoRl = await rateLimitOr429(
+        env.CEO_READ_RATE_LIMIT,
+        'ceo-api',
+        'Too many dashboard requests. Slow down polling.'
+      );
+      if (ceoRl) return ceoRl;
     }
 
     // ── ROUTES ────────────────────────────────────────────────────────────────
@@ -367,9 +397,16 @@ export default {
 
 // ─── [A] FACTORY INGEST ───────────────────────────────────────────────────────
 async function handleIngest(request, env) {
+  const rlBlock = await rateLimitOr429(
+    env.INGEST_RATE_LIMIT,
+    'factory-ingest',
+    'Too many ingest requests. Wait and retry.'
+  );
+  if (rlBlock) return rlBlock;
+
   // Authenticate factory server
-  const secret = request.headers.get('X-Ingest-Secret');
-  if (!secret || secret !== env.INGEST_SECRET) {
+  const secret = (request.headers.get('X-Ingest-Secret') || '').trim();
+  if (!secret || secret !== (env.INGEST_SECRET || '').trim()) {
     return errRes('Unauthorized ingest request', 401);
   }
 
@@ -469,10 +506,21 @@ async function handleState(request, env, url) {
     procSplitRes,
     hourlyRes,
   ] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM active_sessions ORDER BY started_at ASC`).all(),
-    env.DB.prepare(`SELECT * FROM sessions ORDER BY ended_at DESC LIMIT 100`).all(),
     env.DB.prepare(`
-      SELECT emp_id, emp_name, emp_process, emp_color, emp_initials,
+      SELECT emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
+        abaya_id, abaya_code, station, started_at
+      FROM active_sessions ORDER BY started_at ASC
+    `).all(),
+    env.DB.prepare(`
+      SELECT id, emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
+        abaya_id, abaya_code, station, started_at, ended_at, duration_sec,
+        hour_of_day, day_date, invoice_count, invoice_serial
+      FROM sessions ORDER BY ended_at DESC LIMIT 100
+    `).all(),
+    env.DB.prepare(`
+      SELECT emp_id,
+        MAX(emp_name) as emp_name, MAX(emp_process) as emp_process,
+        MAX(emp_color) as emp_color, MAX(emp_initials) as emp_initials,
         COUNT(*) as units,
         ROUND(AVG(duration_sec)) as avg_sec,
         SUM(duration_sec) as total_sec
@@ -481,7 +529,13 @@ async function handleState(request, env, url) {
       GROUP BY emp_id
       ORDER BY units DESC
     `).bind(factoryToday).all(),
-    env.DB.prepare(`SELECT * FROM daily_stats ORDER BY stat_date DESC LIMIT 7`).all(),
+    env.DB.prepare(`
+      SELECT stat_date, total_units, total_sec, cutting_units, stitch_units, finish_units,
+        tailor_01_units, tailor_02_units, hand_work_units, stone_work_units,
+        button_units, embroidery_units, ari_work_units, hand_designing_units,
+        invoice_maker_units, packaging_units, checker_units, peak_hour, updated_at
+      FROM daily_stats ORDER BY stat_date DESC LIMIT 7
+    `).all(),
     env.DB.prepare(`
       SELECT COUNT(*) as cnt, COALESCE(SUM(duration_sec), 0) as total_sec
       FROM sessions WHERE day_date = ?
@@ -583,7 +637,7 @@ async function handleReport(request, env, url) {
         FROM sessions WHERE day_date = ?
       `).bind(factoryToday).first(),
       env.DB.prepare(`
-        SELECT emp_name, emp_process, emp_code,
+        SELECT MAX(emp_name) as emp_name, MAX(emp_process) as emp_process, MAX(emp_code) as emp_code,
           COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec
         FROM sessions WHERE day_date = ?
         GROUP BY emp_id ORDER BY units DESC
@@ -607,7 +661,7 @@ async function handleReport(request, env, url) {
         FROM sessions ${dayFilter}
       `).first(),
       env.DB.prepare(`
-        SELECT emp_name, emp_process, emp_code,
+        SELECT MAX(emp_name) as emp_name, MAX(emp_process) as emp_process, MAX(emp_code) as emp_code,
           COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec
         FROM sessions ${dayFilter}
         GROUP BY emp_id ORDER BY units DESC
@@ -630,7 +684,7 @@ async function handleReport(request, env, url) {
         FROM sessions
       `).first(),
       env.DB.prepare(`
-        SELECT emp_name, emp_process, emp_code,
+        SELECT MAX(emp_name) as emp_name, MAX(emp_process) as emp_process, MAX(emp_code) as emp_code,
           COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec
         FROM sessions
         GROUP BY emp_id ORDER BY units DESC
@@ -660,11 +714,16 @@ async function handleReport(request, env, url) {
 async function sendEODSummary(env) {
   const today = factoryTodayString(env);
   const stats = await env.DB.prepare(
-    `SELECT * FROM daily_stats WHERE stat_date = ?`
+    `SELECT stat_date, total_units, total_sec,
+        tailor_01_units, tailor_02_units, hand_work_units, stone_work_units,
+        button_units, embroidery_units, ari_work_units, hand_designing_units,
+        invoice_maker_units, packaging_units, checker_units
+     FROM daily_stats WHERE stat_date = ?`
   ).bind(today).first();
 
   const sessions = await env.DB.prepare(
-    `SELECT emp_name, emp_process, COUNT(*) as units FROM sessions WHERE day_date = ? GROUP BY emp_id ORDER BY units DESC LIMIT 5`
+    `SELECT MAX(emp_name) as emp_name, MAX(emp_process) as emp_process, COUNT(*) as units
+     FROM sessions WHERE day_date = ? GROUP BY emp_id ORDER BY units DESC LIMIT 5`
   ).bind(today).all();
 
   const avgSec = stats && stats.total_units > 0
@@ -715,17 +774,20 @@ function getLoginPage(origin) {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>AbaYa Track — CEO Access</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0f0e0d;color:#f0ede8;font-family:'Segoe UI',system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-  .box{background:#1a1917;border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:40px;width:100%;max-width:360px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.6)}
-  .logo{width:64px;height:64px;background:linear-gradient(135deg,#d4a574,#a0785a);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 20px}
-  h1{font-size:22px;font-weight:800;margin-bottom:6px}
-  p{color:#6b6760;font-size:13px;margin-bottom:28px}
-  input{width:100%;padding:14px 18px;background:#242220;border:1px solid rgba(255,255,255,.16);border-radius:12px;color:#f0ede8;font-size:16px;text-align:center;letter-spacing:3px;outline:none;transition:border-color .2s;margin-bottom:12px}
-  input:focus{border-color:#3b82f6}
-  button{width:100%;padding:15px;background:#3b82f6;color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s}
-  button:hover{background:#2563eb}
+  body{background:#1f1633;color:#ffffff;font-family:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+  .box{background:rgba(255,255,255,.08);border:1px solid rgba(54,45,89,.5);border-radius:24px;padding:40px;width:100%;max-width:360px;text-align:center;box-shadow:rgba(22,15,36,.9) 0px 24px 80px;backdrop-filter:blur(18px) saturate(180%)}
+  .logo{width:64px;height:64px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 20px}
+  h1{font-family:'Sora','Rubik',sans-serif;font-size:22px;font-weight:700;margin-bottom:6px}
+  p{color:#9c98b0;font-size:13px;margin-bottom:28px}
+  input{width:100%;padding:14px 18px;background:#241a38;border:1px solid rgba(106,95,193,.3);border-radius:12px;color:#ffffff;font-size:16px;text-align:center;letter-spacing:3px;outline:none;transition:border-color .2s;margin-bottom:12px;font-family:'Rubik',sans-serif}
+  input:focus{border-color:#6a5fc1}
+  button{width:100%;padding:15px;background:#79628c;color:#fff;border:1px solid #584674;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;font-family:'Rubik',sans-serif;text-transform:uppercase;letter-spacing:0.2px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
+  button:hover{box-shadow:rgba(0,0,0,.18) 0px .5rem 1.5rem}
   .err{color:#ef4444;font-size:13px;margin-top:10px;min-height:20px}
 </style></head><body>
 <div class="box">
@@ -754,48 +816,52 @@ function getCEODashboard(token, origin) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>AbaYa Track — CEO Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0f0e0d;--s1:#1a1917;--s2:#242220;--s3:#2e2c29;--bd:rgba(255,255,255,.08);--bd2:rgba(255,255,255,.16);--tx:#f0ede8;--tx2:#9c9890;--tx3:#6b6760;--gr:#22c55e;--grb:rgba(34,197,94,.12);--rd:#ef4444;--bl:#3b82f6;--blb:rgba(59,130,246,.15);--am:#f59e0b;--pu:#a78bfa;--fn:'SF Pro Display','Segoe UI',system-ui,sans-serif}
+:root{--bg:#1f1633;--s1:#150f23;--s2:#241a38;--s3:#362d59;--bd:rgba(54,45,89,.5);--bd2:rgba(106,95,193,.3);--tx:#ffffff;--tx2:#e5e7eb;--tx3:#9c98b0;--gr:#c2ef4e;--grb:rgba(194,239,78,.12);--rd:#ef4444;--rdb:rgba(239,68,68,.12);--bl:#6a5fc1;--blb:rgba(106,95,193,.15);--am:#ffb287;--amb:rgba(255,178,135,.12);--pu:#a78bfa;--fn:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;--fn-display:'Sora','Rubik',sans-serif;--fn-mono:Monaco,Menlo,'Ubuntu Mono',monospace}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:11px 18px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:100}
 .tb-brand{display:flex;align-items:center;gap:10px}
-.tb-logo{width:32px;height:32px;background:linear-gradient(135deg,#d4a574,#a0785a);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.tb-logo{width:32px;height:32px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
 .tb-name{font-size:15px;font-weight:600}
 .tb-sub{font-size:11px;color:var(--tx3)}
-.live-badge{display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.12);color:var(--rd);padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700}
+.live-badge{display:flex;align-items:center;gap:5px;background:var(--rdb);color:var(--rd);padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2px}
 .live-dot{width:6px;height:6px;border-radius:50%;background:var(--rd);animation:blink 1s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .dash{padding:16px;max-width:1100px;margin:0 auto}
-.dh{font-size:20px;font-weight:700;margin-bottom:2px}
+.dh{font-family:var(--fn-display);font-size:20px;font-weight:700;margin-bottom:2px}
 .ds{font-size:12px;color:var(--tx3);margin-bottom:18px}
 .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
-.stat-card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px}
+.stat-card{background:rgba(255,255,255,.08);border:1px solid var(--bd);border-radius:16px;padding:18px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0px 2px 8px}
 .stat-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
 .stat-val{font-size:28px;font-weight:800;margin:6px 0 2px}
 .stat-sub{font-size:11px;color:var(--tx3)}
 .dash-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-.dash-card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px}
+.dash-card{background:rgba(255,255,255,.08);border:1px solid var(--bd);border-radius:16px;padding:18px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0px 2px 8px}
 .dct{font-size:11px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px}
 .emp-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;transition:background .15s}
-.emp-row:hover{background:rgba(255,255,255,.03)}
+.emp-row:hover{background:rgba(106,95,193,.08)}
 .emp-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
 .bar-wrap{flex:1;height:5px;background:var(--s3);border-radius:3px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px}
-.rep-panel{background:linear-gradient(135deg,rgba(59,130,246,.1),rgba(167,139,250,.07));border:1px solid rgba(59,130,246,.25);border-radius:14px;padding:16px;margin-bottom:16px}
+.rep-panel{background:linear-gradient(135deg,rgba(106,95,193,.12),rgba(167,139,250,.08));border:1px solid rgba(106,95,193,.3);border-radius:14px;padding:16px;margin-bottom:16px}
 .rep-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.rep-btn{display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--bd2);background:var(--s2);color:var(--tx);font-family:var(--fn);transition:all .2s}
-.rep-btn:hover{background:var(--blb);border-color:var(--bl);color:var(--bl);transform:translateY(-1px)}
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
+.rep-btn{display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #584674;background:#79628c;color:#fff;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
+.rep-btn:hover{box-shadow:rgba(0,0,0,.18) 0px .5rem 1.5rem;transform:translateY(-1px)}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(21,15,35,.85);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
 .modal-overlay.open{display:flex}
-.modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:600px;margin:auto;box-shadow:0 24px 80px rgba(0,0,0,.7);animation:pop .25s ease}
+.modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:600px;margin:auto;box-shadow:rgba(22,15,36,.9) 0px 24px 80px;animation:pop .25s ease}
 @keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
-.btn-export{flex:1;padding:13px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:700;border:none;border-radius:12px;font-size:15px;cursor:pointer;font-family:var(--fn);transition:all .2s}
+.btn-export{flex:1;padding:13px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:700;border:none;border-radius:13px;font-size:14px;cursor:pointer;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px}
 .btn-export:hover{opacity:.9}
-.btn-close{padding:13px 22px;background:var(--s2);color:var(--tx2);font-weight:600;border:1px solid var(--bd2);border-radius:12px;font-size:14px;cursor:pointer;font-family:var(--fn)}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:#1e1e1e;border:1px solid var(--bd2);border-radius:12px;padding:11px 18px;font-size:13px;font-weight:500;z-index:9999;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap}
+.btn-close{padding:13px 22px;background:var(--s2);color:var(--tx2);font-weight:600;border:1px solid var(--bd2);border-radius:13px;font-size:14px;cursor:pointer;font-family:var(--fn);text-transform:uppercase;letter-spacing:0.2px}
+.btn-close:hover{background:var(--s3);color:var(--tx)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;padding:11px 18px;font-size:13px;font-weight:500;z-index:9999;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap}
 .toast.show{transform:translateX(-50%) translateY(0)}
-.toast.success{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.1);color:var(--gr)}
+.toast.success{border-color:rgba(194,239,78,.4);background:rgba(194,239,78,.1);color:var(--gr)}
 .toast.error{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:var(--rd)}
 #proc-split{max-height:220px;overflow-y:auto;padding-right:4px}
 @media(max-width:700px){.stat-row{grid-template-columns:1fr 1fr}.dash-row{grid-template-columns:1fr}}
@@ -891,9 +957,9 @@ const BASE = '${apiBase}';
 const WORK_TYPES_ORDER = ['Tailor (01)','Tailor (02)','Hand Work','Stone Work','Button','Embroidery','Ari Work','Hand Designing','Invoice maker','Packaging','Checker'];
 function procColorUI(p) {
   const c = {
-    'Tailor (01)':'var(--bl)','Tailor (02)':'#6366f1','Hand Work':'var(--gr)','Stone Work':'var(--am)',
-    'Button':'#ec4899','Embroidery':'var(--pu)','Ari Work':'#14b8a6','Hand Designing':'#f97316',
-    'Invoice maker':'#eab308','Packaging':'#84cc16','Checker':'#0ea5e9'
+    'Tailor (01)':'var(--bl)','Tailor (02)':'#8b5cf6','Hand Work':'var(--gr)','Stone Work':'var(--am)',
+    'Button':'#fa7faa','Embroidery':'var(--pu)','Ari Work':'#14b8a6','Hand Designing':'#ffb287',
+    'Invoice maker':'#c2ef4e','Packaging':'#79628c','Checker':'#6a5fc1'
   };
   return c[p] || 'var(--tx2)';
 }
@@ -1083,7 +1149,7 @@ async function openReport(type) {
       '<div style="max-height:220px;overflow-y:auto">';
 
     (data.by_employee||[]).forEach(e => {
-      html += '<div style="display:grid;grid-template-columns:1fr 60px 80px;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px">' +
+      html += '<div style="display:grid;grid-template-columns:1fr 60px 80px;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px">' +
         '<span style="font-weight:600">'+e.emp_name+'<span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
         '<span style="text-align:right;font-weight:700">'+e.units+'</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">'+fmtHMS(e.avg_sec)+'</span></div>';
@@ -1104,7 +1170,7 @@ async function openReport(type) {
       invRows.forEach(function (row) {
         const t = new Date((Number(row.ended_at) || 0) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const nums = esc(String(row.invoice_serial || '')).replace(/,/g, ', ');
-        html += '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 36px minmax(0,1.2fr);gap:6px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.03);font-size:11px;align-items:start">' +
+        html += '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 36px minmax(0,1.2fr);gap:6px;padding:8px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:11px;align-items:start">' +
           '<span style="color:var(--tx3);white-space:nowrap">' + t + '</span>' +
           '<span style="font-weight:600;min-width:0">' + esc(row.emp_name || '') + '<span style="color:var(--tx3);font-weight:400"> \u00b7 ' + esc(row.abaya_code || '\u2014') + '</span></span>' +
           '<span style="text-align:right;font-weight:700;color:var(--am)">' + (row.invoice_count != null ? esc(String(row.invoice_count)) : '\u2014') + '</span>' +

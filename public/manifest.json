@@ -4,8 +4,8 @@
   "description": "Timedilemma: generate QR codes for AbaYa Track kiosk tablets across factories",
   "start_url": "/setup.html",
   "display": "standalone",
-  "background_color": "#0b0a08",
-  "theme_color": "#161310",
+  "background_color": "#1f1633",
+  "theme_color": "#150f23",
   "orientation": "portrait-primary",
   "icons": [
     {

@@ -20,7 +20,7 @@ Creates `dist/AbaYa-Track-v1.0.0.zip`. Copy to the target PC via USB or network 
 
 1. Install **[Node.js 18+](https://nodejs.org/)** (LTS).
 2. Unzip to a folder (e.g. `C:\AbaYa-Track`).
-3. Run `install\INSTALL.bat` once.
+3. Run `install\INSTALL.bat` once (same as `yarn setup` from repo root: runs `install/setup.cjs` — Node-only bootstrap, no PowerShell for shortcuts).
 4. Edit `.env` — see [START HERE.txt](../START%20HERE.txt). For one shared folder on the factory PC, set `EXCEL_DATA_DIR` to that path (e.g. `C:/Users/DELL/Desktop/barcode`) and place `items_export.xlsx` and `employees.xlsx` there; or set `CATALOG_XLSX_PATH` / `EMPLOYEES_XLSX_PATH` explicitly.
 5. For **HTTPS** kiosk PWA (`https://kiosk.farewellabaya.com`), run **`install\SETUP-CLOUDFLARE-TUNNEL-FACTORY-API.ps1`** once on the factory PC. Print tablet QRs from **`http://localhost:3000/setup`**: set **Custom URL** to the kiosk Pages host and **Factory API for QR** to your tunnel API (default `https://api.farewellabaya.com`). Full sequence: [REMOTE_ACCESS.md](REMOTE_ACCESS.md) (tablet rollout checklist).
 6. Double-click **AbaYa Track** on Desktop, or run **`install\LAUNCH-ALL.bat`** — installs dependencies if needed, starts the Cloudflare tunnel when `~\.cloudflared\config.yml` exists, then starts the server, browsers, and optional catalog watcher.

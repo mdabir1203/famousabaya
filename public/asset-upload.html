@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AbaYa Track — Employee &amp; Item Images</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#1f1633; --s2:#241a38; --bd:rgba(106,95,193,.35); --tx:#fff; --tx2:#e5e7eb; --tx3:#9c98b0; --gr:#c2ef4e; --bl:#6a5fc1; --rd:#ef4444; }
+* { box-sizing: border-box; }
+body { font-family: Rubik, system-ui, sans-serif; background: var(--bg); color: var(--tx); margin: 0; padding: 24px 16px 48px; line-height: 1.45; }
+h1 { font-size: 1.35rem; margin: 0 0 8px; }
+p.sub { color: var(--tx3); font-size: 13px; margin: 0 0 22px; max-width: 720px; }
+.card { background: rgba(255,255,255,.06); border: 1px solid var(--bd); border-radius: 14px; padding: 20px; margin-bottom: 18px; max-width: 560px; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--tx3); margin: 0 0 14px; }
+label { display: block; font-size: 12px; color: var(--tx2); margin-bottom: 6px; }
+input[type="text"], input[type="password"] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--bd); background: var(--s2); color: var(--tx); font-size: 14px; margin-bottom: 12px; }
+input[type="file"] { margin-bottom: 12px; font-size: 13px; color: var(--tx2); }
+button { background: var(--gr); color: #1f1633; border: none; padding: 11px 18px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 14px; }
+button:hover { filter: brightness(1.06); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.msg { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.msg.ok { color: var(--gr); }
+.msg.err { color: var(--rd); }
+a { color: #a5b4fc; }
+.back { display: inline-block; margin-bottom: 18px; font-size: 13px; }
+.preview-wrap { margin-top: 10px; padding: 10px; background: rgba(0,0,0,.2); border-radius: 10px; border: 1px solid var(--bd); }
+.preview-wrap img { max-width: 100%; max-height: 220px; border-radius: 8px; display: block; }
+.preview-h { font-size: 11px; color: var(--tx3); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; }
+.viewer-link { display: inline-block; margin-top: 8px; font-size: 13px; }
+</style>
+</head>
+<body>
+<a class="back" href="/setup.html">&larr; Back to QR setup</a>
+<h1>Employee &amp; item images</h1>
+<p class="sub">Upload photos next to your Excel-driven data. Files are stored under <code>public/uploads/</code> on the factory PC and linked by <strong>employee barcode</strong> or <strong>item barcode</strong> (must match a row already loaded from <code>employees.xlsx</code> / catalog).</p>
+
+<div class="card">
+  <h2>Optional secret</h2>
+  <p style="font-size:12px;color:var(--tx3);margin:0 0 10px">If <code>ASSET_UPLOAD_SECRET</code> is set in <code>.env</code>, paste the same value here (sent as <code>X-Asset-Upload-Secret</code>).</p>
+  <label for="sec">Upload secret (optional)</label>
+  <input type="password" id="sec" autocomplete="off" placeholder="Leave blank if server has no secret">
+</div>
+
+<div class="card">
+  <h2>Employee photo</h2>
+  <label for="emp-bc">Employee barcode (exact match)</label>
+  <input type="text" id="emp-bc" placeholder="e.g. 00000109" autocomplete="off">
+  <label for="emp-file">Image (JPEG / PNG / WebP, max 8 MB)</label>
+  <input type="file" id="emp-file" accept="image/jpeg,image/png,image/webp,image/gif">
+  <div id="emp-preview-wrap" class="preview-wrap" style="display:none">
+    <div class="preview-h">Preview (before upload)</div>
+    <img id="emp-preview-img" alt="Employee preview">
+  </div>
+  <button type="button" id="btn-emp">Upload employee photo</button>
+  <div id="emp-msg" class="msg" role="status"></div>
+  <div id="emp-viewer" style="display:none;margin-top:10px">
+    <div class="preview-h">Uploaded file</div>
+    <img id="emp-viewer-img" alt="Saved employee photo" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--bd)">
+    <div><a class="viewer-link" id="emp-viewer-link" href="#" target="_blank" rel="noopener">Open image in new tab</a></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Catalog item photo</h2>
+  <label for="item-bc">Item barcode (exact match)</label>
+  <input type="text" id="item-bc" placeholder="e.g. AB00000041" autocomplete="off">
+  <label for="item-file">Image (JPEG / PNG / WebP, max 8 MB)</label>
+  <input type="file" id="item-file" accept="image/jpeg,image/png,image/webp,image/gif">
+  <div id="item-preview-wrap" class="preview-wrap" style="display:none">
+    <div class="preview-h">Preview (before upload)</div>
+    <img id="item-preview-img" alt="Item preview">
+  </div>
+  <button type="button" id="btn-item">Upload item photo</button>
+  <div id="item-msg" class="msg" role="status"></div>
+  <div id="item-viewer" style="display:none;margin-top:10px">
+    <div class="preview-h">Uploaded file</div>
+    <img id="item-viewer-img" alt="Saved item photo" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--bd)">
+    <div><a class="viewer-link" id="item-viewer-link" href="#" target="_blank" rel="noopener">Open image in new tab</a></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var SEC_KEY = 'abaya_asset_upload_secret';
+  try {
+    var s = document.getElementById('sec');
+    s.value = localStorage.getItem(SEC_KEY) || '';
+    s.addEventListener('change', function () { localStorage.setItem(SEC_KEY, s.value.trim()); });
+  } catch (_) {}
+
+  function headers() {
+    var h = {};
+    var sec = (document.getElementById('sec') && document.getElementById('sec').value) || '';
+    if (sec.trim()) h['X-Asset-Upload-Secret'] = sec.trim();
+    return h;
+  }
+
+  function wireFilePreview(inputId, wrapId, imgId) {
+    var inp = document.getElementById(inputId);
+    var wrap = document.getElementById(wrapId);
+    var img = document.getElementById(imgId);
+    if (!inp || !wrap || !img) return;
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (!f) {
+        wrap.style.display = 'none';
+        img.removeAttribute('src');
+        return;
+      }
+      var u = URL.createObjectURL(f);
+      img.onload = function () {
+        try {
+          URL.revokeObjectURL(u);
+        } catch (_) {}
+      };
+      img.src = u;
+      wrap.style.display = 'block';
+    });
+  }
+  wireFilePreview('emp-file', 'emp-preview-wrap', 'emp-preview-img');
+  wireFilePreview('item-file', 'item-preview-wrap', 'item-preview-img');
+
+  function showViewer(kind, relPath) {
+    var base = relPath && String(relPath).charAt(0) === '/' ? relPath : '/' + (relPath || '');
+    var v = document.getElementById(kind + '-viewer');
+    var im = document.getElementById(kind + '-viewer-img');
+    var a = document.getElementById(kind + '-viewer-link');
+    if (!v || !im || !a) return;
+    im.src = base;
+    a.href = base;
+    v.style.display = 'block';
+  }
+
+  function upload(url, barcode, fileInput, msgEl, btn, viewerKind) {
+    msgEl.textContent = '';
+    msgEl.className = 'msg';
+    var bc = (barcode || '').trim();
+    if (!bc) { msgEl.className = 'msg err'; msgEl.textContent = 'Enter a barcode.'; return; }
+    var f = fileInput.files && fileInput.files[0];
+    if (!f) { msgEl.className = 'msg err'; msgEl.textContent = 'Choose an image file.'; return; }
+    var fd = new FormData();
+    fd.append('barcode', bc);
+    fd.append('image', f, f.name);
+    btn.disabled = true;
+    fetch(url, { method: 'POST', headers: headers(), body: fd })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+      .then(function (x) {
+        btn.disabled = false;
+        if (x.j && x.j.ok) {
+          msgEl.className = 'msg ok';
+          msgEl.textContent = JSON.stringify(x.j, null, 2);
+          var rel = x.j.photo || x.j.icon;
+          if (rel && viewerKind) showViewer(viewerKind, rel);
+        } else {
+          msgEl.className = 'msg err';
+          msgEl.textContent = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        msgEl.className = 'msg err';
+        msgEl.textContent = e.message || String(e);
+      });
+  }
+
+  document.getElementById('btn-emp').onclick = function () {
+    upload(
+      '/api/upload/employee-image',
+      document.getElementById('emp-bc').value,
+      document.getElementById('emp-file'),
+      document.getElementById('emp-msg'),
+      document.getElementById('btn-emp'),
+      'emp'
+    );
+  };
+  document.getElementById('btn-item').onclick = function () {
+    upload(
+      '/api/upload/catalog-item-image',
+      document.getElementById('item-bc').value,
+      document.getElementById('item-file'),
+      document.getElementById('item-msg'),
+      document.getElementById('btn-item'),
+      'item'
+    );
+  };
+})();
+</script>
+</body>
+</html>

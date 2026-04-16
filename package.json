@@ -5,10 +5,13 @@
   "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
   "main": "server.js",
   "scripts": {
+    "setup": "node install/setup.cjs",
     "start": "node server.js",
     "icons:build": "node scripts/render-app-icons.cjs",
     "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:system": "node scripts/test-system.mjs"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +23,7 @@
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
+    "multer": "^2.1.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
     "xlsx": "^0.18.5"

@@ -172,6 +172,7 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
   const alignRaw = String(cfg.alignProcess || 'strict').toLowerCase();
   const alignMode = ['strict', 'folder', 'off'].includes(alignRaw) ? alignRaw : 'strict';
   const unknownFolder = String(cfg.unknownEmployeeFolder || 'error').toLowerCase();
+  const defaultCatalogProcess = String(cfg.defaultCatalogProcess || 'Tailor (01)').trim() || 'Tailor (01)';
 
   const byId = new Map();
   const byBc = new Map();
@@ -197,25 +198,17 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
     const aligned = alignAbayasToEmployeeProcess(parsed, employee, atRoot ? 'off' : alignMode);
 
     for (const row of aligned) {
-      if (byId.has(row.id)) {
-        const prev = byId.get(row.id);
-        if (prev.filePath !== filePath) {
-          throw new Error(
-            `Duplicate Abaya ID ${JSON.stringify(row.id)} in ${filePath} and ${prev.filePath}. Remove or fix one export.`
-          );
-        }
+      const process = String(row.process != null ? row.process : '').trim() || defaultCatalogProcess;
+      const rowNorm = { ...row, process };
+      if (byId.has(rowNorm.id) || byBc.has(rowNorm.barcode)) {
+        console.warn(
+          `[catalog-watcher] Skipping duplicate barcode ${JSON.stringify(rowNorm.barcode)} from ${filePath}`
+        );
+        continue;
       }
-      if (byBc.has(row.barcode)) {
-        const prev = byBc.get(row.barcode);
-        if (prev.filePath !== filePath) {
-          throw new Error(
-            `Duplicate Barcode ${JSON.stringify(row.barcode)} in ${filePath} and ${prev.filePath}.`
-          );
-        }
-      }
-      const tagged = { ...row, filePath };
-      byId.set(row.id, tagged);
-      byBc.set(row.barcode, tagged);
+      const tagged = { ...rowNorm, filePath };
+      byId.set(rowNorm.id, tagged);
+      byBc.set(rowNorm.barcode, tagged);
     }
     sourceFiles.push(filePath);
   }

@@ -16,6 +16,13 @@ package-lock.json
 .yarn/build-state.yml
 .yarn/unplugged
 
+# ─── Catalog watcher live config (may contain secrets / real employee data) ───
+tools/catalog-watcher/config.json
+
+# ─── CEO ingest offline queue (session events; do not commit) ─────────────────
+data/ceo-ingest-queue.jsonl
+data/ceo-ingest-queue.jsonl.draining
+
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

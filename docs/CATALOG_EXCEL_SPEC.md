@@ -66,6 +66,14 @@ When using `tools/catalog-watcher/watch-catalog.js`:
   - `alignProcess: folder`: watcher overwrites row process with the employee folder role.
   - `alignProcess: off`: no process check/override.
 
+## Factory server (local file)
+
+If the factory PC loads catalog from disk (not only from the cloud), set **`EXCEL_DATA_DIR`** in `.env` to a folder and save **`items_export.xlsx`** there, or set **`CATALOG_XLSX_PATH`** to the full file path. See `.env.example`.
+
+## Process column (optional for some exports)
+
+Many factory exports only have **Barcode Display Name** (and design/tier), with **no Process column**. The office **catalog-watcher** and the **Cloudflare Worker** then assign **`DEFAULT_CATALOG_PROCESS`** (default `Tailor (01)`). Override in watcher `config.json` (`defaultCatalogProcess`), Worker `[vars]` / `DEFAULT_CATALOG_PROCESS`, or factory `.env` (`DEFAULT_CATALOG_PROCESS`). The value must be one of the allowed work types used on the floor.
+
 ## Excel typing (barcodes and codes)
 
 The watcher reads cells using **displayed** values (`raw: false`) where possible. For values with **leading zeros** or long numeric strings, format the column as **Text** in Excel (or export from a system that writes real text cells). Otherwise Excel may store a number and lose leading zeros.

@@ -1,5 +1,5 @@
 # Quick check: %USERPROFILE%\.cloudflared for tunnel JSON + optional config.yml
-# Does not fix anything — run docs/TUNNEL_CREDENTIALS_WINDOWS.md if JSON is missing.
+# Does not fix anything — see docs/REMOTE_ACCESS.md "Tunnel credential not found" section.
 
 $ErrorActionPreference = 'Continue'
 $cf = Join-Path $env:USERPROFILE '.cloudflared'
@@ -43,4 +43,4 @@ if (Test-Path $envFile) {
 }
 
 Write-Host ""
-Write-Host "Next: docs/TUNNEL_CREDENTIALS_WINDOWS.md and https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+Write-Host "Next: docs/REMOTE_ACCESS.md (Part D) and https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"

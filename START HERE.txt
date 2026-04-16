@@ -3,9 +3,10 @@ AbaYa Track — Quick Start
 
 1) Install Node.js 18+ from https://nodejs.org (LTS).
 
-2) Run install\INSTALL.bat once (creates Desktop shortcut), or double-click
-   install\LAUNCH-ALL.bat — first run installs Yarn if needed; optional Cloudflare
-   tunnel starts if %USERPROFILE%\.cloudflared\config.yml exists.
+2) Run install\INSTALL.bat once (or from repo root: yarn setup). Same step runs
+   install\setup.cjs: Corepack, Yarn deps, .env, Desktop shortcut — no PowerShell
+   for install. Then use install\LAUNCH-ALL.bat daily; optional Cloudflare tunnel
+   starts if %USERPROFILE%\.cloudflared\config.yml exists.
 
 3) Edit .env (same folder as server.js):
 
@@ -22,13 +23,69 @@ AbaYa Track — Quick Start
 4) Double-click "AbaYa Track" on Desktop (or install\LAUNCH-ALL.bat).
    Kiosk, dashboard, and setup page open in browser. Done.
 
+--- Updating the factory PC (get new code) ---
+
+Cloudflare (CEO dashboard + hosted kiosk PWA) is deployed from your dev PC —
+it does NOT copy anything onto the factory PC. The factory only needs the same
+.env CF_WORKER_URL and CF_INGEST_SECRET unless you rotated secrets on the Worker.
+
+Factory app (server.js, public\, install\) — pick ONE path:
+
+  Path A — Git on the factory PC (same repo as dev)
+    1. Close the running server (close the "AbaYa Server" cmd window, or stop the
+       process using port from .env PORT, default 3000).
+    2. Backup .env (copy to Desktop). Your Excel paths and secrets must survive.
+    3. In the repo folder: git pull
+    4. yarn install
+       If tools\catalog-watcher\package.json changed: cd tools\catalog-watcher
+       then yarn install, then cd back to repo root.
+    5. Double-check .env is still correct (git should not overwrite untracked .env).
+    6. Run install\LAUNCH-ALL.bat (or Desktop "AbaYa Track").
+    7. Optional smoke test: with server running, from repo root run:
+       yarn test:system
+
+  Path B — ZIP handoff (no Git on factory)
+    1. On dev PC: yarn run package:release  →  dist\AbaYa-Track-v<version>.zip
+    2. Copy the ZIP to the factory PC (USB or network share).
+    3. On factory: stop the server (same as step A.1).
+    4. Rename the old install folder to e.g. AbaYa-Track-OLD (full backup).
+    5. Unzip the new ZIP to the final path, e.g. C:\AbaYa-Track
+    6. Copy the backed-up .env from AbaYa-Track-OLD into the new folder root.
+    7. Run install\INSTALL.bat once in the new folder (updates Yarn deps).
+    8. Update the Desktop shortcut if it still pointed at the OLD folder
+       (or run INSTALL.bat again — it recreates "AbaYa Track" on Desktop).
+    9. Delete AbaYa-Track-OLD only after you confirm kiosk + dashboard work.
+    10. Optional: yarn test:system
+
+--- Cleanup checklist (keep one clean install) ---
+
+  - One live folder only (avoid C:\AbaYa-Track, C:\AbaYa-Track (1), copies on Desktop).
+  - One .env in that folder; do not commit .env to Git.
+  - dist\*.zip is for transport — you can delete the ZIP on the factory PC after unzip.
+  - Optional: remove old cloudflared or duplicate tunnel configs under
+    %USERPROFILE%\.cloudflared\ if you no longer use them (only if you know what they are).
+
 --- Where things are ---
 
   Kiosk:     http://localhost:3000/kiosk.html
   Dashboard: http://localhost:3000/dashboard.html
   QR Setup:  http://localhost:3000/setup
+  Media:     http://localhost:3000/asset-upload.html   (item + employee photos by barcode)
   CEO cloud: https://dashboard.farewellabaya.com  (after Cloudflare deploy)
   Kiosk PWA: https://kiosk.farewellabaya.com     (any tablet, add to home screen)
+
+  Note: "wrangler deploy" in cloudflare\ only updates the CEO Worker (D1, ingest).
+  It does NOT replace files on the factory PC. Kiosk PWA updates need:
+    yarn run deploy:all   or   kiosk-pwa + wrangler pages deploy separately.
+  Media upload (asset-upload.html) always lives on the factory Node server, not on Pages.
+
+  Live data: kiosk + LAN dashboard reload employees from the server, poll catalog/versions,
+  and full-page refresh after a server restart. Excel files reload on a timer (.env
+  CATALOG_XLSX_INTERVAL_MS / EMPLOYEES_XLSX_INTERVAL_MS); cloud catalog pulls every 60s when CF_WORKER_URL is set.
+
+  CEO offline: if the factory has no internet, session events are saved under data\ceo-ingest-queue.jsonl
+  and sent automatically when the link is back. Export backup: GET /api/ceo-ingest-export with header
+  X-Ingest-Secret (same as CF_INGEST_SECRET). Status: GET /api/ceo-ingest-status (pending count).
 
 --- Need more? ---
 

@@ -255,19 +255,19 @@ function parseItemsXlsx(filePath, opts) {
       icon: a.icon,
     });
 
-    const prevId = seenById.get(a.id);
-    if (prevId && prevId.signature !== signature) {
-      throw new Error(`Row ${excelRow}: duplicate id ${JSON.stringify(a.id)}`);
+    if (seenById.has(a.id)) {
+      const prevId = seenById.get(a.id);
+      if (prevId.signature !== signature) {
+        console.warn(
+          `[catalog-parse] Row ${excelRow}: duplicate barcode/id ${JSON.stringify(a.barcode)} ` +
+          `(first seen row ${prevId.row}, different data) — keeping first, skipping`
+        );
+      }
+      continue;
     }
-    const prevBarcode = seenByBarcode.get(a.barcode);
-    if (prevBarcode && prevBarcode.signature !== signature) {
-      throw new Error(`Row ${excelRow}: duplicate barcode ${JSON.stringify(a.barcode)}`);
-    }
-
-    // Some exports contain fully repeated rows; keep first and skip exact duplicates.
-    if (prevId || prevBarcode) {
+    if (seenByBarcode.has(a.barcode)) {
       console.warn(
-        `[catalog-parse] Row ${excelRow}: skipped exact duplicate for code ${JSON.stringify(a.code)}`
+        `[catalog-parse] Row ${excelRow}: duplicate barcode ${JSON.stringify(a.barcode)} — skipping`
       );
       continue;
     }

@@ -2,6 +2,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const multer = require('multer');
@@ -13,9 +14,30 @@ const QRCode = require('qrcode');
 /** Default 3000; override with PORT in .env */
 const PORT = process.env.PORT || 3000;
 
+function readAppPackageVersion() {
+  try {
+    const p = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+    return String(p.version || '1.0.0');
+  } catch (_) {
+    return '1.0.0';
+  }
+}
+
+const SERVER_STARTED_AT = Date.now();
+const APP_PACKAGE_VERSION = readAppPackageVersion();
+
 const app = express();
 app.use(cors());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    setHeaders(res, filePath) {
+      const lower = String(filePath || '').toLowerCase();
+      if (lower.endsWith('.html') || lower.endsWith('.js')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  })
+);
 app.use(express.json());
 
 const UPLOADS_PUBLIC = path.join(__dirname, 'public', 'uploads');
@@ -121,6 +143,102 @@ const io = new Server(server, {
 const CF_URL    = process.env.CF_WORKER_URL || '';
 const CF_SECRET = process.env.CF_INGEST_SECRET || '';
 
+/** Durable NDJSON queue when factory has no internet — replayed when CF is reachable again. */
+const CEO_QUEUE_DIR = String(process.env.CEO_INGEST_QUEUE_DIR || '').trim()
+  ? path.resolve(process.env.CEO_INGEST_QUEUE_DIR)
+  : path.join(__dirname, 'data');
+const CEO_QUEUE_FILE = (() => {
+  const env = String(process.env.CEO_INGEST_QUEUE_FILE || '').trim();
+  if (env) return path.isAbsolute(env) ? env : path.join(__dirname, env);
+  return path.join(CEO_QUEUE_DIR, 'ceo-ingest-queue.jsonl');
+})();
+const CEO_QUEUE_DRAIN = CEO_QUEUE_FILE + '.draining';
+const CEO_INGEST_RETRY_MS = Math.max(
+  5000,
+  Number(process.env.CEO_INGEST_RETRY_INTERVAL_MS) > 0
+    ? Number(process.env.CEO_INGEST_RETRY_INTERVAL_MS)
+    : 30000
+);
+
+let ceoIngestPendingCount = 0;
+let ceoQueueFlushRunning = false;
+
+function ensureCeoQueueDir() {
+  try {
+    fs.mkdirSync(path.dirname(CEO_QUEUE_FILE), { recursive: true });
+  } catch (e) {
+    console.warn('[ceo-queue] mkdir:', e.message);
+  }
+}
+
+function countQueueLines(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return 0;
+    if (fs.statSync(filePath).size === 0) return 0;
+    const buf = fs.readFileSync(filePath, 'utf8');
+    if (!buf.trim()) return 0;
+    let n = 0;
+    for (let i = 0; i < buf.length; i++) {
+      if (buf.charCodeAt(i) === 10) n += 1;
+    }
+    if (buf.charCodeAt(buf.length - 1) !== 10) n += 1;
+    return n;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function syncCeoPendingCountFromDisk() {
+  ceoIngestPendingCount = countQueueLines(CEO_QUEUE_FILE);
+}
+
+/** If server died mid-flush, merge partial drain file back into the live queue. */
+function recoverCeoIngestQueue() {
+  ensureCeoQueueDir();
+  if (!fs.existsSync(CEO_QUEUE_DRAIN)) return;
+  try {
+    const chunk = fs.readFileSync(CEO_QUEUE_DRAIN, 'utf8');
+    if (chunk.trim()) {
+      fs.appendFileSync(CEO_QUEUE_FILE, chunk.endsWith('\n') ? chunk : chunk + '\n', 'utf8');
+    }
+    fs.unlinkSync(CEO_QUEUE_DRAIN);
+    console.log('[ceo-queue] Recovered incomplete flush (.draining merged)');
+  } catch (e) {
+    console.warn('[ceo-queue] Recovery failed:', e.message);
+  }
+}
+
+function appendCeoIngestFailed(type, payload) {
+  if (!CF_URL || !CF_SECRET) return;
+  ensureCeoQueueDir();
+  const rec = {
+    v: 1,
+    id: crypto.randomUUID(),
+    type,
+    payload,
+    queuedAt: Date.now(),
+  };
+  try {
+    fs.appendFileSync(CEO_QUEUE_FILE, JSON.stringify(rec) + '\n', 'utf8');
+    ceoIngestPendingCount += 1;
+    console.warn('[ceo-queue] Buffered for CEO sync, pending=', ceoIngestPendingCount);
+  } catch (e) {
+    console.error('[ceo-queue] Could not persist event:', e.message);
+  }
+}
+
+async function tryPostCeoIngestOnce(type, payload) {
+  return fetch(CF_URL + '/api/event', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Ingest-Secret': CF_SECRET,
+    },
+    body: JSON.stringify({ type, payload }),
+    signal: AbortSignal.timeout(8000),
+  });
+}
+
 var MAX_INVOICE_NUMBERS = 500;
 var MAX_INVOICE_DIGITS_PER = 20;
 var MAX_INVOICE_RAW_CHARS = 12000;
@@ -160,25 +278,100 @@ function parseInvoiceNumberList(raw) {
 }
 
 async function pushToCloudflare(type, payload) {
-  if (!CF_URL || !CF_SECRET) return; // Skip if not configured
+  if (!CF_URL || !CF_SECRET) return;
   try {
-    const res = await fetch(CF_URL + '/api/event', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Ingest-Secret': CF_SECRET,
-      },
-      body: JSON.stringify({ type, payload }),
-      signal: AbortSignal.timeout(8000), // 8-second timeout, non-blocking
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      console.warn('[CF] Push failed:', type, err.slice(0, 120));
-    } else {
+    const res = await tryPostCeoIngestOnce(type, payload);
+    if (res.ok) {
       console.log('[CF] Pushed:', type, payload.emp_id || '');
+      void drainCeoIngestQueue();
+      return;
     }
+    const txt = await res.text();
+    const snip = txt.slice(0, 160);
+    if (res.status === 401 || res.status === 403) {
+      console.warn('[CF] Push rejected (fix secret; not queued):', type, res.status, snip);
+      return;
+    }
+    if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+      console.warn('[CF] Push rejected (not queued):', type, res.status, snip);
+      return;
+    }
+    console.warn('[CF] Push failed (queued for retry):', type, res.status, snip);
+    appendCeoIngestFailed(type, payload);
   } catch (e) {
-    console.warn('[CF] Push error (non-fatal):', e.message);
+    console.warn('[CF] Push error (queued for retry):', e.message);
+    appendCeoIngestFailed(type, payload);
+  }
+}
+
+/**
+ * Flush buffered CEO ingest events (oldest first). Safe to call often; uses rename + replay.
+ * Worker uses INSERT OR IGNORE / REPLACE so duplicates after a crash recovery are acceptable.
+ */
+async function drainCeoIngestQueue() {
+  if (!CF_URL || !CF_SECRET) return;
+  if (ceoQueueFlushRunning) return;
+  if (!fs.existsSync(CEO_QUEUE_FILE) || fs.statSync(CEO_QUEUE_FILE).size === 0) {
+    ceoIngestPendingCount = 0;
+    return;
+  }
+
+  ceoQueueFlushRunning = true;
+  const failed = [];
+  try {
+    try {
+      fs.renameSync(CEO_QUEUE_FILE, CEO_QUEUE_DRAIN);
+    } catch (e) {
+      console.warn('[ceo-queue] rename skip:', e.message);
+      return;
+    }
+    const raw = fs.readFileSync(CEO_QUEUE_DRAIN, 'utf8');
+    const lines = raw.split('\n').filter(Boolean);
+    for (let i = 0; i < lines.length; i++) {
+      let rec;
+      try {
+        rec = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      if (!rec || rec.v !== 1 || !rec.type || rec.payload == null) continue;
+      try {
+        const res = await tryPostCeoIngestOnce(rec.type, rec.payload);
+        if (!res.ok) {
+          const st = res.status;
+          if (st === 401 || st === 403 || (st >= 400 && st < 500 && st !== 408 && st !== 429)) {
+            console.warn('[ceo-queue] Drop on replay (client error):', rec.type, st);
+            continue;
+          }
+          failed.push(rec);
+        }
+      } catch {
+        failed.push(rec);
+      }
+    }
+    if (failed.length) {
+      const body = failed.map(function (r) { return JSON.stringify(r); }).join('\n') + '\n';
+      fs.appendFileSync(CEO_QUEUE_FILE, body, 'utf8');
+    }
+    fs.unlinkSync(CEO_QUEUE_DRAIN);
+  } catch (e) {
+    console.error('[ceo-queue] drain error:', e.message);
+    try {
+      if (fs.existsSync(CEO_QUEUE_DRAIN)) {
+        if (!fs.existsSync(CEO_QUEUE_FILE)) {
+          fs.renameSync(CEO_QUEUE_DRAIN, CEO_QUEUE_FILE);
+        } else {
+          const chunk = fs.readFileSync(CEO_QUEUE_DRAIN, 'utf8');
+          if (chunk.trim()) {
+            fs.appendFileSync(CEO_QUEUE_FILE, chunk.endsWith('\n') ? chunk : chunk + '\n', 'utf8');
+          }
+          fs.unlinkSync(CEO_QUEUE_DRAIN);
+        }
+      }
+    } catch (_) {}
+  } finally {
+    ceoQueueFlushRunning = false;
+    syncCeoPendingCountFromDisk();
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,6 +426,29 @@ let abayaCatalog = DEFAULT_ABAYA_CATALOG.map(function (a) {
   return { id: a.id, code: a.code, barcode: a.barcode, design: a.design, process: a.process, icon: a.icon || '' };
 });
 let catalogCloudVersion = 'local';
+/** Bumped on every employee directory change (xlsx, API, photo upload) — clients poll + socket. */
+let employeesDataVersion = 0;
+let lastEmployeesXlsxMtime = 0;
+let lastCatalogXlsxMtime = 0;
+
+function emitEmployeesChanged() {
+  employeesDataVersion += 1;
+  io.emit('employees_update', { count: EMPLOYEES.length, version: employeesDataVersion });
+}
+
+function getClientSyncPayload() {
+  return {
+    ok: true,
+    appVersion: APP_PACKAGE_VERSION,
+    serverStartedAt: SERVER_STARTED_AT,
+    catalogVersion: catalogCloudVersion,
+    employeesVersion: employeesDataVersion,
+    catalogRows: abayaCatalog.length,
+    employeeRows: EMPLOYEES.length,
+    ceoIngestCloud: !!(CF_URL && CF_SECRET),
+    ceoIngestPending: ceoIngestPendingCount,
+  };
+}
 
 function normalizeAbayaCatalogRows(rows) {
   return rows.map(function (a) {
@@ -325,6 +541,7 @@ io.on('connection', (socket) => {
   
   // Immediately send current state to the single new client
   socket.emit('state_update', getRealtimeState());
+  socket.emit('sync_versions', getClientSyncPayload());
 
   socket.on('req_lookup', (ac_no, callback) => {
     var emp = AC_MAP[ac_no];
@@ -525,7 +742,7 @@ app.post('/api/employees', (req, res) => {
   EMPLOYEES.push(emp);
   rebuildACMap();
   EMP_PERF.push({ id: id, units: 0, eff: 0, act: 0, idl: 0 });
-  io.emit('employees_update', { count: EMPLOYEES.length });
+  emitEmployeesChanged();
   res.json({ ok: true, employee: emp });
 });
 
@@ -548,7 +765,7 @@ app.put('/api/employees/:id', (req, res) => {
   if (b.photo != null) emp.photo = String(b.photo).trim();
   emp.initials = (emp.name || '?').slice(0, 2).toUpperCase();
   rebuildACMap();
-  io.emit('employees_update', { count: EMPLOYEES.length });
+  emitEmployeesChanged();
   res.json({ ok: true, employee: emp });
 });
 
@@ -580,7 +797,7 @@ app.post(
       fs.writeFileSync(path.join(UPLOAD_EMP_DIR, base), req.file.buffer);
       emp.photo = rel;
       emp.initials = (emp.name || '?').slice(0, 2).toUpperCase();
-      io.emit('employees_update', { count: EMPLOYEES.length });
+      emitEmployeesChanged();
       res.json({ ok: true, photo: rel, employeeId: emp.id, name: emp.name });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message || 'Upload failed' });
@@ -712,13 +929,18 @@ function loadEmployeesFromXlsxFile() {
     return;
   }
   try {
+    const mt = Math.floor(fs.statSync(resolved).mtimeMs);
+    if (lastEmployeesXlsxMtime !== 0 && mt === lastEmployeesXlsxMtime) {
+      return;
+    }
     const parsed = parseEmployeesXlsxFile(resolved);
     if (parsed.length === 0) { console.warn('[employees-xlsx] No valid rows found in', resolved); return; }
+    lastEmployeesXlsxMtime = mt;
     EMPLOYEES = parsed;
     attachEmployeeImagesFromDisk();
     EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
     rebuildACMap();
-    io.emit('employees_update', { count: EMPLOYEES.length });
+    emitEmployeesChanged();
     console.log('[employees-xlsx] Loaded', parsed.length, 'employees from', resolved);
   } catch (e) {
     console.error('[employees-xlsx] Parse error (non-fatal):', e.message);
@@ -789,8 +1011,13 @@ function loadCatalogFromXlsxFile() {
     return;
   }
   try {
+    const mt = Math.floor(fs.statSync(resolved).mtimeMs);
+    if (lastCatalogXlsxMtime !== 0 && mt === lastCatalogXlsxMtime) {
+      return;
+    }
     const abayas = parseCatalogXlsxFile(resolved);
     if (abayas.length === 0) { console.warn('[catalog-xlsx] No valid rows found in', resolved); return; }
+    lastCatalogXlsxMtime = mt;
     abayaCatalog = normalizeAbayaCatalogRows(abayas);
     attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
@@ -881,6 +1108,48 @@ app.get('/api/server-info', (req, res) => {
   res.json({ ok: true, ips: getLanIPs(), port: PORT });
 });
 
+/** Version snapshot for browsers (auto-refresh catalog/employees, detect server restart). */
+app.get('/api/client-config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(getClientSyncPayload());
+});
+
+/** LAN: how many session events are waiting to reach the CEO Worker (offline / outage). */
+app.get('/api/ceo-ingest-status', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    enabled: !!(CF_URL && CF_SECRET),
+    pending: ceoIngestPendingCount,
+    retryMs: CEO_INGEST_RETRY_MS,
+    queueBasename: path.basename(CEO_QUEUE_FILE),
+  });
+});
+
+/**
+ * Backup NDJSON for ops: email/USB when internet was down. Same secret as factory → Worker ingest.
+ * CEO side can later run a small replay script against the Worker, or you wait for auto-retry on the PC.
+ */
+app.get('/api/ceo-ingest-export', (req, res) => {
+  const secret = String(req.headers['x-ingest-secret'] || '').trim();
+  if (!CF_SECRET || secret !== CF_SECRET) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized (use X-Ingest-Secret matching CF_INGEST_SECRET)' });
+  }
+  recoverCeoIngestQueue();
+  syncCeoPendingCountFromDisk();
+  try {
+    let body = '';
+    if (fs.existsSync(CEO_QUEUE_FILE)) body += fs.readFileSync(CEO_QUEUE_FILE, 'utf8');
+    if (fs.existsSync(CEO_QUEUE_DRAIN)) body += fs.readFileSync(CEO_QUEUE_DRAIN, 'utf8');
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="ceo-ingest-queue.ndjson"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(body || '');
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 /**
  * QR code as SVG: GET /api/qr?url=<encoded-url>&size=256
  * Used by setup.html — server-side generation via the qrcode package (no CDN needed).
@@ -931,6 +1200,16 @@ app.use(function (err, req, res, next) {
 // START SERVER
 server.listen(PORT, () => {
   ensurePublicUploadDirs();
+  ensureCeoQueueDir();
+  recoverCeoIngestQueue();
+  syncCeoPendingCountFromDisk();
+  void drainCeoIngestQueue();
+  if (CF_URL && CF_SECRET) {
+    setInterval(function () { void drainCeoIngestQueue(); }, CEO_INGEST_RETRY_MS);
+    console.log(
+      `  CEO queue: ${CEO_QUEUE_FILE} (flush every ${CEO_INGEST_RETRY_MS}ms when pending)`
+    );
+  }
   attachEmployeeImagesFromDisk();
   attachItemImagesFromDisk();
   const lanIPs = getLanIPs();

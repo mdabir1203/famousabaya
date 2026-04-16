@@ -5,7 +5,8 @@ const socket = io({
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,
-  reconnectionDelayMax: 10000,
+  reconnectionDelayMax: 30000,
+  randomizationFactor: 0.5,
   timeout: 20000,
 });
 
@@ -81,9 +82,87 @@ socket.io.on('reconnect_attempt', () => {
   if (!fallbackPollTimer) startFallbackPolling();
 });
 
+function nudgeSocketIfDisconnected() {
+  if (!socket.connected) socket.connect();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') nudgeSocketIfDisconnected();
+});
+window.addEventListener('online', () => {
+  nudgeSocketIfDisconnected();
+});
+
 socket.on('catalog_update', () => {
   refreshDashboardAbayaCatalog();
 });
+
+socket.on('employees_update', () => {
+  loadEmployeesFromServer();
+});
+
+socket.on('sync_versions', () => {
+  pollClientConfig();
+});
+
+function loadEmployeesFromServer() {
+  fetch('/api/employees', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.employees)) return;
+      EMPLOYEES = d.employees;
+      renderAll();
+    })
+    .catch(() => {});
+}
+
+let lastCatalogVersionSeen = null;
+let lastEmployeesVersionSeen = null;
+
+function applyClientConfig(cfg) {
+  if (!cfg || !cfg.ok) return;
+  const banner = document.getElementById('ceo-queue-banner');
+  const pendEl = document.getElementById('ceo-queue-pending');
+  if (banner && pendEl && cfg.ceoIngestCloud) {
+    const p = Number(cfg.ceoIngestPending) || 0;
+    if (p > 0) {
+      pendEl.textContent = String(p);
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+    }
+  } else if (banner) {
+    banner.style.display = 'none';
+  }
+
+  const sk = 'abaya_srv_boot';
+  const prevBoot = sessionStorage.getItem(sk);
+  const boot = String(cfg.serverStartedAt);
+  if (prevBoot && prevBoot !== boot) {
+    sessionStorage.setItem(sk, boot);
+    window.location.reload();
+    return;
+  }
+  sessionStorage.setItem(sk, boot);
+
+  const cv = String(cfg.catalogVersion);
+  if (lastCatalogVersionSeen !== null && cv !== lastCatalogVersionSeen) {
+    refreshDashboardAbayaCatalog();
+  }
+  lastCatalogVersionSeen = cv;
+
+  const ev = String(cfg.employeesVersion);
+  if (lastEmployeesVersionSeen !== null && ev !== lastEmployeesVersionSeen) {
+    loadEmployeesFromServer();
+  }
+  lastEmployeesVersionSeen = ev;
+}
+
+function pollClientConfig() {
+  fetch('/api/client-config', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then(applyClientConfig)
+    .catch(() => {});
+}
 
 function normalizeDashboardAbayaRow(a) {
   return {
@@ -112,7 +191,7 @@ function dashTierBadge(tier) {
 }
 
 function refreshDashboardAbayaCatalog() {
-  fetch('/api/catalog/abayas')
+  fetch('/api/catalog/abayas', { cache: 'no-store' })
     .then((r) => r.json())
     .then((d) => {
       if (!d.ok || !Array.isArray(d.abayas)) return;
@@ -253,7 +332,7 @@ function formatInvoiceCellHtml(l) {
     '<div style="font-size:10px;line-height:1.35;color:var(--tx2);max-height:52px;overflow:hidden" title="' +
     fullAttr +
     '">' +
-    '<span style="color:#eab308;font-weight:700">' +
+    '<span style="color:#c2ef4e;font-weight:700">' +
     n +
     '</span> <span style="color:var(--tx3)">|</span> ' +
     '<span style="font-family:monospace;word-break:break-word">' +
@@ -281,9 +360,9 @@ function renderRecentInvoiceLogsNode() {
       const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
       const nums = escapeHtml(String(l.invoice_serial || '')).replace(/,/g, ', ');
       const cnt =
-        l.invoice_count != null ? '<span style="color:#eab308;font-weight:700">' + escapeHtml(String(l.invoice_count)) + '</span>' : '';
+        l.invoice_count != null ? '<span style="color:#c2ef4e;font-weight:700">' + escapeHtml(String(l.invoice_count)) + '</span>' : '';
       return (
-        '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 32px;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:11px;align-items:start">' +
+        '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 32px;gap:8px;padding:8px 0;border-bottom:1px solid rgba(54,45,89,.3);font-size:11px;align-items:start">' +
         '<span style="color:var(--tx3)">' +
         t +
         '</span>' +
@@ -373,16 +452,16 @@ function renderProcessEff() {
   var el = document.getElementById('proc-eff');
   var colors = {
     'Tailor (01)': 'var(--bl)',
-    'Tailor (02)': '#6366f1',
+    'Tailor (02)': '#8b5cf6',
     'Hand Work': 'var(--gr)',
     'Stone Work': 'var(--am)',
-    'Button': '#ec4899',
+    'Button': '#fa7faa',
     'Embroidery': 'var(--pu)',
     'Ari Work': '#14b8a6',
-    'Hand Designing': '#f97316',
-    'Invoice maker': '#eab308',
-    'Packaging': '#84cc16',
-    'Checker': '#0ea5e9'
+    'Hand Designing': '#ffb287',
+    'Invoice maker': '#c2ef4e',
+    'Packaging': '#79628c',
+    'Checker': '#6a5fc1'
   };
   el.innerHTML = procs.map(function (proc) {
     var procLogs = logs.filter(function (l) { return logMatchesWorkType(l, proc); });
@@ -450,7 +529,7 @@ function openReport(type) {
       const t = new Date(l.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       // Use the process stored in the log (employee may have selected a different role)
       const logProcess = l.process || (emp ? emp.process : '—');
-      return '<div style="display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px;align-items:start">' +
+      return '<div style="display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:start">' +
         '<span style="color:var(--tx3)">' + t + '</span>' +
         '<span style="font-weight:600">' + (emp ? escapeHtml(emp.name) : '—') + '</span>' +
         '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : '—') + (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') + '</span>' +
@@ -549,7 +628,10 @@ function showToast(msg, type) {
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
   updateClock();
+  loadEmployeesFromServer();
   refreshDashboardAbayaCatalog();
+  pollClientConfig();
+  setInterval(pollClientConfig, 30000);
   // Refresh live timers every second
   setInterval(() => {
     renderLiveSessions();

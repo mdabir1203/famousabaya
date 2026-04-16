@@ -32,6 +32,9 @@ const SOCKET_IO_OPTS = {
 
 const socket = io(SOCKET_IO_OPTS);
 
+/** Last active session emp ids from server — keep demo grid in sync when EMPLOYEES reloads. */
+let lastActiveEmployeeIds = [];
+
 function syncKioskConnUi(online, label) {
   const dot = document.getElementById('conn-dot');
   const lbl = document.getElementById('conn-label');
@@ -104,6 +107,60 @@ socket.on('catalog_update', () => {
   refreshKioskAbayaCatalog();
 });
 
+socket.on('employees_update', () => {
+  loadEmployeesFromServer();
+});
+
+socket.on('sync_versions', () => {
+  pollClientConfig();
+});
+
+function loadEmployeesFromServer() {
+  fetch('/api/employees', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.employees)) return;
+      EMPLOYEES = d.employees;
+      renderDemoGrid(lastActiveEmployeeIds);
+    })
+    .catch(() => {});
+}
+
+let lastCatalogVersionSeen = null;
+let lastEmployeesVersionSeen = null;
+
+function applyClientConfig(cfg) {
+  if (!cfg || !cfg.ok) return;
+  const sk = 'abaya_srv_boot';
+  const prevBoot = sessionStorage.getItem(sk);
+  const boot = String(cfg.serverStartedAt);
+  if (prevBoot && prevBoot !== boot) {
+    sessionStorage.setItem(sk, boot);
+    window.location.reload();
+    return;
+  }
+  sessionStorage.setItem(sk, boot);
+
+  const cv = String(cfg.catalogVersion);
+  if (lastCatalogVersionSeen !== null && cv !== lastCatalogVersionSeen) {
+    refreshKioskAbayaCatalog();
+  }
+  lastCatalogVersionSeen = cv;
+
+  const ev = String(cfg.employeesVersion);
+  if (lastEmployeesVersionSeen !== null && ev !== lastEmployeesVersionSeen) {
+    loadEmployeesFromServer();
+  }
+  lastEmployeesVersionSeen = ev;
+}
+
+function pollClientConfig() {
+  fetch('/api/client-config', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then(applyClientConfig)
+    .catch(() => {});
+}
+
 function normalizeKioskAbayaRow(a) {
   return {
     id: String(a.id),
@@ -136,7 +193,7 @@ function abayaIconHtml(icon) {
 }
 
 function refreshKioskAbayaCatalog() {
-  fetch('/api/catalog/abayas')
+  fetch('/api/catalog/abayas', { cache: 'no-store' })
     .then((r) => r.json())
     .then((d) => {
       if (!d.ok || !Array.isArray(d.abayas)) return;
@@ -148,7 +205,8 @@ function refreshKioskAbayaCatalog() {
 
 // ─── REAL-TIME GRID UPDATE (when server broadcasts state) ─────────────────────
 socket.on('state_update', (data) => {
-  renderDemoGrid(Object.keys(data.active));
+  lastActiveEmployeeIds = Object.keys(data.active || {});
+  renderDemoGrid(lastActiveEmployeeIds);
 });
 
 // ─── FINGERPRINT SIMULATION ───────────────────────────────────────────────────
@@ -869,8 +927,11 @@ function showToast(msg, type) {
 window.addEventListener('load', () => {
   loadBcQueueFromStorage();
   updateBcQueueHint();
+  loadEmployeesFromServer();
   renderDemoGrid([]);
   goTo('fp');
   resetIdleTimer();
   refreshKioskAbayaCatalog();
+  pollClientConfig();
+  setInterval(pollClientConfig, 30000);
 });
