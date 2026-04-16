@@ -1,4 +1,4 @@
-const CACHE_NAME = 'abaya-kiosk-v7';
+const CACHE_NAME = 'abaya-kiosk-v8';
 const SHELL = [
   '/',
   '/kiosk.js',

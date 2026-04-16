@@ -61,10 +61,72 @@ function mustUseHttpsFactoryOrigin(url) {
   return window.location.protocol === 'https:' && /^http:\/\//i.test(String(url || ''));
 }
 
-/** If this page is HTTPS but saved URL is http://, clear storage and show setup (stops mixed content). */
+/** LAN / loopback — cannot be auto-upgraded to https:// from an HTTPS kiosk page (mixed content). */
+function isPrivateOrLocalHostname(hostname) {
+  var h = String(hostname || '').toLowerCase();
+  if (!h || h === 'localhost' || h.endsWith('.local')) return true;
+  if (h === '::1' || h.startsWith('fe80:')) return true;
+  if (h === '127.0.0.1') return true;
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  var a = parseInt(m[1], 10), b = parseInt(m[2], 10), c = parseInt(m[3], 10), d = parseInt(m[4], 10);
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 0 && b === 0 && c === 0 && d === 0) return true;
+  return false;
+}
+
+/**
+ * On HTTPS kiosk pages, Socket.IO must use wss:// (https origin). If the saved URL is
+ * http:// for a public hostname (e.g. tunnel hostname), upgrade to https:// automatically.
+ * Private IPs stay http — caller must block / show setup (mixed content unavoidable).
+ */
+function upgradeHttpToHttpsIfNeeded(url) {
+  if (!url || window.location.protocol !== 'https:') return url;
+  try {
+    var p = new URL(url);
+    if (p.protocol !== 'http:') return url.replace(/\/+$/, '');
+    if (isPrivateOrLocalHostname(p.hostname)) return null;
+    p.protocol = 'https:';
+    return p.origin.replace(/\/+$/, '');
+  } catch (_) {
+    return url;
+  }
+}
+
+/** Persist upgraded URL once so Socket.IO + fetch never see http:// on this origin. */
+function applyHttpsUpgradeToStoredServerUrl() {
+  if (window.location.protocol !== 'https:') return;
+  var u = getServerUrl();
+  if (!u) return;
+  var up = upgradeHttpToHttpsIfNeeded(u);
+  if (up == null) {
+    localStorage.removeItem('abaya_server_url');
+    SERVER_URL = '';
+    try {
+      showToast('http:// factory address cannot be used on this HTTPS kiosk page.', 'error');
+    } catch (_) {}
+    return;
+  }
+  if (up !== u) {
+    saveServerUrl(up);
+  }
+}
+
+/** If this page is HTTPS but saved URL is http:// to a private host, clear and show setup. */
 function rejectStoredHttpOnSecurePage() {
   var u = getServerUrl();
   if (!u || !mustUseHttpsFactoryOrigin(u)) return false;
+  try {
+    var p = new URL(u);
+    if (!isPrivateOrLocalHostname(p.hostname)) {
+      applyHttpsUpgradeToStoredServerUrl();
+      return false;
+    }
+  } catch (_) {}
   localStorage.removeItem('abaya_server_url');
   SERVER_URL = '';
   var def = readDefaultSecureFactoryUrl();
@@ -101,12 +163,23 @@ var WORK_TYPES = [
     if (serverParam) {
       var decoded = decodeURIComponent(String(serverParam).replace(/\+/g, ' ')).trim();
       if (mustUseHttpsFactoryOrigin(decoded)) {
-        /* do not persist http:// on https kiosk */
+        try {
+          var pu = new URL(decoded);
+          if (!isPrivateOrLocalHostname(pu.hostname)) {
+            pu.protocol = 'https:';
+            saveServerUrl(pu.origin.replace(/\/+$/, ''));
+          }
+        } catch (_) {}
       } else {
         saveServerUrl(decoded);
       }
     }
   } catch (_) {}
+})();
+
+/** One-time: fix tablets that still have http:// tunnel URL saved (causes ws:// mixed content). */
+(function coerceStoredHttpTunnelUrl() {
+  applyHttpsUpgradeToStoredServerUrl();
 })();
 
 // ─── SOCKET.IO CONNECTION ────────────────────────────────────────────────────
@@ -122,9 +195,22 @@ var bcExcelQueue = [];
 var lastDemoActiveEmployeeIds = [];
 
 function connectToServer() {
+  applyHttpsUpgradeToStoredServerUrl();
   if (rejectStoredHttpOnSecurePage()) return;
   var url = getServerUrl();
   if (!url) { showSetup(); return; }
+  if (window.location.protocol === 'https:') {
+    var up = upgradeHttpToHttpsIfNeeded(url);
+    if (up == null) {
+      localStorage.removeItem('abaya_server_url');
+      SERVER_URL = '';
+      showToast('http:// LAN URL cannot be used on this HTTPS page. Use tunnel https:// or open kiosk over http://', 'error');
+      showSetup();
+      return;
+    }
+    if (up !== url) saveServerUrl(up);
+    url = up;
+  }
 
   hideSetup();
 
