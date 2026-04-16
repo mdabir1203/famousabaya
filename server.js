@@ -4,6 +4,7 @@ const os = require('os');
 const fs = require('fs');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
+const multer = require('multer');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -17,25 +18,105 @@ app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+const UPLOADS_PUBLIC = path.join(__dirname, 'public', 'uploads');
+const UPLOAD_EMP_DIR = path.join(UPLOADS_PUBLIC, 'employees');
+const UPLOAD_ITEM_DIR = path.join(UPLOADS_PUBLIC, 'items');
+
+function ensurePublicUploadDirs() {
+  try {
+    fs.mkdirSync(UPLOAD_EMP_DIR, { recursive: true });
+    fs.mkdirSync(UPLOAD_ITEM_DIR, { recursive: true });
+  } catch (e) {
+    console.warn('[uploads] Could not create dirs:', e.message);
+  }
+}
+
+/** If unset, employee/item image uploads are open (factory LAN). If set, require matching header. */
+const ASSET_UPLOAD_SECRET = String(process.env.ASSET_UPLOAD_SECRET || '').trim();
+
+function assertAssetUploadAllowed(req, res) {
+  if (!ASSET_UPLOAD_SECRET) return true;
+  const h = String(req.headers['x-asset-upload-secret'] || req.query.secret || '').trim();
+  if (h !== ASSET_UPLOAD_SECRET) {
+    res.status(401).json({
+      ok: false,
+      error: 'Missing or invalid X-Asset-Upload-Secret (must match ASSET_UPLOAD_SECRET in .env).',
+    });
+    return false;
+  }
+  return true;
+}
+
+function sanitizeUploadToken(s) {
+  return String(s || '').replace(/[^\w.-]+/g, '_').slice(0, 120);
+}
+
+const uploadImageMem = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    const mt = String(file.mimetype || '');
+    if (/^image\/(jpeg|pjpeg|png|gif|webp)$/i.test(mt)) return cb(null, true);
+    cb(new Error('Only JPEG, PNG, GIF, or WebP images are allowed'));
+  },
+});
+
+/** Link employees to uploads/employees/emp_{barcode}.ext when photo column empty. */
+function attachEmployeeImagesFromDisk() {
+  const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  for (let i = 0; i < EMPLOYEES.length; i++) {
+    const e = EMPLOYEES[i];
+    if (e.photo && String(e.photo).trim()) continue;
+    const base = 'emp_' + sanitizeUploadToken(e.barcode);
+    for (let xi = 0; xi < exts.length; xi++) {
+      const rel = 'uploads/employees/' + base + exts[xi];
+      if (fs.existsSync(path.join(__dirname, 'public', rel))) {
+        e.photo = rel;
+        break;
+      }
+    }
+  }
+}
+
+/** Link catalog rows to uploads/items/item_{barcode}.ext when icon empty. */
+function attachItemImagesFromDisk() {
+  const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  for (let i = 0; i < abayaCatalog.length; i++) {
+    const a = abayaCatalog[i];
+    if (a.icon != null && String(a.icon).trim() !== '') continue;
+    const base = 'item_' + sanitizeUploadToken(a.barcode);
+    for (let xi = 0; xi < exts.length; xi++) {
+      const rel = 'uploads/items/' + base + exts[xi];
+      if (fs.existsSync(path.join(__dirname, 'public', rel))) {
+        a.icon = rel;
+        break;
+      }
+    }
+  }
+}
+
 const server = http.createServer(app);
 const SOCKET_PING_INTERVAL_MS = Number(process.env.SOCKET_PING_INTERVAL_MS) > 0
   ? Number(process.env.SOCKET_PING_INTERVAL_MS)
-  : 25000;
+  : 15000;
 const SOCKET_PING_TIMEOUT_MS = Number(process.env.SOCKET_PING_TIMEOUT_MS) > 0
   ? Number(process.env.SOCKET_PING_TIMEOUT_MS)
-  : 60000;
+  : 20000;
 
 const io = new Server(server, {
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
   allowUpgrades: true,
+  cookie: false,
+  allowEIO3: true,
   pingInterval: SOCKET_PING_INTERVAL_MS,
   pingTimeout: SOCKET_PING_TIMEOUT_MS,
 });
 
 // ─── CLOUDFLARE PUSH LAYER ────────────────────────────────────────────────────
 // Set these in a .env file or environment variables before starting the server:
-//   CF_WORKER_URL=https://abaya-track.yourname.workers.dev
+//   CF_WORKER_URL=https://dashboard.farewellabaya.com   (custom domain; see cloudflare/wrangler.toml)
+//   or https://abaya-track.<account>.workers.dev if you use the default Workers URL
 //   CF_INGEST_SECRET=your_shared_secret_here
 const CF_URL    = process.env.CF_WORKER_URL || '';
 const CF_SECRET = process.env.CF_INGEST_SECRET || '';
@@ -105,33 +186,34 @@ async function pushToCloudflare(type, payload) {
 // ============================================================
 // MASTER CLOUD STATE (In-Memory Database)
 // ============================================================
-const EMPLOYEES = [
-  {id:'e1', emp_no:109, ac_no:1,  name:'Misbah',        code:'EMP109', barcode:'00000109', process:'Tailor (01)',   color:'#3b82f6', initials:'MI', photo:'uploads/Misbah.jpeg'},
+const DEFAULT_EMPLOYEES = [
+  {id:'e1', emp_no:109, ac_no:1,  name:'Misbah',        code:'EMP109', barcode:'00000109', process:'Tailor (01)',   color:'#6a5fc1', initials:'MI', photo:'uploads/Misbah.jpeg'},
   {id:'e2', emp_no:110, ac_no:2,  name:'Cyril',         code:'EMP110', barcode:'00000110', process:'Tailor (02)', color:'#a78bfa', initials:'CY'},
-  {id:'e3', emp_no:111, ac_no:3,  name:'Irfan',         code:'EMP111', barcode:'00000111', process:'Hand Work', color:'#22c55e', initials:'IR'},
-  {id:'e4', emp_no:112, ac_no:4,  name:'Mohammed',      code:'EMP112', barcode:'00000112', process:'Stone Work',   color:'#f59e0b', initials:'MO'},
-  {id:'e5', emp_no:113, ac_no:5,  name:'Mojeeb',        code:'EMP113', barcode:'00000113', process:'Button', color:'#ec4899', initials:'MO'},
-  {id:'e6', emp_no:114, ac_no:6,  name:'Sheron',        code:'EMP114', barcode:'00000114', process:'Embroidery', color:'#06b6d4', initials:'SH'},
-  {id:'e7', emp_no:115, ac_no:7,  name:'Arif',          code:'EMP115', barcode:'00000115', process:'Ari Work',   color:'#f97316', initials:'AR'},
+  {id:'e3', emp_no:111, ac_no:3,  name:'Irfan',         code:'EMP111', barcode:'00000111', process:'Hand Work', color:'#c2ef4e', initials:'IR'},
+  {id:'e4', emp_no:112, ac_no:4,  name:'Mohammed',      code:'EMP112', barcode:'00000112', process:'Stone Work',   color:'#ffb287', initials:'MO'},
+  {id:'e5', emp_no:113, ac_no:5,  name:'Mojeeb',        code:'EMP113', barcode:'00000113', process:'Button', color:'#fa7faa', initials:'MO'},
+  {id:'e6', emp_no:114, ac_no:6,  name:'Sheron',        code:'EMP114', barcode:'00000114', process:'Embroidery', color:'#14b8a6', initials:'SH'},
+  {id:'e7', emp_no:115, ac_no:7,  name:'Arif',          code:'EMP115', barcode:'00000115', process:'Ari Work',   color:'#ffb287', initials:'AR'},
   {id:'e8', emp_no:116, ac_no:8,  name:'Ridowan',       code:'EMP116', barcode:'00000116', process:'Hand Designing', color:'#ef4444', initials:'RI'},
   {id:'e9', emp_no:117, ac_no:9,  name:'Amirull',       code:'EMP117', barcode:'00000117', process:'Tailor (01)', color:'#8b5cf6', initials:'AM'},
-  {id:'e10',emp_no:118, ac_no:10, name:'Arman',         code:'EMP118', barcode:'00000118', process:'Tailor (02)',   color:'#10b981', initials:'AR'},
-  {id:'e11',emp_no:119, ac_no:11, name:'Shahid',        code:'EMP119', barcode:'00000119', process:'Hand Work', color:'#f59e0b', initials:'SH'},
-  {id:'e12',emp_no:120, ac_no:12, name:'Shabaj',        code:'EMP120', barcode:'00000120', process:'Stone Work', color:'#3b82f6', initials:'SH'},
-  {id:'e13',emp_no:121, ac_no:13, name:'Alazar',        code:'EMP121', barcode:'00000121', process:'Button',   color:'#ec4899', initials:'AL'},
+  {id:'e10',emp_no:118, ac_no:10, name:'Arman',         code:'EMP118', barcode:'00000118', process:'Tailor (02)',   color:'#14b8a6', initials:'AR'},
+  {id:'e11',emp_no:119, ac_no:11, name:'Shahid',        code:'EMP119', barcode:'00000119', process:'Hand Work', color:'#ffb287', initials:'SH'},
+  {id:'e12',emp_no:120, ac_no:12, name:'Shabaj',        code:'EMP120', barcode:'00000120', process:'Stone Work', color:'#6a5fc1', initials:'SH'},
+  {id:'e13',emp_no:121, ac_no:13, name:'Alazar',        code:'EMP121', barcode:'00000121', process:'Button',   color:'#fa7faa', initials:'AL'},
   {id:'e14',emp_no:122, ac_no:14, name:'Hafiz',         code:'EMP122', barcode:'00000122', process:'Embroidery', color:'#a78bfa', initials:'HA'},
-  {id:'e15',emp_no:123, ac_no:15, name:'Anasari',       code:'EMP123', barcode:'00000123', process:'Ari Work', color:'#22c55e', initials:'AN'},
-  {id:'e16',emp_no:124, ac_no:16, name:'Maishad',       code:'EMP124', barcode:'00000124', process:'Hand Designing',   color:'#06b6d4', initials:'MA'},
-  {id:'e17',emp_no:125, ac_no:17, name:'Mouthirrahman', code:'EMP125', barcode:'00000125', process:'Invoice maker', color:'#eab308', initials:'MO'},
-  {id:'e19',emp_no:128, ac_no:19, name:'Ibrahim',       code:'EMP128', barcode:'00000128', process:'Packaging', color:'#84cc16', initials:'IB'},
-  {id:'e20',emp_no:129, ac_no:20, name:'Farhan',        code:'EMP129', barcode:'00000129', process:'Checker',   color:'#0ea5e9', initials:'FA'},
-  {id:'e21',emp_no:130, ac_no:21, name:'Naserulla',     code:'EMP130', barcode:'00000130', process:'Tailor (01)', color:'#10b981', initials:'NA'},
-  {id:'e22',emp_no:131, ac_no:22, name:'Mamush',        code:'EMP131', barcode:'00000131', process:'Button', color:'#f59e0b', initials:'MA'},
-  {id:'e23',emp_no:132, ac_no:23, name:'Wasim',         code:'EMP132', barcode:'00000132', process:'Embroidery',   color:'#3b82f6', initials:'WA'},
-  {id:'e24',emp_no:133, ac_no:24, name:'Anwar',         code:'EMP133', barcode:'00000133', process:'Ari Work', color:'#ec4899', initials:'AN'},
+  {id:'e15',emp_no:123, ac_no:15, name:'Anasari',       code:'EMP123', barcode:'00000123', process:'Ari Work', color:'#c2ef4e', initials:'AN'},
+  {id:'e16',emp_no:124, ac_no:16, name:'Maishad',       code:'EMP124', barcode:'00000124', process:'Hand Designing',   color:'#14b8a6', initials:'MA'},
+  {id:'e17',emp_no:125, ac_no:17, name:'Mouthirrahman', code:'EMP125', barcode:'00000125', process:'Invoice maker', color:'#c2ef4e', initials:'MO'},
+  {id:'e19',emp_no:128, ac_no:19, name:'Ibrahim',       code:'EMP128', barcode:'00000128', process:'Packaging', color:'#79628c', initials:'IB'},
+  {id:'e20',emp_no:129, ac_no:20, name:'Farhan',        code:'EMP129', barcode:'00000129', process:'Checker',   color:'#6a5fc1', initials:'FA'},
+  {id:'e21',emp_no:130, ac_no:21, name:'Naserulla',     code:'EMP130', barcode:'00000130', process:'Tailor (01)', color:'#14b8a6', initials:'NA'},
+  {id:'e22',emp_no:131, ac_no:22, name:'Mamush',        code:'EMP131', barcode:'00000131', process:'Button', color:'#ffb287', initials:'MA'},
+  {id:'e23',emp_no:132, ac_no:23, name:'Wasim',         code:'EMP132', barcode:'00000132', process:'Embroidery',   color:'#6a5fc1', initials:'WA'},
+  {id:'e24',emp_no:133, ac_no:24, name:'Anwar',         code:'EMP133', barcode:'00000133', process:'Ari Work', color:'#fa7faa', initials:'AN'},
   {id:'e25',emp_no:134, ac_no:25, name:'Raees',         code:'EMP134', barcode:'00000134', process:'Hand Designing', color:'#a78bfa', initials:'RA'},
-  {id:'e26',emp_no:135, ac_no:26, name:'ArmanAnasari',  code:'EMP135', barcode:'00000135', process:'Tailor (01)',   color:'#22c55e', initials:'AR'},
+  {id:'e26',emp_no:135, ac_no:26, name:'ArmanAnasari',  code:'EMP135', barcode:'00000135', process:'Tailor (01)',   color:'#c2ef4e', initials:'AR'},
 ];
+let EMPLOYEES = DEFAULT_EMPLOYEES.slice();
 
 const DEFAULT_ABAYA_CATALOG = [
   {id:'a1', code:'AB-0041',barcode:'AB00000041',design:'Classic Black Bisht',    process:'Tailor (01)',    tier:'Standard',   icon: ''},
@@ -184,6 +266,7 @@ async function refreshAbayaCatalogFromCloud() {
     }
     const prev = catalogCloudVersion;
     abayaCatalog = normalizeAbayaCatalogRows(j.abayas);
+    attachItemImagesFromDisk();
     catalogCloudVersion = ver;
     if (prev !== catalogCloudVersion) {
       io.emit('catalog_update', { version: catalogCloudVersion });
@@ -197,8 +280,12 @@ let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
 let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
 
-const AC_MAP = {};
-EMPLOYEES.forEach(e => AC_MAP[e.ac_no] = e);
+let AC_MAP = {};
+function rebuildACMap() {
+  AC_MAP = {};
+  EMPLOYEES.forEach(e => AC_MAP[e.ac_no] = e);
+}
+rebuildACMap();
 
 function getRealtimeState() {
   return {
@@ -391,18 +478,17 @@ app.get('/api/state', (req, res) => {
   res.json({ ok: true, state: getRealtimeState() });
 });
 
-/** Minimal fields for office catalog watcher (employee folder names ↔ process alignment). */
 app.get('/api/employees', (req, res) => {
   res.json({
     ok: true,
     employees: EMPLOYEES.map(function (e) {
       return {
-        id: e.id,
-        name: e.name,
-        code: e.code,
-        emp_no: e.emp_no,
-        ac_no: e.ac_no,
-        process: e.process,
+        id: e.id, name: e.name, code: e.code,
+        emp_no: e.emp_no, ac_no: e.ac_no,
+        process: e.process, barcode: e.barcode,
+        color: e.color || '#6a5fc1',
+        initials: e.initials || (e.name || '?').slice(0, 2).toUpperCase(),
+        photo: e.photo || '',
       };
     }),
   });
@@ -410,11 +496,240 @@ app.get('/api/employees', (req, res) => {
 
 const CATALOG_INGEST_SECRET = process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
 
-// ─── LOCAL XLSX CATALOG LOADER ────────────────────────────────────────────────
-// Set CATALOG_XLSX_PATH in .env to a local items_export.xlsx.
-// The server reads it at startup and refreshes every CATALOG_XLSX_INTERVAL_MS (default 24 h).
-const CATALOG_XLSX_PATH = process.env.CATALOG_XLSX_PATH || '';
+/** Add a single employee (supervisor use). Protected by ingest secret. */
+app.post('/api/employees', (req, res) => {
+  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  var b = req.body;
+  if (!b || !b.name || !b.emp_no || !b.ac_no || !b.barcode || !b.process) {
+    return res.status(400).json({ ok: false, error: 'Required: name, emp_no, ac_no, barcode, process' });
+  }
+  var empNo = parseInt(b.emp_no, 10);
+  var acNo = parseInt(b.ac_no, 10);
+  if (isNaN(empNo) || isNaN(acNo)) {
+    return res.status(400).json({ ok: false, error: 'emp_no and ac_no must be integers' });
+  }
+  if (EMPLOYEES.some(function (e) { return e.barcode === String(b.barcode); })) {
+    return res.status(409).json({ ok: false, error: 'Employee with this barcode already exists' });
+  }
+  var id = 'e' + (EMPLOYEES.length + 1) + '-' + Date.now();
+  var emp = {
+    id: id, emp_no: empNo, ac_no: acNo,
+    name: String(b.name).trim(), code: b.code || ('EMP' + empNo),
+    barcode: String(b.barcode).trim(), process: String(b.process).trim(),
+    color: b.color || EMP_COLOR_PALETTE[EMPLOYEES.length % EMP_COLOR_PALETTE.length],
+    initials: (String(b.name) || '?').slice(0, 2).toUpperCase(),
+    photo: b.photo || '',
+  };
+  EMPLOYEES.push(emp);
+  rebuildACMap();
+  EMP_PERF.push({ id: id, units: 0, eff: 0, act: 0, idl: 0 });
+  io.emit('employees_update', { count: EMPLOYEES.length });
+  res.json({ ok: true, employee: emp });
+});
+
+/** Update an existing employee. Protected by ingest secret. */
+app.put('/api/employees/:id', (req, res) => {
+  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  var idx = EMPLOYEES.findIndex(function (e) { return e.id === req.params.id; });
+  if (idx < 0) return res.status(404).json({ ok: false, error: 'Employee not found' });
+  var b = req.body;
+  var emp = EMPLOYEES[idx];
+  if (b.name) emp.name = String(b.name).trim();
+  if (b.emp_no) emp.emp_no = parseInt(b.emp_no, 10);
+  if (b.ac_no) emp.ac_no = parseInt(b.ac_no, 10);
+  if (b.barcode) emp.barcode = String(b.barcode).trim();
+  if (b.process) emp.process = String(b.process).trim();
+  if (b.code) emp.code = String(b.code).trim();
+  if (b.color) emp.color = String(b.color).trim();
+  if (b.photo != null) emp.photo = String(b.photo).trim();
+  emp.initials = (emp.name || '?').slice(0, 2).toUpperCase();
+  rebuildACMap();
+  io.emit('employees_update', { count: EMPLOYEES.length });
+  res.json({ ok: true, employee: emp });
+});
+
+// ─── IMAGE UPLOADS (employees + catalog items) ────────────────────────────────
+app.post(
+  '/api/upload/employee-image',
+  function (req, res, next) {
+    if (!assertAssetUploadAllowed(req, res)) return;
+    next();
+  },
+  uploadImageMem.single('image'),
+  function (req, res) {
+    try {
+      const barcode = String(req.body.barcode || '').trim();
+      if (!barcode || !req.file) {
+        return res.status(400).json({ ok: false, error: 'Multipart field "image" and form field "barcode" are required.' });
+      }
+      const emp = EMPLOYEES.find(function (e) {
+        return String(e.barcode).trim() === barcode;
+      });
+      if (!emp) {
+        return res.status(404).json({ ok: false, error: 'No employee with barcode: ' + barcode });
+      }
+      ensurePublicUploadDirs();
+      const ext = (path.extname(req.file.originalname || '') || '.jpg').toLowerCase();
+      const safeExt = /^\.(jpe?g|png|gif|webp)$/.test(ext) ? ext : '.jpg';
+      const base = 'emp_' + sanitizeUploadToken(barcode) + safeExt;
+      const rel = 'uploads/employees/' + base;
+      fs.writeFileSync(path.join(UPLOAD_EMP_DIR, base), req.file.buffer);
+      emp.photo = rel;
+      emp.initials = (emp.name || '?').slice(0, 2).toUpperCase();
+      io.emit('employees_update', { count: EMPLOYEES.length });
+      res.json({ ok: true, photo: rel, employeeId: emp.id, name: emp.name });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Upload failed' });
+    }
+  },
+);
+
+app.post(
+  '/api/upload/catalog-item-image',
+  function (req, res, next) {
+    if (!assertAssetUploadAllowed(req, res)) return;
+    next();
+  },
+  uploadImageMem.single('image'),
+  function (req, res) {
+    try {
+      const barcode = String(req.body.barcode || '').trim();
+      if (!barcode || !req.file) {
+        return res.status(400).json({ ok: false, error: 'Multipart field "image" and form field "barcode" are required.' });
+      }
+      const item = abayaCatalog.find(function (a) {
+        return String(a.barcode).trim() === barcode;
+      });
+      if (!item) {
+        return res.status(404).json({ ok: false, error: 'No catalog item with barcode: ' + barcode });
+      }
+      ensurePublicUploadDirs();
+      const ext = (path.extname(req.file.originalname || '') || '.jpg').toLowerCase();
+      const safeExt = /^\.(jpe?g|png|gif|webp)$/.test(ext) ? ext : '.jpg';
+      const base = 'item_' + sanitizeUploadToken(barcode) + safeExt;
+      const rel = 'uploads/items/' + base;
+      fs.writeFileSync(path.join(UPLOAD_ITEM_DIR, base), req.file.buffer);
+      item.icon = rel;
+      catalogCloudVersion = String(Date.now());
+      io.emit('catalog_update', { version: catalogCloudVersion });
+      res.json({ ok: true, icon: rel, code: item.code, barcode: item.barcode });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message || 'Upload failed' });
+    }
+  },
+);
+
+// ─── LOCAL XLSX DATA (catalog + employees) ───────────────────────────────────
+// Optional EXCEL_DATA_DIR: folder containing items_export.xlsx and employees.xlsx.
+// Explicit CATALOG_XLSX_PATH / EMPLOYEES_XLSX_PATH in .env override those defaults.
+const EXCEL_DATA_DIR_RAW = String(process.env.EXCEL_DATA_DIR || '').trim();
+const CATALOG_XLSX_PATH_RAW = String(process.env.CATALOG_XLSX_PATH || '').trim();
+const EMPLOYEES_XLSX_PATH_RAW = String(process.env.EMPLOYEES_XLSX_PATH || '').trim();
+const _excelDataDir = EXCEL_DATA_DIR_RAW
+  ? (path.isAbsolute(EXCEL_DATA_DIR_RAW) ? EXCEL_DATA_DIR_RAW : path.join(__dirname, EXCEL_DATA_DIR_RAW))
+  : '';
+const EMPLOYEES_XLSX_PATH = EMPLOYEES_XLSX_PATH_RAW
+  || (_excelDataDir ? path.join(_excelDataDir, 'employees.xlsx') : '');
+const EMPLOYEES_XLSX_INTERVAL_MS = Math.max(Number(process.env.EMPLOYEES_XLSX_INTERVAL_MS) || 0, 3600000) || 86400000;
+
+const EMP_COLOR_PALETTE = [
+  '#6a5fc1','#a78bfa','#c2ef4e','#ffb287','#fa7faa',
+  '#14b8a6','#ef4444','#8b5cf6','#79628c','#3b82f6',
+];
+const EMP_XLSX_COL_ALIASES = {
+  emp_no:  ['emp_no', 'employee_no', 'employee_number', 'empno'],
+  ac_no:   ['ac_no', 'access_no', 'ac', 'access_control'],
+  name:    ['name', 'employee_name', 'emp_name', 'full_name'],
+  barcode: ['barcode', 'badge', 'badge_barcode', 'employee_barcode'],
+  process: ['process', 'work_type', 'department', 'role'],
+  code:    ['code', 'emp_code', 'employee_code'],
+  color:   ['color', 'colour', 'hex_color'],
+  photo:   ['photo', 'image', 'picture', 'avatar'],
+};
+const EMP_XLSX_REVERSE = {};
+for (const [field, aliases] of Object.entries(EMP_XLSX_COL_ALIASES)) {
+  for (const alias of aliases) {
+    EMP_XLSX_REVERSE[alias.toLowerCase().replace(/[\s\u00a0-]+/g, '_')] = field;
+  }
+}
+
+function parseEmployeesXlsxFile(filePath) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.readFile(filePath, { cellDates: false, cellNF: false, cellText: false });
+  const sheetName = wb.SheetNames.includes('Employees') ? 'Employees' : wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: false });
+  const employees = [];
+  const seenBc = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const out = { emp_no: '', ac_no: '', name: '', barcode: '', process: '', code: '', color: '', photo: '' };
+    for (const [k, v] of Object.entries(row)) {
+      const norm = k.trim().toLowerCase().replace(/[\s\u00a0-]+/g, '_');
+      const field = EMP_XLSX_REVERSE[norm];
+      if (field && out[field] === '') out[field] = String(v || '').trim();
+    }
+    if (!out.name && !out.emp_no && !out.barcode) continue;
+    const empNo = parseInt(out.emp_no, 10);
+    const acNo = parseInt(out.ac_no, 10);
+    if (!out.name || isNaN(empNo) || isNaN(acNo) || !out.barcode || !out.process) {
+      console.warn('[employees-xlsx] Row ' + (i + 2) + ': skipping — missing required field (name, emp_no, ac_no, barcode, process)');
+      continue;
+    }
+    if (seenBc.has(out.barcode)) continue;
+    seenBc.add(out.barcode);
+    const id = 'e' + (employees.length + 1);
+    const code = out.code || ('EMP' + empNo);
+    const color = out.color || EMP_COLOR_PALETTE[employees.length % EMP_COLOR_PALETTE.length];
+    const initials = (out.name || '?').slice(0, 2).toUpperCase();
+    var photo = out.photo || '';
+    if (!photo) {
+      var uploadsBase = path.join(__dirname, 'public', 'uploads');
+      var nameVariants = [out.name, out.name.toLowerCase(), out.name.replace(/\s+/g, '')];
+      var photoExts = ['.jpeg', '.jpg', '.png'];
+      for (var ni = 0; ni < nameVariants.length && !photo; ni++) {
+        for (var ei = 0; ei < photoExts.length && !photo; ei++) {
+          var candidate = path.join(uploadsBase, nameVariants[ni] + photoExts[ei]);
+          if (fs.existsSync(candidate)) photo = 'uploads/' + nameVariants[ni] + photoExts[ei];
+        }
+      }
+    }
+    employees.push({ id, emp_no: empNo, ac_no: acNo, name: out.name, code, barcode: out.barcode, process: out.process, color, initials, photo });
+  }
+  return employees;
+}
+
+function loadEmployeesFromXlsxFile() {
+  if (!EMPLOYEES_XLSX_PATH) return;
+  const resolved = path.isAbsolute(EMPLOYEES_XLSX_PATH)
+    ? EMPLOYEES_XLSX_PATH
+    : path.join(__dirname, EMPLOYEES_XLSX_PATH);
+  if (!fs.existsSync(resolved)) {
+    console.warn('[employees-xlsx] File not found:', resolved, '— fix .env (EXCEL_DATA_DIR or EMPLOYEES_XLSX_PATH) or copy employees.xlsx there; until then built-in demo employees are used.');
+    return;
+  }
+  try {
+    const parsed = parseEmployeesXlsxFile(resolved);
+    if (parsed.length === 0) { console.warn('[employees-xlsx] No valid rows found in', resolved); return; }
+    EMPLOYEES = parsed;
+    attachEmployeeImagesFromDisk();
+    EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
+    rebuildACMap();
+    io.emit('employees_update', { count: EMPLOYEES.length });
+    console.log('[employees-xlsx] Loaded', parsed.length, 'employees from', resolved);
+  } catch (e) {
+    console.error('[employees-xlsx] Parse error (non-fatal):', e.message);
+  }
+}
+
+// Catalog path (defaults to EXCEL_DATA_DIR/items_export.xlsx when dir set).
+const CATALOG_XLSX_PATH = CATALOG_XLSX_PATH_RAW
+  || (_excelDataDir ? path.join(_excelDataDir, 'items_export.xlsx') : '');
 const CATALOG_XLSX_INTERVAL_MS = Math.max(Number(process.env.CATALOG_XLSX_INTERVAL_MS) || 0, 3600000) || 86400000;
+const DEFAULT_CATALOG_PROCESS = String(process.env.DEFAULT_CATALOG_PROCESS || 'Tailor (01)').trim() || 'Tailor (01)';
 
 // Column aliases mirror catalog-parse.js — keep in sync.
 // "Barcode Display Name" and "Item Category" are the factory Excel column names.
@@ -442,22 +757,24 @@ function parseCatalogXlsxFile(filePath) {
   const sheetName = wb.SheetNames.includes('Items') ? 'Items' : wb.SheetNames[0];
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: false });
   const abayas = [];
+  const seenBc = new Set();
   for (const row of rows) {
     const out = { id: '', code: '', barcode: '', design: '', process: '', tier: '', icon: '' };
     for (const [k, v] of Object.entries(row)) {
       const norm = k.trim().toLowerCase().replace(/[\s\u00a0-]+/g, '_');
       const field = XLSX_REVERSE_MAP[norm];
-      // For optional fields (design, tier, icon, id, code) use first non-empty value only.
       if (field && out[field] === '') out[field] = String(v || '').trim();
     }
     if (!out.id && !out.code && !out.barcode) continue;
-    // Auto-derive code from barcode; id from barcode slug (supports repeated product codes).
     if (!out.code && out.barcode) out.code = out.barcode;
     if (!out.id && out.barcode) {
       out.id = out.barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
-    // process is set externally (folder name / catalog-watcher); only barcode is required.
-    if (out.barcode) abayas.push(out);
+    if (!out.barcode) continue;
+    if (!String(out.process || '').trim()) out.process = DEFAULT_CATALOG_PROCESS;
+    if (seenBc.has(out.barcode)) continue;
+    seenBc.add(out.barcode);
+    abayas.push(out);
   }
   return abayas;
 }
@@ -468,13 +785,14 @@ function loadCatalogFromXlsxFile() {
     ? CATALOG_XLSX_PATH
     : path.join(__dirname, CATALOG_XLSX_PATH);
   if (!fs.existsSync(resolved)) {
-    console.warn('[catalog-xlsx] File not found:', resolved);
+    console.warn('[catalog-xlsx] File not found:', resolved, '— fix .env (EXCEL_DATA_DIR or CATALOG_XLSX_PATH) or copy items_export.xlsx there; until then built-in demo catalog is used.');
     return;
   }
   try {
     const abayas = parseCatalogXlsxFile(resolved);
     if (abayas.length === 0) { console.warn('[catalog-xlsx] No valid rows found in', resolved); return; }
     abayaCatalog = normalizeAbayaCatalogRows(abayas);
+    attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
     io.emit('catalog_update', { version: catalogCloudVersion });
     console.log('[catalog-xlsx] Loaded', abayas.length, 'items from', resolved);
@@ -503,16 +821,15 @@ function validateCatalogPutRows(rows) {
     var process = String(r.process != null ? r.process : '').trim();
     var iconRaw = r.icon;
     var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
-    if (!barcode || !process) {
-      return {
-        ok: false,
-        error: 'Row ' + (i + 1) + ': barcode and process are required (design may be empty)',
-      };
+    if (!barcode) {
+      continue;
+    }
+    if (!process) {
+      process = DEFAULT_CATALOG_PROCESS;
     }
     if (!code) code = barcode;
     if (!id) id = barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    if (seenId.has(id)) return { ok: false, error: 'Duplicate id in upload: ' + id };
-    if (seenBc.has(barcode)) return { ok: false, error: 'Duplicate barcode in upload: ' + barcode };
+    if (seenId.has(id) || seenBc.has(barcode)) continue;
     seenId.add(id);
     seenBc.add(barcode);
     norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
@@ -538,6 +855,7 @@ app.put('/api/catalog/abayas', (req, res) => {
     return res.status(400).json({ ok: false, error: v.error });
   }
   abayaCatalog = normalizeAbayaCatalogRows(v.norm);
+  attachItemImagesFromDisk();
   catalogCloudVersion = String(Date.now());
   io.emit('catalog_update', { version: catalogCloudVersion });
   res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
@@ -591,24 +909,48 @@ app.get('/setup', (req, res) => {
   res.redirect('/setup.html');
 });
 
+app.get('/asset-upload', (req, res) => {
+  res.redirect('/asset-upload.html');
+});
+
+app.use(function (err, req, res, next) {
+  if (!err) return next();
+  const code = err.code != null ? String(err.code) : '';
+  if (code.indexOf('LIMIT_') === 0) {
+    return res.status(400).json({ ok: false, error: err.message || code });
+  }
+  const msg = String(err.message || '');
+  if (msg.indexOf('Only JPEG') >= 0) {
+    return res.status(400).json({ ok: false, error: msg });
+  }
+  next(err);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 // START SERVER
 server.listen(PORT, () => {
+  ensurePublicUploadDirs();
+  attachEmployeeImagesFromDisk();
+  attachItemImagesFromDisk();
   const lanIPs = getLanIPs();
   const lanIp = lanIPs.length ? lanIPs[0].address : 'localhost';
   console.log(`Abaya Central Server running on http://localhost:${PORT}`);
   console.log(`  Kiosk:     http://localhost:${PORT}/kiosk.html`);
   console.log(`  Dashboard: http://localhost:${PORT}/dashboard.html`);
   console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
-  console.log(`  Socket.IO: pingInterval=${SOCKET_PING_INTERVAL_MS}ms pingTimeout=${SOCKET_PING_TIMEOUT_MS}ms`);
+  console.log(`  Media:     http://localhost:${PORT}/asset-upload   (employee + item images)`);
+  console.log(`  Socket.IO: pingInterval=${SOCKET_PING_INTERVAL_MS}ms pingTimeout=${SOCKET_PING_TIMEOUT_MS}ms cookie=false allowEIO3=true`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
-  // Local xlsx catalog: load at startup then refresh daily
   if (CATALOG_XLSX_PATH) {
     setTimeout(loadCatalogFromXlsxFile, 3000);
     setInterval(loadCatalogFromXlsxFile, CATALOG_XLSX_INTERVAL_MS);
     console.log(`  Catalog:   ${path.resolve(__dirname, CATALOG_XLSX_PATH)} (refreshes every ${Math.round(CATALOG_XLSX_INTERVAL_MS / 3600000)}h)`);
+  }
+  if (EMPLOYEES_XLSX_PATH) {
+    setTimeout(loadEmployeesFromXlsxFile, 2000);
+    setInterval(loadEmployeesFromXlsxFile, EMPLOYEES_XLSX_INTERVAL_MS);
+    console.log(`  Employees: ${path.resolve(__dirname, EMPLOYEES_XLSX_PATH)} (refreshes every ${Math.round(EMPLOYEES_XLSX_INTERVAL_MS / 3600000)}h)`);
   }
 });

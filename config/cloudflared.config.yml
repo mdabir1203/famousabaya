@@ -1,21 +1,19 @@
-# Copy to %USERPROFILE%\.cloudflared\config.yml after Cloudflare gives you a credentials JSON.
-# Replace TUNNEL_UUID and the credentials-file path with YOUR values from the dashboard.
-# Docs: docs/TUNNEL_CREDENTIALS_WINDOWS.md
+# Template for factory HTTPS/WSS (kiosk PWA at https://kiosk.farewellabaya.com needs wss://).
+# Prefer: install\SETUP-CLOUDFLARE-TUNNEL-FACTORY-API.ps1 on the factory PC (writes %USERPROFILE%\.cloudflared\config.yml).
+# Copy to %USERPROFILE%\.cloudflared\config.yml and replace TUNNEL_UUID + credentials path.
+#
+# Public hostname below must match:
+#   - Tablet / QR "Factory API" field on http://<factory-pc>:3000/setup
+#   - kiosk-pwa/index.html meta name="abaya-factory-api-base" (redeploy Pages if you change it)
+#
+# Do NOT route kiosk.farewellabaya.com here (that hostname is Cloudflare Pages).
+# dashboard.farewellabaya.com is the CEO Worker — not this tunnel.
 
-tunnel: 
-credentials-file: C:\Users\YOUR_WINDOWS_USER\.cloudflared\TUNNEL_UUID.json
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: C:\Users\YOUR_WINDOWS_USER\.cloudflared\YOUR_TUNNEL_UUID.json
 
 ingress:
-  # Must match your public hostname(s) in Cloudflare DNS.
-  - hostname: farewellabaya.com
-    service: http://127.0.0.1:3000
-    originRequest:
-      noHappyEyeballs: true
-      connectTimeout: 30s
-      tlsTimeout: 10s
-      tcpKeepAlive: 30s
-      keepAliveTimeout: 90s
-  - hostname: "*.farewellabaya.com"
+  - hostname: api.farewellabaya.com
     service: http://127.0.0.1:3000
     originRequest:
       noHappyEyeballs: true

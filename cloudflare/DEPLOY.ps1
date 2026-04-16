@@ -186,12 +186,12 @@ Write-Ok "CEO_TOKEN set"
 
 # ── Step 8: Deploy ──────────────────────────────────────────────────────────────
 Write-Step 8 "Deploying Worker to Cloudflare"
-Write-Info "Deploying abaya-track worker to farewellabaya.com..."
+Write-Info "Deploying abaya-track worker to dashboard.farewellabaya.com..."
 $deployOut = & npx wrangler deploy 2>&1 | Out-String
 Write-Host $deployOut
 
 # Custom domain is declared in wrangler.toml [[custom_domains]] — always use it.
-$WORKER_URL = "https://farewellabaya.com"
+$WORKER_URL = "https://dashboard.farewellabaya.com"
 
 Write-Ok "Worker deployed! Live at $WORKER_URL"
 
@@ -248,7 +248,7 @@ Write-Host "  ║   DEPLOYMENT COMPLETE — CEO Dashboard is LIVE               
 Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
 Write-Host "  CEO Dashboard URL:" -ForegroundColor White
-Write-Host "    https://farewellabaya.com" -ForegroundColor Yellow
+Write-Host "    https://dashboard.farewellabaya.com" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  CEO Login Password (CEO_TOKEN):" -ForegroundColor White
 Write-Host "    $CEO_TOKEN" -ForegroundColor Yellow
@@ -256,7 +256,7 @@ Write-Host ""
 Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host "  Share this with the CEO (works on any phone, any network):" -ForegroundColor White
 Write-Host ""
-Write-Host "    URL:      https://farewellabaya.com" -ForegroundColor Cyan
+Write-Host "    URL:      https://dashboard.farewellabaya.com" -ForegroundColor Cyan
 Write-Host "    Password: $CEO_TOKEN" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  The CEO opens the URL, types the password, and sees live data." -ForegroundColor Gray
@@ -268,8 +268,8 @@ Write-Host "  Factory kiosk (on-site tablets / LAN):" -ForegroundColor White
 Write-Host "    http://<factory-PC-LAN-IP>:3000/kiosk.html" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Factory kiosk (remote HTTPS via Cloudflare Tunnel):" -ForegroundColor White
-Write-Host "    https://kiosk.farewellabaya.com/kiosk.html" -ForegroundColor Cyan
-Write-Host "    (Set up tunnel in Zero Trust: one.dash.cloudflare.com)" -ForegroundColor Gray
+Write-Host "    https://kiosk.farewellabaya.com" -ForegroundColor Cyan
+Write-Host '    (Deployed via Cloudflare Pages - any tablet, any network)' -ForegroundColor Gray
 Write-Host ""
 Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host "  NEXT STEP: Restart the factory server so it starts pushing" -ForegroundColor White
@@ -280,4 +280,4 @@ Write-Host "    install\LAUNCH-ALL.bat" -ForegroundColor Yellow
 Write-Host ""
 
 Write-Host "  Press any key to exit..." -ForegroundColor DarkGray
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')

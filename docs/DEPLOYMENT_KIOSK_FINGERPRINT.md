@@ -15,7 +15,7 @@ This guide covers running the floor kiosk on **Lenovo Android tablets**, keeping
 ## 2. Server deployment (PC or mini-PC on the LAN)
 
 1. **Install Node.js** (LTS) on the machine that will run the kiosk backend.
-2. From the project root, install dependencies (use your package manager as documented in the repo, e.g. `yarn` or `npm install`).
+2. From the project root, run `install\INSTALL.bat` (enables Yarn PnP, installs dependencies).
 3. **Optional — Cloudflare Worker ingest** (for dashboard sync): set environment variables before starting the server:
    - `CF_WORKER_URL` — your Worker base URL (e.g. `https://abaya-track.example.workers.dev`)
    - `CF_INGEST_SECRET` — same secret configured on the Worker
@@ -23,7 +23,7 @@ This guide covers running the floor kiosk on **Lenovo Android tablets**, keeping
    - Default port: `3000` (override with `PORT` in `.env` if needed).
    - Example: `PORT=3000 node server.js` (adjust for your shell on Windows).
 5. **Firewall**: allow inbound TCP on the chosen port from the **tablet subnet** only, if possible.
-6. **HTTPS for remote access**: use **Cloudflare Tunnel + Access** on your domain (recommended) — see [REMOTE_ACCESS.md](REMOTE_ACCESS.md). On LAN, HTTP to the server IP is usually enough for tablets; TLS terminates at Cloudflare for the public hostname.
+6. **Remote access**: for admin/office use **Tailscale** ([TAILSCALE_HYBRID.md](TAILSCALE_HYBRID.md)). Cloudflare Tunnel is available as legacy backup ([REMOTE_ACCESS.md](REMOTE_ACCESS.md) Part D). On LAN, plain HTTP is enough for tablets.
 
 ---
 
@@ -52,7 +52,8 @@ Codes must match **abaya code** or **barcode** in `public/data.js` (e.g. `AB-004
    (The setup URL is also printed in the server console window every time the server starts.)
 3. On the setup page:
    - **Server LAN IP** — select the IP your tablets can reach (shown automatically).
-   - **Custom base URL** — if using Cloudflare Tunnel, paste the HTTPS URL here instead.
+   - **Custom base URL** — for the **hosted PWA**, use `https://kiosk.farewellabaya.com` (not the factory API host). For same-Wi-Fi only, use `http://<LAN-IP>:3000`.
+   - **Factory API for QR** — HTTPS tunnel to `server.js` (default `https://api.farewellabaya.com`). Hosted QRs include `server=` so tablets connect without typing the API URL. Must match [REMOTE_ACCESS.md](REMOTE_ACCESS.md) Part D and `kiosk-pwa/index.html` meta `abaya-factory-api-base`.
    - **Factories & Tablets** — enter each factory name and how many tablets it has (default: 2 factories × 5 tablets = 10 QR codes).
    - Click **Generate QR Codes** — one QR per tablet appears instantly.
 4. Click **Print All** (or use Ctrl+P). Each QR card shows:
@@ -74,19 +75,24 @@ Codes must match **abaya code** or **barcode** in `public/data.js` (e.g. `AB-004
 
 ### 3.3 Multi-factory URL structure
 
-Each QR encodes a URL in this format:
+**LAN / factory server** (custom base `http://<LAN>:3000`):
 ```
 http://<server-ip>:<PORT>/kiosk.html?factory=Factory+1&tablet=T-01
 ```
-The `factory` and `tablet` parameters are displayed in the kiosk top bar for easy identification. They do not affect functionality.
+
+**Hosted PWA** (custom base `https://kiosk.farewellabaya.com`):
+```
+https://kiosk.farewellabaya.com/?factory=Factory+1&tablet=T-01&server=https%3A%2F%2Fapi.farewellabaya.com
+```
+The `factory` and `tablet` parameters are displayed in the kiosk top bar for easy identification. They do not affect functionality. The `server` query presets the factory Socket.IO base URL on first open (HTTPS only on the hosted app).
 
 ### 3.4 Cross-factory / cross-network access
 
-| Scenario | Recommended URL to put in setup page |
-|----------|---------------------------------------|
-| All tablets on same Wi-Fi | `http://<LAN-IP>:3000` (auto-detected) |
-| Tablets in a different building / VLAN | VPN to the server, or use Cloudflare Tunnel |
-| Tablets over the internet | Cloudflare Tunnel `https://` URL — see [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
+| Scenario | Recommended **Custom URL** on setup page | **Factory API for QR** |
+|----------|-------------------------------------------|-------------------------|
+| All tablets on same Wi-Fi | `http://<LAN-IP>:3000` (or pick IP in dropdown) | Leave default; LAN QRs omit `server=` |
+| Hosted PWA + tunnel API (any network) | `https://kiosk.farewellabaya.com` | `https://api.farewellabaya.com` (or your tunnel host) |
+| Tablets in a different building / VLAN | VPN + LAN URL, or hosted PWA row above | Same as tunnel ingress hostname |
 
 ---
 

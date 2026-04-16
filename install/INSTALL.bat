@@ -66,9 +66,9 @@ if not exist ".env" (
 )
 
 echo [5/5] Creating Desktop shortcut...
-powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([System.IO.Path]::Combine($env:USERPROFILE,'Desktop','AbaYa Track.lnk')); $s.TargetPath='%~dp0LAUNCH-ALL.bat'; $s.WorkingDirectory='%~dp0..'; $s.Description='Start AbaYa Track kiosk, dashboard, and catalog sync'; $s.Save()"
+powershell -NoProfile -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut([System.IO.Path]::Combine($env:USERPROFILE,'Desktop','AbaYa Track.lnk')); $s.TargetPath='%~dp0LAUNCH-ALL.bat'; $s.WorkingDirectory='%~dp0..'; $s.Description='AbaYa Track: server, tunnel if configured, kiosk and dashboard'; $s.Save()"
 if errorlevel 1 (
-  echo   Desktop shortcut could not be created ^(non-fatal^). Use install\LAUNCH-ALL.bat directly.
+  echo   Desktop shortcut could not be created ^(non-fatal^). Use install\LAUNCH-ALL.bat from the repo folder.
 ) else (
   echo   Shortcut created: Desktop\AbaYa Track
 )
@@ -82,13 +82,13 @@ echo        CATALOG_XLSX_PATH=./docs/samples/items_export.xlsx
 echo      ^(or set an absolute path, e.g. C:\Users\DELL\Desktop\barcode\items_export.xlsx^)
 echo      The server loads this file at startup and refreshes it every 24 hours.
 echo.
-echo   2. Optional — Cloudflare cloud sync:
-echo        CF_WORKER_URL=https://abaya-track.YOURNAME.workers.dev
+echo   2. Optional — Cloudflare CEO Worker sync:
+echo        CF_WORKER_URL=https://dashboard.farewellabaya.com
 echo        CF_INGEST_SECRET=your_secret
 echo      Skip if running local-only.
+echo      HTTPS tablets ^(kiosk.farewellabaya.com^): run install\SETUP-CLOUDFLARE-TUNNEL-FACTORY-API.ps1 once on this PC.
 echo.
-echo   3. Double-click "AbaYa Track" on your Desktop to launch everything.
-echo      ^(Or: install\LAUNCH-ALL.bat^)
+echo   3. Double-click "AbaYa Track" on your Desktop ^(or install\LAUNCH-ALL.bat^).
 echo.
 echo   Kiosk:     http://localhost:3000/kiosk.html
 echo   Dashboard: http://localhost:3000/dashboard.html
@@ -96,4 +96,4 @@ echo   Tablet QR: http://localhost:3000/setup
 echo   Full IT guide: docs\INSTALL_WINDOWS.md
 echo   Catalog format: docs\CATALOG_EXCEL_SPEC.md
 echo.
-pause
+if /i not "%~1"=="NOPAUSE" pause

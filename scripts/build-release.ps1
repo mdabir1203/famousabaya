@@ -47,4 +47,4 @@ Remove-Item $staging -Recurse -Force
 
 Write-Host ""
 Write-Host "Created: $zipPath"
-Write-Host "On the other laptop: unzip, then run install\INSTALL.bat"
+Write-Host "On the other laptop: unzip, run install\INSTALL.bat, then use Desktop shortcut or install\LAUNCH-ALL.bat"

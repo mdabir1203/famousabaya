@@ -20,7 +20,27 @@
   } catch (_) {}
 })();
 
-const socket = io();
+const SOCKET_IO_OPTS = {
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 30000,
+  randomizationFactor: 0.5,
+  timeout: 20000,
+};
+
+const socket = io(SOCKET_IO_OPTS);
+
+function syncKioskConnUi(online, label) {
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-label');
+  if (dot) {
+    if (online) dot.classList.add('online');
+    else dot.classList.remove('online');
+  }
+  if (lbl && label != null) lbl.textContent = label;
+}
 
 let kioskNavStep = 'fp';
 let selEmp = null;
@@ -58,8 +78,27 @@ function clearBcExcelQueue(silent) {
 }
 
 // ─── SOCKET CONNECTION STATUS ─────────────────────────────────────────────────
-socket.on('connect', () => showToast('Connected to AbaYa Server', 'success'));
-socket.on('disconnect', () => showToast('Lost server connection — retrying...', 'error'));
+socket.on('connect', () => {
+  syncKioskConnUi(true, 'Live');
+  showToast('Connected to AbaYa Server', 'success');
+});
+socket.on('disconnect', () => {
+  syncKioskConnUi(false, 'Offline');
+  showToast('Lost server connection — retrying...', 'error');
+});
+socket.on('connect_error', () => {
+  syncKioskConnUi(false, 'Offline');
+});
+
+function nudgeKioskSocketIfDisconnected() {
+  if (!socket.connected) socket.connect();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') nudgeKioskSocketIfDisconnected();
+});
+window.addEventListener('online', () => {
+  nudgeKioskSocketIfDisconnected();
+});
 
 socket.on('catalog_update', () => {
   refreshKioskAbayaCatalog();
@@ -82,6 +121,18 @@ function tierBadgeHtml(tier) {
   if (!tier) return '';
   var slug = tier.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return '<span class="ab-tier ab-tier-' + slug + '">' + tier + '</span>';
+}
+
+/** Catalog icon: image path under uploads/ → img; else emoji / HTML fragment. */
+function abayaIconHtml(icon) {
+  if (icon == null) return '';
+  const s = String(icon).trim();
+  if (!s) return '';
+  if (/^uploads\//i.test(s) && /\.(jpe?g|png|gif|webp)$/i.test(s)) {
+    const safe = s.replace(/^\/+/, '').replace(/"/g, '');
+    return '<img src="/' + safe + '" alt="" style="width:22px;height:22px;object-fit:cover;border-radius:6px;vertical-align:middle;margin-right:4px">';
+  }
+  return '<span style="margin-right:4px">' + s + '</span>';
 }
 
 function refreshKioskAbayaCatalog() {
@@ -402,7 +453,7 @@ function renderAbayaGrid() {
       '<div class="ab-card-bc-lbl">Item No.</div>' +
       '<div class="ab-card-bc">' + a.barcode + '</div>' +
       '<div class="ab-card-des">' +
-        (a.icon ? '<span style="margin-right:4px">' + a.icon + '</span>' : '') +
+        abayaIconHtml(a.icon) +
         a.design +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
@@ -481,7 +532,7 @@ function filterAbayaGrid(query) {
       '<div class="ab-card-bc-lbl">Item No.</div>' +
       '<div class="ab-card-bc">' + a.barcode + '</div>' +
       '<div class="ab-card-des">' +
-        (a.icon ? '<span style="margin-right:4px">' + a.icon + '</span>' : '') +
+        abayaIconHtml(a.icon) +
         a.design +
       '</div>' +
       '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
@@ -522,7 +573,7 @@ function selectAbaya(id) {
     document.getElementById('rdy-meta').textContent = selEmp.code + ' \u00b7 AC-' + String(selEmp.ac_no).padStart(2, '0');
     document.getElementById('rdy-proc').textContent = selRole || selEmp.process;
     document.getElementById('rdy-ac').textContent = String(selEmp.ac_no).padStart(2, '0');
-    document.getElementById('rdy-ab-icon').innerHTML = ab.icon;
+    document.getElementById('rdy-ab-icon').innerHTML = abayaIconHtml(ab.icon);
     document.getElementById('rdy-ab-code').textContent = ab.code;
     document.getElementById('rdy-ab-des').textContent = ab.design;
     document.getElementById('rdy-bc').textContent = ab.barcode;

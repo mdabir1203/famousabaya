@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f0e0d">
+<meta name="theme-color" content="#1f1633">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -14,24 +14,28 @@
 <link rel="icon" type="image/svg+xml" href="/icons/timedilemma.svg">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <title>AbaYa Track — Tablet QR Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
 <style>
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 :root {
-  --bg:   #0d0c0b;
-  --s1:   #181614;
-  --s2:   #221f1c;
-  --s3:   #2c2824;
-  --bd:   rgba(255,255,255,.09);
-  --tx:   #f0ede8;
-  --tx2:  #a09890;
-  --tx3:  #6b635c;
-  --gold: #c9a05a;
-  --gold2:#e8c87a;
-  --blu:  #3b82f6;
-  --grn:  #22c55e;
+  --bg:   #1f1633;
+  --s1:   #150f23;
+  --s2:   #241a38;
+  --s3:   #362d59;
+  --bd:   rgba(54,45,89,.5);
+  --tx:   #ffffff;
+  --tx2:  #e5e7eb;
+  --tx3:  #9c98b0;
+  --gold: #c2ef4e;
+  --gold2:#c2ef4e;
+  --blu:  #6a5fc1;
+  --grn:  #c2ef4e;
   --red:  #ef4444;
   --r:    14px;
-  --fn:   'Segoe UI', system-ui, -apple-system, sans-serif;
+  --fn:   'Rubik', -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --fn-display: 'Sora', 'Rubik', sans-serif;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
@@ -45,7 +49,7 @@ body {
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
-  background: var(--s1);
+  background: rgba(21,15,35,0.85);
   border-bottom: 1px solid var(--bd);
   padding: 14px 20px;
   display: flex;
@@ -54,16 +58,16 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(18px) saturate(180%);
 }
 .logo {
   width: 42px; height: 42px;
-  background: linear-gradient(135deg, #c9a05a, #8a6235);
+  background: linear-gradient(135deg, #6a5fc1, #422082);
   border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
   font-size: 22px; flex-shrink: 0;
 }
-.header-text h1 { font-size: 16px; font-weight: 700; }
+.header-text h1 { font-family: var(--fn-display); font-size: 16px; font-weight: 700; }
 .header-text p  { font-size: 11px; color: var(--tx3); margin-top: 1px; }
 
 /* ── Layout ─────────────────────────────────────────────────────────────── */
@@ -71,11 +75,13 @@ body {
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 .card {
-  background: var(--s1);
+  background: rgba(255,255,255,0.08);
   border: 1px solid var(--bd);
   border-radius: var(--r);
   padding: 20px;
   margin-bottom: 18px;
+  backdrop-filter: blur(18px) saturate(180%);
+  box-shadow: rgba(22,15,36,0.4) 0px 2px 8px;
 }
 .card-title {
   font-size: 10px;
@@ -101,27 +107,31 @@ input, select {
   outline: none;
   transition: border-color .15s;
 }
-input:focus, select:focus { border-color: var(--gold); }
+input:focus, select:focus { border-color: var(--blu); }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; gap: 7px;
-  background: var(--gold); color: #111;
-  border: none; border-radius: 8px;
+  background: #79628c; color: #fff;
+  border: 1px solid #584674; border-radius: 13px;
   padding: 10px 18px;
   font-size: 13px; font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  transition: opacity .15s, transform .1s;
+  transition: all .2s;
   user-select: none;
+  font-family: var(--fn);
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  box-shadow: rgba(0,0,0,0.1) 0px 1px 3px 0px inset;
 }
-.btn:hover  { opacity: .88; }
+.btn:hover  { box-shadow: rgba(0,0,0,0.18) 0px 0.5rem 1.5rem; }
 .btn:active { transform: scale(.97); }
-.btn-ghost  { background: var(--s2); color: var(--tx); border: 1px solid var(--bd); }
-.btn-ghost:hover { border-color: var(--gold); }
-.btn-grn    { background: var(--grn); color: #fff; }
+.btn-ghost  { background: var(--s2); color: var(--tx); border: 1px solid var(--bd); box-shadow: none; }
+.btn-ghost:hover { border-color: var(--blu); box-shadow: none; }
+.btn-grn    { background: var(--grn); color: #1f1633; border-color: transparent; box-shadow: none; }
 .btn-sm     { padding: 6px 12px; font-size: 12px; }
-.btn-icon   { padding: 7px 10px; border-radius: 7px; }
+.btn-icon   { padding: 7px 10px; border-radius: 10px; }
 
 /* ── Factory list ───────────────────────────────────────────────────────── */
 #factories-list { display: flex; flex-direction: column; gap: 8px; }
@@ -186,7 +196,7 @@ input:focus, select:focus { border-color: var(--gold); }
   break-inside: avoid;
   transition: border-color .2s;
 }
-.qr-card:hover { border-color: var(--gold); }
+.qr-card:hover { border-color: var(--blu); }
 .qr-img-wrap {
   width: 160px; height: 160px;
   margin: 0 auto 10px;
@@ -225,8 +235,8 @@ input:focus, select:focus { border-color: var(--gold); }
   opacity: 0;
 }
 #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-#toast.err  { border-color: var(--red); color: var(--red); }
-#toast.ok   { border-color: var(--grn); color: var(--grn); }
+#toast.err  { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.1); }
+#toast.ok   { border-color: var(--grn); color: var(--grn); background: rgba(194,239,78,.1); }
 
 /* ── Print ──────────────────────────────────────────────────────────────── */
 @media print {
@@ -269,12 +279,25 @@ input:focus, select:focus { border-color: var(--gold); }
       </div>
       <div class="field">
         <label>Custom URL (overrides IP+port)</label>
-        <input type="text" id="inp-custom-url" placeholder="https://kiosk.farewellabaya.com" autocomplete="off">
+        <input type="text" id="inp-custom-url" placeholder="https://kiosk.farewellabaya.com or LAN IP" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Factory API for QR (HTTPS tunnel)</label>
+        <input type="text" id="inp-factory-api-qr" value="https://api.farewellabaya.com" placeholder="https://api.farewellabaya.com" autocomplete="off" title="Appended as server= on hosted kiosk QRs so tablets skip manual entry">
       </div>
     </div>
-    <p style="font-size:11px;color:var(--tx3);margin-top:10px">
-      ℹ︎ Tablets must be on the same Wi-Fi, or use a Cloudflare Tunnel URL above for remote access.
+    <p style="font-size:11px;color:var(--tx3);margin-top:10px;line-height:1.45">
+      ℹ︎ <strong>QR base URL</strong> is usually <code>https://kiosk.farewellabaya.com</code> (Cloudflare Pages PWA). That is only the <em>app shell</em>.
+      The kiosk still needs your <strong>factory Node API</strong> over HTTPS (e.g. <code>https://api.farewellabaya.com</code> via tunnel on the factory PC). Hosted QRs use <code>/?</code> on Pages and add <code>server=…</code> from the field above. Same-Wi-Fi LAN installs: set custom URL to <code>http://&lt;LAN&gt;:3000</code> — those QRs use <code>/kiosk.html</code> instead.
     </p>
+  </div>
+
+  <div class="card no-print">
+    <div class="card-title">Employee &amp; item photos</div>
+    <p style="font-size:13px;color:var(--tx2);margin-bottom:12px;line-height:1.5">
+      After loading <code>employees.xlsx</code> and the catalog, upload face photos and product thumbnails by barcode on the factory PC.
+    </p>
+    <a class="btn btn-ghost" href="/asset-upload.html" style="text-decoration:none;display:inline-flex">Open media upload</a>
   </div>
 
   <!-- Factories -->
@@ -322,7 +345,9 @@ function esc(s) {
 function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); }
 
 let _toastTimer;
-const PUBLIC_BASE_URL = 'https://farewellabaya.com';
+const PUBLIC_BASE_URL = 'https://kiosk.farewellabaya.com';
+/** Default tunnel hostname for factory server (must match cloudflared ingress). */
+const DEFAULT_FACTORY_API_QR = 'https://api.farewellabaya.com';
 function toast(msg, type = 'ok', ms = 2800) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -391,7 +416,27 @@ function getFactories() {
 // No CDN dependency; works offline once the server is running.
 
 function kioskUrl(base, factory, tablet) {
-  return base + '/kiosk.html?factory=' + encodeURIComponent(factory) + '&tablet=' + encodeURIComponent(tablet);
+  const b = base.replace(/\/$/, '');
+  let host = '';
+  try {
+    host = new URL(b).hostname.toLowerCase();
+  } catch (_) {
+    return b + '/kiosk.html?factory=' + encodeURIComponent(factory) + '&tablet=' + encodeURIComponent(tablet);
+  }
+  const useHostedPwaRoot =
+    host === 'kiosk.farewellabaya.com' ||
+    host.endsWith('.pages.dev');
+  let qs =
+    'factory=' + encodeURIComponent(factory) +
+    '&tablet=' + encodeURIComponent(tablet);
+  if (useHostedPwaRoot) {
+    const api = (document.getElementById('inp-factory-api-qr').value || '').trim().replace(/\/$/, '') || DEFAULT_FACTORY_API_QR;
+    if (/^https:\/\//i.test(api)) {
+      qs += '&server=' + encodeURIComponent(api);
+    }
+  }
+  const path = useHostedPwaRoot ? '/?' : '/kiosk.html?';
+  return b + path + qs;
 }
 
 function makeQrCard(factory, tabletLabel, url) {
@@ -517,7 +562,7 @@ async function downloadAllZip() {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadServerInfo();
-document.getElementById('inp-custom-url').value = PUBLIC_BASE_URL;
+document.getElementById('inp-custom-url').value = '';
 [
   { name: 'Factory 1', tablets: 5 },
   { name: 'Factory 2', tablets: 5 },

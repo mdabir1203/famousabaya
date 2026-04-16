@@ -10,9 +10,24 @@ if not exist "server.js" (
 )
 
 if not exist ".pnp.cjs" (
-  echo Dependencies not installed. Run install\INSTALL.bat first, then try again.
-  pause
-  exit /b 1
+  echo === First-time setup (dependencies) ===
+  call "%~dp0INSTALL.bat" NOPAUSE
+  if errorlevel 1 (
+    echo Install failed. Fix errors above, then run this file again.
+    pause
+    exit /b 1
+  )
+)
+
+set "CF_CFG=%USERPROFILE%\.cloudflared\config.yml"
+if exist "%CF_CFG%" (
+  where cloudflared >nul 2>&1
+  if not errorlevel 1 (
+    echo [Tunnel] Cloudflare connector (minimized^)...
+    start "AbaYa Tunnel" /min cloudflared tunnel --config "%CF_CFG%" run
+    timeout /t 2 /nobreak >nul
+    echo   [i] HTTPS tablets: kiosk app https://kiosk.farewellabaya.com — factory API must be https:// (e.g. tunnel api host^). See docs\REMOTE_ACCESS.md
+  )
 )
 
 :: ── Read PORT from .env (default 3000) ────────────────────────────────────────
@@ -69,18 +84,33 @@ for /f "tokens=2 delims=:" %%A in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v 
 for /f "tokens=* delims= " %%A in ("%RAW_IP%") do set LAN_IP=%%A
 if "%LAN_IP%"=="" set LAN_IP=localhost
 
+:: ── Detect Tailscale IP (if installed) ───────────────────────────────────────
+set TS_IP=
+tailscale ip -4 >nul 2>&1 && for /f %%A in ('tailscale ip -4') do set TS_IP=%%A
+
 echo.
 echo === All components launched ===
 echo   Kiosk:     http://localhost:%ABA_PORT%/kiosk.html
 echo   Dashboard: http://localhost:%ABA_PORT%/dashboard.html
 echo   QR Setup:  http://localhost:%ABA_PORT%/setup
 echo.
-echo === CEO / Phone access (same Wi-Fi) ===
+echo === LAN access (same Wi-Fi) ===
 echo   Dashboard: http://%LAN_IP%:%ABA_PORT%/dashboard.html
 echo   Kiosk:     http://%LAN_IP%:%ABA_PORT%/kiosk.html
+if not "%TS_IP%"=="" (
 echo.
-echo   [!] If the CEO phone can't connect, run:  install\OPEN-CEO-DASHBOARD.bat
-echo       (as Administrator) to open the Windows Firewall for port %ABA_PORT%.
+echo === Tailscale access (any network) ===
+echo   Dashboard: http://%TS_IP%:%ABA_PORT%/dashboard.html
+echo   Kiosk:     http://%TS_IP%:%ABA_PORT%/kiosk.html
+)
+echo.
+echo === CEO cloud dashboard ===
+echo   https://dashboard.farewellabaya.com  (Cloudflare Worker, any network)
+echo.
+if "%TS_IP%"=="" (
+echo   [i] Tailscale not detected. For remote admin access: install\SETUP-TAILSCALE.ps1
+)
+echo   [!] LAN firewall issue? Run:  install\OPEN-CEO-DASHBOARD.bat  (as Admin)
 echo.
 echo   Close this window at any time.
 echo.
