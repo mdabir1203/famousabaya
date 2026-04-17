@@ -74,6 +74,9 @@ Factory app (server.js, public\, install\) — pick ONE path:
   CEO cloud: https://dashboard.farewellabaya.com  (after Cloudflare deploy)
   Kiosk PWA: https://kiosk.farewellabaya.com     (any tablet, add to home screen)
 
+  D1 migration 0006 (sync batch idempotency): from repo root run  yarn cf:d1:0006
+  (needs internet + wrangler login:  yarn run wrangler login  once per machine).
+
   Note: "wrangler deploy" in cloudflare\ only updates the CEO Worker (D1, ingest).
   It does NOT replace files on the factory PC. Kiosk PWA updates need:
     yarn run deploy:all   or   kiosk-pwa + wrangler pages deploy separately.

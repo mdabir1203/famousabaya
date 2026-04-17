@@ -15,6 +15,8 @@ custom_domain = true
 FACTORY_TZ = "Asia/Dubai"
 # Used when catalog rows have no Process column (factory Excel at watch root).
 DEFAULT_CATALOG_PROCESS = "Tailor (01)"
+# Set to "1" after enabling Cloudflare Access on dashboard.* — Worker trusts Cf-Access-Authenticated-User-Email; CEO_TOKEN still works when header absent (e.g. wrangler dev).
+REQUIRE_CF_ACCESS = "0"
 
 # ─── Secrets (set automatically by DEPLOY.ps1, or manually below) ────────────
 # Run from the cloudflare\ folder:

@@ -10,25 +10,33 @@
 
 $ErrorActionPreference = "Stop"
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ROOT_DIR   = Split-Path -Parent $SCRIPT_DIR
 
 Write-Host ""
 Write-Host "  AbaYa Track — Kiosk PWA Deploy" -ForegroundColor Cyan
 Write-Host "  ===============================" -ForegroundColor Cyan
 Write-Host ""
 
-Write-Host "  [1/3] Checking Wrangler..."
+Write-Host "  [1/3] Checking Wrangler (yarn exec from repo root — avoids npx + Yarn PnP errors)..."
+Push-Location $ROOT_DIR
 try {
-    $wVer = & npx wrangler --version 2>&1 | Select-Object -First 1
+    if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
+        throw "yarn not on PATH. Run: corepack enable"
+    }
+    $wVer = & yarn run wrangler --version 2>&1 | Select-Object -First 1
     Write-Host "  [OK] Wrangler: $wVer" -ForegroundColor Green
+
+    Write-Host ""
+    Write-Host "  [2/3] Deploying kiosk-pwa to Cloudflare Pages..."
+    Write-Host ""
+
+    & yarn run wrangler pages deploy $SCRIPT_DIR --project-name abaya-kiosk --branch main
 } catch {
-    Write-Host "  [!] Installing wrangler..." -ForegroundColor Yellow
-    & npm install -g wrangler
+    Write-Host "  [X] From repo root run: yarn install  (adds wrangler devDependency)" -ForegroundColor Red
+    throw
+} finally {
+    Pop-Location
 }
-
-Write-Host "  [2/3] Deploying kiosk-pwa to Cloudflare Pages..."
-Write-Host ""
-
-& npx wrangler pages deploy $SCRIPT_DIR --project-name abaya-kiosk --branch main
 
 Write-Host ""
 Write-Host "  [3/3] Done!" -ForegroundColor Green

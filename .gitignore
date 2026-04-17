@@ -22,6 +22,9 @@ tools/catalog-watcher/config.json
 # ─── CEO ingest offline queue (session events; do not commit) ─────────────────
 data/ceo-ingest-queue.jsonl
 data/ceo-ingest-queue.jsonl.draining
+data/local-state.sqlite
+data/local-state.sqlite-shm
+data/local-state.sqlite-wal
 
 # ─── Editor / OS ──────────────────────────────────────────────────────────────
 .DS_Store

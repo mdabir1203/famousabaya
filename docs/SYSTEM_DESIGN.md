@@ -2,10 +2,12 @@
 
 ## 1) System Context
 
+**Hostname contract (which URL is Worker vs tunnel vs Pages):** [DOMAIN_CONTRACT.md](DOMAIN_CONTRACT.md).
+
 AbaYa Track is a hybrid factory-floor and cloud analytics system:
 
-- **Factory server** (`server.js`): Node/Express + Socket.IO, serves kiosk/dashboard/setup UIs, holds in-memory state.
-- **Cloudflare Worker** (`cloudflare/src/index.js`): CEO analytics surface backed by D1 and R2.
+- **Factory server** (`server.js`): Node/Express + Socket.IO, serves kiosk/dashboard/setup UIs; hot state with optional **SQLite** persistence (`data/local-state.sqlite`, see `.env.example`).
+- **Cloudflare Worker** (`cloudflare/src/index.js`): CEO analytics surface backed by D1 and R2. Factory ingest: `POST /api/event`, optional **`POST /api/sync/v1/batch`** (HMAC + idempotency). CEO auth: `CEO_TOKEN` or Cloudflare Access when `REQUIRE_CF_ACCESS=1` — [CLOUDFLARE_ACCESS_CEO.md](CLOUDFLARE_ACCESS_CEO.md).
 - **Catalog watcher** (`tools/catalog-watcher`): ingests Excel exports, publishes catalog updates.
 - **Windows scripts** (`install/`, `scripts/`): installation, daily launch, packaging, cloud deploy.
 
@@ -82,9 +84,9 @@ Cloudflare Tunnel is preserved as legacy backup (`config/cloudflared.config.yml`
 
 ## 4) Data Ownership
 
-### Local (in-memory, volatile)
+### Local (in-memory + optional SQLite)
 
-`ACTIVE_SESSIONS`, `COMPLETED_LOGS`, `EMP_PERF`, catalog cache. Lost on restart.
+`ACTIVE_SESSIONS`, `COMPLETED_LOGS`, `EMP_PERF`, catalog cache. With **`better-sqlite3`** enabled (default unless `LOCAL_SQLITE=0`), the factory server also persists sessions, recent completed logs, and perf to **`data/local-state.sqlite`**. Excel-backed catalog/employees remain file-based.
 
 ### Cloud (D1 + R2, durable)
 
@@ -186,7 +188,7 @@ Multiple writer paths. Last-writer-wins by timing.
 
 **Good:** Local ops do not block on cloud. Dashboard uses same-origin socket + `GET /api/state` fallback. Catalog reload from disk/Excel is independent of Cloudflare. Cloud ingest is async with bounded timeout.
 
-**Risks:** In-memory state is lost on process restart. Failed cloud pushes only affect CEO analytics, not kiosk correctness. Multi-writer catalog (watcher vs local XLSX vs Worker) can race. Single Node process means no horizontal scale on one host.
+**Risks:** Without SQLite (`LOCAL_SQLITE=0`), hot state is lost on restart. With default persistence, active sessions and recent logs survive restarts (see `lib/local-store.js`). Failed cloud pushes only affect CEO analytics, not kiosk correctness. Multi-writer catalog (watcher vs local XLSX vs Worker) can race. Single Node process means no horizontal scale on one host.
 
 ---
 

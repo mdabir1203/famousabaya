@@ -10,7 +10,7 @@
 
   What this script does, in order:
     1. Verifies Node.js 18+ is installed
-    2. Installs Wrangler CLI (Cloudflare's deploy tool)
+    2. Verifies Wrangler via Yarn (repo devDependency — avoids npx + Yarn PnP + nvm-windows .pnp.cjs errors)
     3. Opens browser for Cloudflare login (one-time, free account)
     4. Creates the D1 database  (abaya-db)
     5. Runs the full schema (tables + indexes)
@@ -39,6 +39,20 @@ $TOML_PATH   = Join-Path $SCRIPT_DIR "wrangler.toml"
 $SCHEMA_PATH = Join-Path $SCRIPT_DIR "schema.sql"
 $ENV_PATH    = Join-Path $ROOT_DIR ".env"
 
+# Wrangler must run via `yarn run wrangler` from repo root so Yarn PnP resolves the devDependency (avoid nested `yarn exec` + Corepack issues on Windows).
+function Invoke-WranglerFromRepo {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$WranglerArgs
+    )
+    Push-Location $ROOT_DIR
+    try {
+        & yarn run wrangler --config $TOML_PATH @WranglerArgs
+    } finally {
+        Pop-Location
+    }
+}
+
 Write-Host ""
 Write-Host "  ╔══════════════════════════════════════════════════╗" -ForegroundColor DarkYellow
 Write-Host "  ║   AbaYa Track — Cloudflare CEO Dashboard Deploy  ║" -ForegroundColor DarkYellow
@@ -60,15 +74,21 @@ try {
     exit 1
 }
 
-# ── Step 2: Install / verify Wrangler ──────────────────────────────────────────
-Write-Step 2 "Installing Wrangler (Cloudflare CLI)"
+# ── Step 2: Verify Wrangler (yarn run — not npx) ─────────────────────────────
+Write-Step 2 "Verifying Wrangler (yarn run from repo root)"
+Push-Location $ROOT_DIR
 try {
-    $wVer = & npx wrangler --version 2>&1 | Select-Object -First 1
-    Write-Ok "Wrangler already available: $wVer"
+    if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
+        Write-Err "yarn not on PATH. Run: corepack enable  then: corepack prepare yarn@4.13.0 --activate"
+        exit 1
+    }
+    $wVer = & yarn run wrangler --version 2>&1 | Select-Object -First 1
+    Write-Ok "Wrangler: $wVer"
 } catch {
-    Write-Info "Installing wrangler via npm..."
-    & npm install -g wrangler
-    Write-Ok "Wrangler installed"
+    Write-Err "yarn run wrangler failed. From repo root run: yarn install  (installs devDependency wrangler)"
+    exit 1
+} finally {
+    Pop-Location
 }
 
 # ── Step 3: Login ───────────────────────────────────────────────────────────────
@@ -76,7 +96,7 @@ Write-Step 3 "Cloudflare Login"
 Write-Info "A browser window will open. Log in to your Cloudflare account."
 Write-Info "If you already logged in before, this may complete instantly."
 Write-Host ""
-& npx wrangler login
+Invoke-WranglerFromRepo login
 Write-Ok "Logged in to Cloudflare"
 
 # ── Step 4: Create D1 database ─────────────────────────────────────────────────
@@ -84,7 +104,7 @@ Write-Step 4 "Creating D1 Database (abaya-db)"
 $DB_ID = $null
 
 # Check if database already exists
-$existingDbs = & npx wrangler d1 list 2>&1
+$existingDbs = Invoke-WranglerFromRepo d1 list 2>&1
 if ($existingDbs -match 'abaya-db') {
     Write-Warn "Database 'abaya-db' already exists. Fetching its ID..."
     # Parse the ID from 'wrangler d1 list' output
@@ -103,12 +123,12 @@ if ($existingDbs -match 'abaya-db') {
         Write-Ok "Found existing database ID: $DB_ID"
     } else {
         Write-Warn "Could not auto-detect existing DB ID. Creating fresh..."
-        $createOut = & npx wrangler d1 create abaya-db 2>&1 | Out-String
+        $createOut = Invoke-WranglerFromRepo d1 create abaya-db 2>&1 | Out-String
         $DB_ID = ($createOut | Select-String 'database_id\s*=\s*"([^"]+)"').Matches.Groups[1].Value
     }
 } else {
     Write-Info "Creating new D1 database 'abaya-db'..."
-    $createOut = & npx wrangler d1 create abaya-db 2>&1 | Out-String
+    $createOut = Invoke-WranglerFromRepo d1 create abaya-db 2>&1 | Out-String
     $DB_ID = ($createOut | Select-String 'database_id\s*=\s*"([^"]+)"').Matches.Groups[1].Value
     if (-not $DB_ID) {
         # Try UUID pattern directly
@@ -118,7 +138,7 @@ if ($existingDbs -match 'abaya-db') {
 }
 
 if (-not $DB_ID) {
-    Write-Err "Could not determine D1 database ID. Run manually: npx wrangler d1 create abaya-db"
+    Write-Err "Could not determine D1 database ID. Run manually from repo root: yarn run wrangler --config cloudflare/wrangler.toml d1 create abaya-db"
     Write-Err "Then copy the 'database_id' value into cloudflare/wrangler.toml and re-run."
     exit 1
 }
@@ -133,13 +153,23 @@ Write-Ok "wrangler.toml updated with database_id = $DB_ID"
 # ── Step 5: Run schema ──────────────────────────────────────────────────────────
 Write-Step 5 "Running database schema (creating tables)"
 Write-Info "Applying schema.sql to remote D1..."
-& npx wrangler d1 execute abaya-db --remote --file=$SCHEMA_PATH
+Push-Location $ROOT_DIR
+try {
+    & yarn run wrangler --config $TOML_PATH d1 execute abaya-db --remote --file $SCHEMA_PATH
+    $MIG_0006 = Join-Path $SCRIPT_DIR "migrations/0006_sync_idempotency.sql"
+    if (Test-Path $MIG_0006) {
+        Write-Info "Applying migration 0006_sync_idempotency.sql..."
+        & yarn run wrangler --config $TOML_PATH d1 execute abaya-db --remote --file $MIG_0006
+    }
+} finally {
+    Pop-Location
+}
 Write-Ok "Schema applied successfully"
 
 # ── Step 6: R2 bucket ───────────────────────────────────────────────────────────
 Write-Step 6 "Creating R2 Bucket (abaya-exports)"
 try {
-    & npx wrangler r2 bucket create abaya-exports 2>&1 | Out-Null
+    Invoke-WranglerFromRepo r2 bucket create abaya-exports 2>&1 | Out-Null
     Write-Ok "R2 bucket 'abaya-exports' created"
 } catch {
     Write-Warn "R2 bucket may already exist (that's fine)."
@@ -177,17 +207,27 @@ while ([string]::IsNullOrWhiteSpace($CEO_TOKEN)) {
 }
 
 Write-Info "Setting INGEST_SECRET..."
-$INGEST_SECRET | & npx wrangler secret put INGEST_SECRET
+Push-Location $ROOT_DIR
+try {
+    $INGEST_SECRET | & yarn run wrangler --config $TOML_PATH secret put INGEST_SECRET
+} finally {
+    Pop-Location
+}
 Write-Ok "INGEST_SECRET set"
 
 Write-Info "Setting CEO_TOKEN..."
-$CEO_TOKEN | & npx wrangler secret put CEO_TOKEN
+Push-Location $ROOT_DIR
+try {
+    $CEO_TOKEN | & yarn run wrangler --config $TOML_PATH secret put CEO_TOKEN
+} finally {
+    Pop-Location
+}
 Write-Ok "CEO_TOKEN set"
 
 # ── Step 8: Deploy ──────────────────────────────────────────────────────────────
 Write-Step 8 "Deploying Worker to Cloudflare"
 Write-Info "Deploying abaya-track worker to dashboard.farewellabaya.com..."
-$deployOut = & npx wrangler deploy 2>&1 | Out-String
+$deployOut = Invoke-WranglerFromRepo deploy 2>&1 | Out-String
 Write-Host $deployOut
 
 # Custom domain is declared in wrangler.toml [[custom_domains]] — always use it.

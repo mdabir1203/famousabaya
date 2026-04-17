@@ -18,6 +18,7 @@ Only **one** column is required. Everything else is optional or auto-derived:
 | Column in Excel | Maps to | Notes |
 |-----------------|---------|-------|
 | **Barcode Display Name** | `barcode` | **Required.** The unique barcode string shown on the kiosk and scanned. |
+| **Barcode Disp Variation** | `barcode` | Same as barcode column (ERP export alias — maps to the scannable SKU per row). |
 | **Item Category** | `tier` | Optional. Abaya grade/category (for example `Standard`, `Premium`, `Luxury`, `Plain Abaya`). |
 | Item Name | `design` | Optional. Human-readable description shown on kiosk card. |
 | *(none)* | `id` | Auto-derived from `Barcode Display Name` (slug). No column needed. |

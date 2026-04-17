@@ -11,7 +11,8 @@
     "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
     "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:system": "node scripts/test-system.mjs"
+    "test:system": "node scripts/test-system.mjs",
+    "cf:d1:0006": "wrangler d1 execute abaya-db --config cloudflare/wrangler.toml --remote --file=cloudflare/migrations/0006_sync_idempotency.sql"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
@@ -29,6 +31,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "wrangler": "^3.114.15"
   }
 }

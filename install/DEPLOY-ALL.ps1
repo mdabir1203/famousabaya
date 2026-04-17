@@ -33,11 +33,12 @@ try {
 # ── 2. Pages ─────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '  [2/2] Cloudflare Pages (kiosk PWA)...' -ForegroundColor Yellow
-Push-Location (Join-Path $Root 'kiosk-pwa')
+Push-Location $Root
 try {
-  $wVer = & npx wrangler --version 2>&1 | Select-Object -First 1
+  $wVer = & yarn run wrangler --version 2>&1 | Select-Object -First 1
   Write-Host "  Wrangler: $wVer" -ForegroundColor Gray
-  & npx wrangler pages deploy . --project-name abaya-kiosk --branch main
+  $kioskDir = Join-Path $Root 'kiosk-pwa'
+  & yarn run wrangler pages deploy $kioskDir --project-name abaya-kiosk --branch main
   if ($LASTEXITCODE -ne 0) { throw "Pages deploy failed with exit $LASTEXITCODE" }
 } finally {
   Pop-Location

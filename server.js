@@ -10,6 +10,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const QRCode = require('qrcode');
+const localStore = require('./lib/local-store');
 
 /** Default 3000; override with PORT in .env */
 const PORT = process.env.PORT || 3000;
@@ -239,6 +240,31 @@ async function tryPostCeoIngestOnce(type, payload) {
   });
 }
 
+/** Optional: drain NDJSON queue via POST /api/sync/v1/batch (HMAC + secret). Set CF_SYNC_USE_BATCH=1 */
+const CF_SYNC_USE_BATCH = String(process.env.CF_SYNC_USE_BATCH || '').trim() === '1';
+
+function hmacIngestBodySha256(bodyUtf8) {
+  return crypto.createHmac('sha256', CF_SECRET).update(bodyUtf8, 'utf8').digest('hex');
+}
+
+async function tryPostCeoIngestBatch(events) {
+  if (!CF_URL || !CF_SECRET || !events.length) return { ok: false, status: 0 };
+  const raw = JSON.stringify({ events });
+  const sig = hmacIngestBodySha256(raw);
+  const res = await fetch(CF_URL + '/api/sync/v1/batch', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Ingest-Secret': CF_SECRET,
+      'X-Sync-Signature': sig,
+      'X-Idempotency-Key': crypto.randomUUID(),
+    },
+    body: raw,
+    signal: AbortSignal.timeout(20000),
+  });
+  return { ok: res.ok, status: res.status, res };
+}
+
 var MAX_INVOICE_NUMBERS = 500;
 var MAX_INVOICE_DIGITS_PER = 20;
 var MAX_INVOICE_RAW_CHARS = 12000;
@@ -327,6 +353,33 @@ async function drainCeoIngestQueue() {
     }
     const raw = fs.readFileSync(CEO_QUEUE_DRAIN, 'utf8');
     const lines = raw.split('\n').filter(Boolean);
+    const recs = [];
+    for (let li = 0; li < lines.length; li++) {
+      try {
+        const rec = JSON.parse(lines[li]);
+        if (rec && rec.v === 1 && rec.type && rec.payload != null) recs.push(rec);
+      } catch {
+        /* skip bad line */
+      }
+    }
+
+    if (CF_SYNC_USE_BATCH && recs.length >= 2) {
+      try {
+        const events = recs.map(function (r) {
+          return { type: r.type, payload: r.payload };
+        });
+        const br = await tryPostCeoIngestBatch(events);
+        if (br.ok) {
+          fs.unlinkSync(CEO_QUEUE_DRAIN);
+          console.log('[ceo-queue] Batch posted', recs.length, 'events to /api/sync/v1/batch');
+          return;
+        }
+        console.warn('[ceo-queue] Batch replay failed HTTP', br.status, '— falling back to single-event POSTs');
+      } catch (e) {
+        console.warn('[ceo-queue] Batch replay error:', e.message);
+      }
+    }
+
     for (let i = 0; i < lines.length; i++) {
       let rec;
       try {
@@ -503,6 +556,19 @@ function rebuildACMap() {
 }
 rebuildACMap();
 
+localStore.init(__dirname);
+if (localStore.isEnabled()) {
+  const hydrated = localStore.loadState(EMPLOYEES.map(function (e) {
+    return e.id;
+  }));
+  if (hydrated) {
+    ACTIVE_SESSIONS = hydrated.active;
+    COMPLETED_LOGS = hydrated.logs;
+    EMP_PERF = hydrated.perf;
+    console.log('[local-store] Restored active sessions:', Object.keys(ACTIVE_SESSIONS).length);
+  }
+}
+
 function getRealtimeState() {
   return {
     active: ACTIVE_SESSIONS,
@@ -567,6 +633,7 @@ io.on('connection', (socket) => {
     const log_id = 'WL-' + emp_id + '-' + Date.now();
     const started_at_sec = Math.floor(Date.now() / 1000);
     ACTIVE_SESSIONS[emp_id] = { emp_id, abaya_id, log_id, started_at: Date.now(), process: sessionProcess };
+    localStore.upsertActiveSession(ACTIVE_SESSIONS[emp_id]);
 
     broadcastState();
     callback({ ok: true, log_id });
@@ -626,6 +693,7 @@ io.on('connection', (socket) => {
       invoice_serial: invoice_serial,
     };
     COMPLETED_LOGS.push(record);
+    localStore.appendCompleted(record);
 
     var ep = EMP_PERF.find(i => i.id === emp_id);
     if (ep) {
@@ -640,6 +708,8 @@ io.on('connection', (socket) => {
     const abaya_code = abEnd >= 0 ? abayaCatalog[abEnd].code : null;
 
     delete ACTIVE_SESSIONS[emp_id];
+    localStore.deleteActiveSession(emp_id);
+    localStore.saveEmpPerf(EMP_PERF);
     broadcastState();
     var cbPayload = {
       ok: true,
@@ -940,6 +1010,7 @@ function loadEmployeesFromXlsxFile() {
     attachEmployeeImagesFromDisk();
     EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
     rebuildACMap();
+    localStore.saveEmpPerf(EMP_PERF);
     emitEmployeesChanged();
     console.log('[employees-xlsx] Loaded', parsed.length, 'employees from', resolved);
   } catch (e) {
@@ -955,10 +1026,22 @@ const DEFAULT_CATALOG_PROCESS = String(process.env.DEFAULT_CATALOG_PROCESS || 'T
 
 // Column aliases mirror catalog-parse.js — keep in sync.
 // "Barcode Display Name" and "Item Category" are the factory Excel column names.
+function normalizeTierPipe(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.indexOf('|') >= 0) {
+    var parts = s.split('|').map(function (p) {
+      return p.trim();
+    }).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+  return s;
+}
+
 const XLSX_COL_ALIASES = {
   id:      ['id', 'abaya_id', 'item_id'],
   code:    ['code', 'item_code', 'sku', 'abaya_code', 'product_code'],
-  barcode: ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'display_name', 'barcode_name'],
+  barcode: ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'barcode_disp_variation', 'display_name', 'barcode_name'],
   design:  ['design', 'description', 'item_name', 'name', 'title'],
   // process is set from folder name by the catalog-watcher, never from Excel columns.
   process: ['process', 'work_type', 'department', 'role'],
@@ -992,6 +1075,7 @@ function parseCatalogXlsxFile(filePath) {
     if (!out.id && out.barcode) {
       out.id = out.barcode.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     }
+    if (out.tier) out.tier = normalizeTierPipe(out.tier);
     if (!out.barcode) continue;
     if (!String(out.process || '').trim()) out.process = DEFAULT_CATALOG_PROCESS;
     if (seenBc.has(out.barcode)) continue;

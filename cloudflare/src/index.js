@@ -4,6 +4,7 @@
  * Handles 4 concerns in one worker:
  *
  *  POST /api/event           ← Factory server pushes session events (ingest)
+ *  POST /api/sync/v1/batch   ← Optional batch + HMAC (+ idempotency key)
  *  GET  /api/state           ← CEO dashboard polls for real-time data
  *  GET  /api/report?type=    ← CEO requests shift reports
  *  GET  /api/catalog/abayas ← Public catalog for factory server (D1) + short Cache-Control
@@ -30,7 +31,8 @@
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Ingest-Secret',
+  'Access-Control-Allow-Headers':
+    'Content-Type, Authorization, X-Ingest-Secret, X-Sync-Signature, X-Idempotency-Key',
 };
 
 function jsonRes(data, status = 200, extraHeaders = {}) {
@@ -52,6 +54,42 @@ async function rateLimitOr429(rl, key, message) {
 
 function errRes(msg, status = 400) {
   return jsonRes({ ok: false, error: msg }, status);
+}
+
+/** CEO dashboard: Cloudflare Access (email header) when REQUIRE_CF_ACCESS=1, else CEO_TOKEN. */
+function ceoAuthPassed(request, env, url) {
+  if (String(env.REQUIRE_CF_ACCESS || '').trim() === '1') {
+    const email = (request.headers.get('Cf-Access-Authenticated-User-Email') || '').trim();
+    if (email) return true;
+  }
+  const token = (url.searchParams.get('token') ||
+    (request.headers.get('Authorization') || '').replace('Bearer ', '')).trim();
+  return token === (env.CEO_TOKEN || '').trim();
+}
+
+async function hmacSha256Hex(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  const bytes = new Uint8Array(sig);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
+
+function parseSyncSignatureHeader(h) {
+  const s = String(h || '').trim();
+  if (!s) return '';
+  if (s.toLowerCase().startsWith('sha256=')) return s.slice(7).trim();
+  return s;
 }
 
 const MAX_INVOICE_NUMBERS = 500;
@@ -333,16 +371,15 @@ export default {
       }
     }
 
-    // ── CEO AUTH CHECK (for all /api/* and / except ingest + catalog) ──────────
+    // ── CEO AUTH CHECK (for all /api/* and / except ingest + catalog + batch sync) ─
     const isCEORoute =
       path === '/' ||
-      (path.startsWith('/api/') && path !== '/api/event' && path !== '/api/catalog/abayas');
+      (path.startsWith('/api/') &&
+        path !== '/api/event' &&
+        path !== '/api/catalog/abayas' &&
+        path !== '/api/sync/v1/batch');
     if (isCEORoute) {
-      // Accept token from query param or Authorization header
-      const token = (url.searchParams.get('token') ||
-        (request.headers.get('Authorization') || '').replace('Bearer ', '')).trim();
-      if (token !== (env.CEO_TOKEN || '').trim()) {
-        // Serve the login page if no token
+      if (!ceoAuthPassed(request, env, url)) {
         const loginHtml = getLoginPage(url.origin);
         return new Response(loginHtml, {
           status: 200,
@@ -362,6 +399,11 @@ export default {
       // [A] Factory Ingest — POST /api/event
       if (path === '/api/event' && request.method === 'POST') {
         return handleIngest(request, env);
+      }
+
+      // [A2] Batch + HMAC — POST /api/sync/v1/batch
+      if (path === '/api/sync/v1/batch' && request.method === 'POST') {
+        return handleSyncBatch(request, env);
       }
 
       // [B] CEO State Poll — GET /api/state
@@ -396,26 +438,12 @@ export default {
 };
 
 // ─── [A] FACTORY INGEST ───────────────────────────────────────────────────────
-async function handleIngest(request, env) {
-  const rlBlock = await rateLimitOr429(
-    env.INGEST_RATE_LIMIT,
-    'factory-ingest',
-    'Too many ingest requests. Wait and retry.'
-  );
-  if (rlBlock) return rlBlock;
 
-  // Authenticate factory server
-  const secret = (request.headers.get('X-Ingest-Secret') || '').trim();
-  if (!secret || secret !== (env.INGEST_SECRET || '').trim()) {
-    return errRes('Unauthorized ingest request', 401);
-  }
-
-  const body = await request.json();
-  const { type, payload } = body;
+/** Core ingest logic — used by POST /api/event and POST /api/sync/v1/batch */
+async function runIngestEvent(env, type, payload) {
   const now = Math.floor(Date.now() / 1000);
 
   if (type === 'session_start') {
-    // Upsert active session
     await env.DB.prepare(`
       INSERT OR REPLACE INTO active_sessions
         (emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
@@ -491,6 +519,112 @@ async function handleIngest(request, env) {
   }
 
   return errRes('Unknown event type: ' + type);
+}
+
+async function handleIngest(request, env) {
+  const rlBlock = await rateLimitOr429(
+    env.INGEST_RATE_LIMIT,
+    'factory-ingest',
+    'Too many ingest requests. Wait and retry.'
+  );
+  if (rlBlock) return rlBlock;
+
+  const secret = (request.headers.get('X-Ingest-Secret') || '').trim();
+  if (!secret || secret !== (env.INGEST_SECRET || '').trim()) {
+    return errRes('Unauthorized ingest request', 401);
+  }
+
+  const body = await request.json();
+  const { type, payload } = body;
+  return runIngestEvent(env, type, payload);
+}
+
+async function handleSyncBatch(request, env) {
+  const rlBlock = await rateLimitOr429(
+    env.INGEST_RATE_LIMIT,
+    'factory-ingest-batch',
+    'Too many ingest requests. Wait and retry.'
+  );
+  if (rlBlock) return rlBlock;
+
+  const raw = await request.text();
+  const secret = (request.headers.get('X-Ingest-Secret') || '').trim();
+  const secretOk = !!secret && secret === (env.INGEST_SECRET || '').trim();
+  const sigExpected = await hmacSha256Hex((env.INGEST_SECRET || '').trim(), raw);
+  const sigGot = parseSyncSignatureHeader(request.headers.get('X-Sync-Signature'));
+  const hmacOk = !!sigGot && sigExpected === sigGot;
+
+  if (!hmacOk && !secretOk) {
+    return errRes(
+      'Unauthorized: send X-Ingest-Secret matching INGEST_SECRET, or X-Sync-Signature (hex HMAC-SHA256 of raw JSON body)',
+      401
+    );
+  }
+
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return errRes('Invalid JSON body', 400);
+  }
+  if (!body || !Array.isArray(body.events)) {
+    return errRes('Body must be JSON: { "events": [ { "type", "payload" }, ... ] }', 400);
+  }
+
+  const idem = (request.headers.get('X-Idempotency-Key') || '').trim();
+  if (idem) {
+    try {
+      const row = await env.DB.prepare('SELECT id FROM sync_idempotency WHERE id = ?')
+        .bind(idem)
+        .first();
+      if (row && row.id) {
+        return jsonRes({ ok: true, duplicate: true, idempotent: true });
+      }
+    } catch (e) {
+      if (e && String(e.message || '').indexOf('no such table') >= 0) {
+        console.warn('sync_idempotency table missing — apply migration 0006_sync_idempotency.sql');
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  const events = body.events;
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i];
+    if (!ev || typeof ev !== 'object' || ev.type == null || ev.payload == null) {
+      return errRes(`events[${i}]: each item must have "type" and "payload"`, 400);
+    }
+    const res = await runIngestEvent(env, ev.type, ev.payload);
+    if (res.status !== 200) {
+      const txt = await res.text();
+      let errMsg = 'event failed';
+      try {
+        const j = JSON.parse(txt);
+        if (j.error) errMsg = j.error;
+      } catch {
+        errMsg = txt.slice(0, 200);
+      }
+      return jsonRes(
+        { ok: false, atIndex: i, error: errMsg, partial: true },
+        res.status >= 400 ? res.status : 400
+      );
+    }
+  }
+
+  if (idem) {
+    try {
+      await env.DB.prepare('INSERT OR IGNORE INTO sync_idempotency (id) VALUES (?)').bind(idem).run();
+    } catch (e) {
+      if (e && String(e.message || '').indexOf('no such table') >= 0) {
+        console.warn('sync_idempotency table missing — apply migration 0006_sync_idempotency.sql');
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  return jsonRes({ ok: true, processed: events.length, batch: true });
 }
 
 // ─── [B] CEO STATE ────────────────────────────────────────────────────────────

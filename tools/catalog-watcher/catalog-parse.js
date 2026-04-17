@@ -39,6 +39,7 @@ const HEADER_ALIASES = {
   bar_code: 'barcode',
   bc: 'barcode',
   barcode_display_name: 'barcode',
+  barcode_disp_variation: 'barcode',
   display_name: 'barcode',
   barcode_name: 'barcode',
 
@@ -99,6 +100,17 @@ function mapNormalizedHeaderToCanonical(normKey) {
   if (HEADER_ALIASES[normKey]) return HEADER_ALIASES[normKey];
   if (['id', 'code', 'barcode', 'design', 'process', 'tier', 'icon'].includes(normKey)) return normKey;
   return null;
+}
+
+/** Category like `Abaya|Standard` → tier `Standard` (last segment). */
+function normalizePipeCategory(tier) {
+  const s = String(tier || '').trim();
+  if (!s) return '';
+  if (s.indexOf('|') >= 0) {
+    const parts = s.split('|').map((p) => p.trim()).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+  return s;
 }
 
 function cellToString(val) {
@@ -186,6 +198,8 @@ function rowToCanonical(rowObj, excelRowNumber, headerToCanonical) {
     // For optional fields with multiple sources, use the first non-empty value.
     out[c] = nonEmpty.length ? nonEmpty[0].value : '';
   }
+
+  if (out.tier) out.tier = normalizePipeCategory(out.tier);
 
   return out;
 }
