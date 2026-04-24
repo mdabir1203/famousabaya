@@ -1330,37 +1330,37 @@ function closeModal() { document.getElementById('modal').classList.remove('open'
 function exportWA() {
   if (!lastReportData) return;
   const s = lastReportData.summary || {};
-  let msg = '\uD83D\uDCCA *AbaYa Track \u2014 ' + activeReportType.charAt(0).toUpperCase()+activeReportType.slice(1) + ' Report*\n';
-  msg += '_' + new Date().toLocaleString() + '_\n\n';
-  msg += '\uD83D\uDC54 *Summary*\n';
-  msg += '\u2022 Total Output: *' + (s.total_units||0) + ' units*\n';
-  msg += '\u2022 Avg Cycle: *' + fmtHMS(s.avg_sec) + '*\n';
-  msg += '\u2022 T01: '+(s.tailor_01||0)+' | T02: '+(s.tailor_02||0)+' | Hand: '+(s.hand_work||0)+' | Stone: '+(s.stone_work||0)+'\n';
-  msg += '\u2022 Btn: '+(s.button||0)+' | Emb: '+(s.embroidery||0)+' | Ari: '+(s.ari_work||0)+' | H.Des: '+(s.hand_designing||0)+'\n';
-  msg += '\u2022 Inv: '+(s.invoice_maker||0)+' | Pack: '+(s.packaging||0)+' | Chk: '+(s.checker||0)+'\n\n';
-  msg += '\uD83C\uDFC6 *Top Performers*\n';
-  (lastReportData.by_employee||[]).slice(0,5).forEach((e,i)=>{ msg += (i+1)+'. '+e.emp_name+' \u2014 '+e.units+' units ('+e.emp_process+')\n'; });
+  let msg = '\\uD83D\\uDCCA *AbaYa Track \\u2014 ' + activeReportType.charAt(0).toUpperCase()+activeReportType.slice(1) + ' Report*\\n';
+  msg += '_' + new Date().toLocaleString() + '_\\n\\n';
+  msg += '\\uD83D\\uDC54 *Summary*\\n';
+  msg += '\\u2022 Total Output: *' + (s.total_units||0) + ' units*\\n';
+  msg += '\\u2022 Avg Cycle: *' + fmtHMS(s.avg_sec) + '*\\n';
+  msg += '\\u2022 T01: '+(s.tailor_01||0)+' | T02: '+(s.tailor_02||0)+' | Hand: '+(s.hand_work||0)+' | Stone: '+(s.stone_work||0)+'\\n';
+  msg += '\\u2022 Btn: '+(s.button||0)+' | Emb: '+(s.embroidery||0)+' | Ari: '+(s.ari_work||0)+' | H.Des: '+(s.hand_designing||0)+'\\n';
+  msg += '\\u2022 Inv: '+(s.invoice_maker||0)+' | Pack: '+(s.packaging||0)+' | Chk: '+(s.checker||0)+'\\n\\n';
+  msg += '\\uD83C\\uDFC6 *Top Performers*\\n';
+  (lastReportData.by_employee||[]).slice(0,5).forEach((e,i)=>{ msg += (i+1)+'. '+e.emp_name+' \\u2014 '+e.units+' units ('+e.emp_process+')\\n'; });
   const invs = lastReportData.invoice_maker_sessions || [];
-  msg += '\n\uD83E\uDDFE *Invoice maker \u2014 numbers*\n';
+  msg += '\\n\\uD83E\\uDDFE *Invoice maker \\u2014 numbers*\\n';
   if (!invs.length) {
-    msg += '_No rows with saved lists in this period._\n';
+    msg += '_No rows with saved lists in this period._\\n';
   } else {
     invs.slice(0, 12).forEach(function (row, i) {
       const line = String(row.invoice_serial || '').replace(/,/g, ', ');
-      const short = line.length > 100 ? line.slice(0, 100) + '\u2026' : line;
+      const short = line.length > 100 ? line.slice(0, 100) + '\\u2026' : line;
       msg +=
         (i + 1) +
         '. ' +
         row.emp_name +
-        ' \u2014 count ' +
+        ' \\u2014 count ' +
         (row.invoice_count != null ? row.invoice_count : '?') +
         ': ' +
         short +
-        '\n';
+        '\\n';
     });
-    if (invs.length > 12) msg += '_+' + (invs.length - 12) + ' more in dashboard report._\n';
+    if (invs.length > 12) msg += '_+' + (invs.length - 12) + ' more in dashboard report._\\n';
   }
-  msg += '\n\u2705 _AbaYa Track \u2014 Powered by Cloudflare_';
+  msg += '\\n\\u2705 _AbaYa Track \\u2014 Powered by Cloudflare_';
   window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
   closeModal();
 }
