@@ -1,0 +1,2 @@
+[![Labeler](https://github.com/mdabir1203/famousabaya/actions/workflows/label.yml/badge.svg?event=release)](https://github.com/mdabir1203/famousabaya/actions/workflows/label.yml)
+[![SLSA generic generator](https://github.com/mdabir1203/famousabaya/actions/workflows/generator-generic-ossf-slsa3-publish.yml/badge.svg?event=release)](https://github.com/mdabir1203/famousabaya/actions/workflows/generator-generic-ossf-slsa3-publish.yml)
