@@ -2,6 +2,10 @@
  * AbayaTrack Dispatch Server — src/sse.js
  * Commit 5: SSE client registry and broadcaster.
  *
+ * ⚠️  NOT IMPORTED by server.js — this is the Web Streams API version
+ *     designed for Bun / Cloudflare Workers runtimes.  server.js uses its
+ *     own Node.js http-native SSE implementation directly.
+ *
  * Maintains a Set of open ReadableStream controllers.
  * Any module can call broadcast() after a state mutation —
  * all connected leaderboard tabs/tablets repaint instantly.
@@ -13,6 +17,9 @@
 
 /** @type {Set<ReadableStreamDefaultController>} */
 const _clients = new Set();
+
+// Hoisted to module scope — avoids allocating a new TextEncoder on every call.
+const _encoder = new TextEncoder();
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -32,7 +39,7 @@ export function createSSEStream() {
 
       // Send an immediate "connected" ping so the client knows the stream is live
       const ping = `event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`;
-      controller.enqueue(new TextEncoder().encode(ping));
+      controller.enqueue(_encoder.encode(ping));
     },
     cancel() {
       // Client disconnected — remove from registry
@@ -61,7 +68,7 @@ export function createSSEStream() {
 export function broadcast(eventName, payload) {
   if (_clients.size === 0) return;
 
-  const encoded = new TextEncoder().encode(
+  const encoded = _encoder.encode(
     `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`
   );
 

@@ -322,7 +322,7 @@ textarea{resize:vertical;min-height:56px}
   </div>
   <div class="config-row">
     <span class="config-label">Server URL</span>
-    <input class="config-input" id="serverUrlInput" type="text" placeholder="http://192.168.1.10:3001" aria-label="Server URL">
+    <input class="config-input" id="serverUrlInput" type="text" placeholder="http://192.168.1.10:3111" aria-label="Server URL">
     <button class="btn btn-primary btn-sm" id="btnConnect">Connect</button>
   </div>
 </div>
@@ -471,7 +471,9 @@ let invoices = [];
 let waConfigured = false;
 let es = null;
 let reconnectTimer = null;
-let _reconnectDelay = 2000; // ms — resets to 2 s on success, doubles on repeated failure (cap 30 s)
+let _reconnectDelay = 2000; // ms — resets to 2 s on success, doubles on repeated failure (cap 8 s)
+let _retryCount     = 0;    // counts consecutive failed attempts; shown in badge
+let _lastPageReload = 0;    // unix ms of last forced reload (throttled: once per 10 min max)
 let tickTimer = null;
 let toastTimer = null;
 
@@ -622,6 +624,11 @@ async function fetchConfig() {
   } catch (_) {}
 }
 
+function _resetReconnectState() {
+  _reconnectDelay = 2000;
+  _retryCount = 0;
+}
+
 function connect() {
   if (es) { es.close(); es = null; }
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -629,18 +636,17 @@ function connect() {
   // Don't even try if the device has no internet (mobile SIM dropped)
   if (!navigator.onLine) {
     setConn('offline', 'no signal');
-    // Will reconnect via the 'online' event listener below
-    return;
+    return; // will reconnect via the 'online' listener below
   }
 
-  setConn('connecting', 'connecting');
+  setConn('connecting', _retryCount > 0 ? `retry ${_retryCount}` : 'connecting');
   try {
     es = new EventSource(serverUrl + '/api/leaderboard/stream');
   } catch (_) { setConn('offline', 'bad url'); return; }
 
   es.onopen = () => {
     setConn('online', 'live');
-    _reconnectDelay = 2000; // reset backoff — connection is healthy
+    _resetReconnectState();
     fetchConfig();
   };
 
@@ -653,27 +659,43 @@ function connect() {
 
   es.addEventListener('ping', () => {
     setConn('online', 'live');
-    _reconnectDelay = 2000;
+    _resetReconnectState();
   });
 
   es.onerror = () => {
-    setConn('offline', 'disconnected');
     es.close(); es = null;
-    // If device is online, the tunnel/server is temporarily unreachable — back off gently.
-    // If device is offline, the 'online' event will reconnect immediately; no timer needed.
-    if (navigator.onLine) {
-      reconnectTimer = setTimeout(connect, _reconnectDelay);
-      _reconnectDelay = Math.min(_reconnectDelay * 2, 30000); // exponential backoff, cap at 30 s
-    } else {
+    _retryCount++;
+
+    if (!navigator.onLine) {
       setConn('offline', 'no signal');
+      return; // 'online' event will reconnect when signal returns
     }
+
+    // After 20 failed attempts the tab may be stuck (e.g. stale service worker,
+    // corrupted EventSource state). Reload once per 10 min as a last resort.
+    if (_retryCount > 20) {
+      const now = Date.now();
+      if (now - _lastPageReload > 10 * 60 * 1000) {
+        _lastPageReload = now;
+        location.reload();
+        return;
+      }
+    }
+
+    // Show retry count after 3rd failure so supervisor knows the system is fighting back
+    const label = _retryCount >= 3 ? `retry ${_retryCount}` : 'disconnected';
+    setConn('offline', label);
+
+    // Exponential backoff — cap at 8 s so the tab catches up within seconds of server restart
+    reconnectTimer = setTimeout(connect, _reconnectDelay);
+    _reconnectDelay = Math.min(_reconnectDelay * 2, 8000);
   };
 }
 
 // Reconnect immediately when the mobile SIM regains internet
 window.addEventListener('online', () => {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  _reconnectDelay = 2000;
+  _resetReconnectState();
   connect();
 });
 
@@ -684,12 +706,12 @@ window.addEventListener('offline', () => {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 });
 
-// Reconnect when the Android tab comes back to foreground (browser suspends tabs when locked)
+// Reconnect when the Android tab comes back to foreground after screen lock / app switch
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   if (es === null || es.readyState === EventSource.CLOSED) {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    _reconnectDelay = 2000;
+    _resetReconnectState();
     connect();
   }
 });
@@ -887,6 +909,14 @@ function render() {
   if (!initialized) initialized = true;
   updateTimers();
   updateStats();
+
+  // Prune notification-state entries for invoices that have left the leaderboard.
+  // Without this, seenIds / prevStatus / notifiedOverdue grow indefinitely —
+  // after a month of 40 orders/day they'd hold ~1200 ghost IDs in browser memory.
+  const _liveIds = new Set(invoices.map(inv => inv.id));
+  for (const id of seenIds)           { if (!_liveIds.has(id)) seenIds.delete(id); }
+  for (const id of prevStatus.keys()) { if (!_liveIds.has(id)) prevStatus.delete(id); }
+  for (const id of notifiedOverdue)   { if (!_liveIds.has(id)) notifiedOverdue.delete(id); }
 }
 
 function buildCard(inv, isNew = false) {

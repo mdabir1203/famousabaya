@@ -9,12 +9,12 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { networkInterfaces } from 'node:os';
 
-import { upsertInvoice, updateInvoiceStatus, getLeaderboard, getInvoice } from './src/store.js';
+import { upsertInvoice, updateInvoiceStatus, getLeaderboard, getInvoice, pruneDelivered } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PORT = parseInt(process.env.DISPATCH_PORT || '3001', 10);
+const PORT = parseInt(process.env.DISPATCH_PORT || '3111', 10);
 const INGEST_SECRET = process.env.DISPATCH_INGEST_SECRET || '';
 const WA_TOKEN = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
@@ -24,6 +24,33 @@ const BRIDGE_SECRET = process.env.DISPATCH_BRIDGE_SECRET || '';
 // Public URL reachable over the internet (cloudflared tunnel, e.g. https://factory.farewellabaya.com)
 // Required when tablets connect over mobile SIM rather than LAN WiFi.
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+
+// 512 KB is more than enough for any invoice JSON payload.
+// Enforced in readBody() to prevent unbounded memory growth from malformed / malicious requests.
+const MAX_BODY_BYTES = 512 * 1_024;
+
+// ─── Process resilience ────────────────────────────────────────────────────────
+// Any unhandled error exits cleanly so PM2 / the OS can restart the process.
+// Never let the server limp on with corrupted state — a clean restart is always safer.
+
+function _fatalExit(label, err) {
+  console.error(`[dispatch] FATAL ${label} — restarting:`, err?.stack || err);
+  // Force-exit after 4 s regardless; PM2 / the OS will restart the process.
+  setTimeout(() => process.exit(1), 4000).unref();
+  // server may not be initialised yet if the error fires during module load
+  try { server.close(() => process.exit(1)); } catch (_) { process.exit(1); }
+}
+
+process.on('uncaughtException',  err    => _fatalExit('uncaughtException',  err));
+process.on('unhandledRejection', reason => _fatalExit('unhandledRejection', reason));
+
+function _gracefulShutdown(signal) {
+  console.log(`[dispatch] ${signal} — shutting down cleanly`);
+  server.close(() => { console.log('[dispatch] closed'); process.exit(0); });
+  setTimeout(() => process.exit(0), 8000).unref();
+}
+process.on('SIGTERM', () => _gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => _gracefulShutdown('SIGINT'));
 
 // ─── LAN IP detection ─────────────────────────────────────────────────────────
 function getLocalIp() {
@@ -65,7 +92,15 @@ function sendJson(res, data, status = 200) {
 
 async function readBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) {
+      req.resume(); // drain the remainder so the socket stays reusable
+      throw Object.assign(new Error('payload too large'), { code: 'PAYLOAD_TOO_LARGE' });
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString('utf8');
 }
 
@@ -84,6 +119,7 @@ async function pushToCloud(id, status) {
   try {
     await fetch(`${CF_WORKER_URL}/dispatch/invoices/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
+      signal: AbortSignal.timeout(5_000),
       headers: { 'Content-Type': 'application/json', 'X-Bridge-Secret': BRIDGE_SECRET },
       body: JSON.stringify({ status }),
     });
@@ -94,6 +130,7 @@ async function syncFromCloud() {
   if (!CF_WORKER_URL || !BRIDGE_SECRET) return;
   try {
     const r = await fetch(`${CF_WORKER_URL}/dispatch/invoices`, {
+      signal: AbortSignal.timeout(8_000),
       headers: { 'X-Bridge-Secret': BRIDGE_SECRET },
     });
     if (!r.ok) return;
@@ -116,6 +153,7 @@ async function sendWhatsAppAlert(invoice) {
   try {
     const r = await fetch(`https://graph.facebook.com/v19.0/${WA_PHONE_ID}/messages`, {
       method: 'POST',
+      signal: AbortSignal.timeout(8_000),
       headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messaging_product: 'whatsapp',
@@ -295,11 +333,12 @@ const server = createServer(async (req, res) => {
     try {
       const metaRes = await fetch(
         `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
-        { headers: { Authorization: `Bearer ${WA_TOKEN}` } }
+        { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
       );
       if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
       const { url: mediaUrl, mime_type } = await metaRes.json();
-      const audioRes = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+      // 30 s for audio streaming — voice notes can be up to a few MB
+      const audioRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
       if (!audioRes.ok) return sendJson(res, { error: 'audio fetch failed' }, 502);
       res.writeHead(200, {
         'Content-Type': mime_type || 'audio/ogg',
@@ -324,7 +363,12 @@ const server = createServer(async (req, res) => {
     });
     res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
     _clients.add(res);
-    req.on('close', () => _clients.delete(res));
+    // Belt-and-suspenders: req 'close' fires on socket drop; res 'close' catches
+    // proxy/tunnel teardowns where the socket stays open but the response stream ends.
+    // Set.delete is idempotent — calling twice is safe.
+    const _removeClient = () => _clients.delete(res);
+    req.on('close', _removeClient);
+    res.on('close', _removeClient);
     pushLeaderboard();
     return;
   }
@@ -368,10 +412,44 @@ const server = createServer(async (req, res) => {
   sendJson(res, { error: 'not found' }, 404);
 });
 
+// ─── Server timeouts ──────────────────────────────────────────────────────────
+// Prevent connection accumulation: idle keep-alive connections are closed after
+// 65 s (just above the 60 s default for most reverse proxies).
+server.keepAliveTimeout = 65_000;
+server.headersTimeout   = 66_000; // must be slightly higher than keepAliveTimeout
+server.timeout          = 120_000; // 2 min hard limit for any single request
+
+// ─── EADDRINUSE recovery ───────────────────────────────────────────────────────
+// If the process crashed and restarted before the OS reclaimed the port,
+// wait 2 s and try again rather than dying immediately.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`[dispatch] port ${PORT} busy — retrying in 2 s…`);
+    setTimeout(() => server.listen(PORT, '0.0.0.0'), 2000);
+  } else {
+    _fatalExit('server error', err);
+  }
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   const ip = getLocalIp();
   const lanUrl    = `http://${ip}:${PORT}`;
   const publicMsg = PUBLIC_URL ? `  public: ${PUBLIC_URL}` : '  public: NOT SET (tablets need same WiFi)';
   console.log(`[dispatch] :${PORT}  LAN: ${lanUrl}${publicMsg}  whatsapp:${WA_TOKEN ? 'configured' : 'not set'}`);
   syncFromCloud();
+
+  // ── Delivered-invoice pruning ─────────────────────────────────────────────
+  // Removes DELIVERED entries older than 48 h from the in-memory Map and the
+  // JSON file. Keeps _persist() fast: small Map = fast JSON.stringify.
+  pruneDelivered();
+  setInterval(() => pruneDelivered(), 24 * 60 * 60 * 1_000); // daily
+
+  // ── SSE keep-alive heartbeat ─────────────────────────────────────────────
+  // Sent every 25 s to every connected tablet.
+  // Dual purpose: keeps the TCP connection alive on mobile networks that
+  // aggressively close idle sockets, AND flushes dead connections out of
+  // _clients (failed writes remove them immediately).
+  setInterval(() => {
+    broadcast('ping', { ts: Date.now() });
+  }, 25_000);
 });

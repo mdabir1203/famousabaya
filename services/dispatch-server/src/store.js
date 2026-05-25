@@ -40,6 +40,13 @@ const DATA_FILE = join(DATA_DIR, 'invoices.json');
  * @property {string|null}   notes        - Special recommendations from supplier (voice note summary, handling instructions)
  */
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+// DELIVERED invoices are kept in memory and on disk for 48 h, then pruned.
+// This keeps _persist() fast: JSON.stringify of a small Map is O(n) and
+// blocking; after weeks the Map would otherwise grow into thousands of entries.
+const DELIVERED_PRUNE_AFTER_MS = 48 * 60 * 60 * 1_000;
+
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
 /** Write current store to disk synchronously — called after every mutation. */
@@ -179,6 +186,27 @@ export function getLeaderboard({ includeDelivered = false } = {}) {
  */
 export function getInvoice(id) {
   return _invoices.get(id) || null;
+}
+
+/**
+ * Remove DELIVERED invoices that are older than DELIVERED_PRUNE_AFTER_MS (48 h).
+ * Called on startup and once per day so the in-memory Map and JSON file stay small.
+ * @returns {number} number of invoices pruned
+ */
+export function pruneDelivered() {
+  const cutoff = Date.now() - DELIVERED_PRUNE_AFTER_MS;
+  let pruned = 0;
+  for (const [id, inv] of _invoices) {
+    if (inv.status === 'DELIVERED' && inv.updatedAt < cutoff) {
+      _invoices.delete(id);
+      pruned++;
+    }
+  }
+  if (pruned > 0) {
+    console.log(`[store] pruned ${pruned} delivered invoice(s) older than 48 h — map size: ${_invoices.size}`);
+    _persist();
+  }
+  return pruned;
 }
 
 /**
