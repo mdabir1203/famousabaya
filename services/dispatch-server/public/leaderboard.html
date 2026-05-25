@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f1633">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AbaYa Track">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>AbaYa Track — Floor Leaderboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet"></noscript>
+<style>
+:root {
+  --bg:#1f1633; --s1:#150f23; --s2:#241a38; --s3:#362d59;
+  --bd:rgba(54,45,89,0.5); --bd2:rgba(106,95,193,0.3);
+  --tx:#ffffff; --tx2:#e5e7eb; --tx3:#9c98b0;
+  --gr:#c2ef4e; --grb:rgba(194,239,78,0.12);
+  --rd:#ef4444; --rdb:rgba(239,68,68,0.12);
+  --bl:#6a5fc1; --blb:rgba(106,95,193,0.15);
+  --am:#ffb287; --amb:rgba(255,178,135,0.12);
+  --pu:#a78bfa; --pub:rgba(167,139,250,0.12);
+  --fn:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;
+  --fn-display:'Sora','Rubik',sans-serif;
+  --fn-mono:Monaco,Menlo,'Ubuntu Mono',monospace;
+  --touch-min:48px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh;min-height:100dvh;-webkit-text-size-adjust:100%}
+button:focus-visible{outline:3px solid var(--pu);outline-offset:2px}
+button:focus:not(:focus-visible){outline:none}
+
+/* ── Topbar ────────────────────────────────────────────────────────────────── */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:11px 18px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:200;gap:10px}
+.tb-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.tb-logo{width:32px;height:32px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.tb-name{font-size:15px;font-weight:600;letter-spacing:-.3px}
+.tb-sub{font-size:11px;color:var(--tx3)}
+.tb-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.conn-badge{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2px;border:1px solid transparent;transition:all .3s}
+.conn-badge.online{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.3)}
+.conn-badge.offline{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.3)}
+.conn-badge.connecting{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.3)}
+.conn-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.conn-badge.online .conn-dot{animation:blink 1.4s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.tb-icon-btn{background:rgba(255,255,255,.07);border:1px solid var(--bd);border-radius:8px;color:var(--tx2);font-size:14px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0;padding:0}
+.tb-icon-btn:hover{background:rgba(255,255,255,.13);border-color:var(--bd2);color:var(--tx)}
+
+/* ── Config bar ────────────────────────────────────────────────────────────── */
+.config-bar{display:none;flex-direction:column;gap:10px;padding:12px 18px;background:var(--s2);border-bottom:1px solid var(--bd)}
+.config-bar.open{display:flex}
+.config-label{font-size:11px;color:var(--tx3);font-weight:600;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.config-input{flex:1;min-width:200px;background:var(--s1);border:1px solid var(--bd2);border-radius:8px;color:var(--tx);font-family:var(--fn-mono);font-size:12px;padding:7px 10px;outline:none}
+.config-input:focus{border-color:var(--bl)}
+.config-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* ── Tablet URL banner ─────────────────────────────────────────────────────── */
+.tablet-url-banner{background:linear-gradient(90deg,rgba(106,95,193,.18),rgba(106,95,193,.08));border:1px solid rgba(106,95,193,.4);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.tablet-url-label{font-size:11px;color:var(--tx3);font-weight:700;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;flex-shrink:0}
+.tablet-url-value{font-family:var(--fn-mono);font-size:15px;font-weight:800;color:var(--pu);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tablet-url-hint{font-size:11px;color:var(--tx3);width:100%;margin-top:2px}
+
+/* ── Touch optimisations (Android tablet) ─────────────────────────────────── */
+button,.btn{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+input,textarea{font-size:16px!important} /* prevents iOS/Android auto-zoom on focus */
+
+/* ── Action bar ────────────────────────────────────────────────────────────── */
+.action-bar{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.action-bar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.count-badge{font-family:var(--fn-mono);font-size:11px;padding:3px 9px;border-radius:999px;background:var(--blb);border:1px solid var(--bd2);color:var(--pu)}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 18px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid transparent;font-family:var(--fn);transition:all .18s;min-height:var(--touch-min);white-space:nowrap}
+.btn-primary{background:linear-gradient(135deg,#8e6cff,#6f58d9);color:#fff;border-color:rgba(181,159,255,.5);box-shadow:0 6px 20px rgba(88,64,169,.4)}
+.btn-primary:hover{transform:translateY(-1px)}
+.btn-ghost{background:rgba(255,255,255,.06);color:var(--tx2);border-color:var(--bd2)}
+.btn-ghost:hover{background:rgba(255,255,255,.11);border-color:rgba(106,95,193,.5);color:var(--tx)}
+.btn-amber{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
+.btn-amber:hover{background:rgba(255,178,135,.22)}
+.btn-green{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
+.btn-green:hover{background:rgba(194,239,78,.22)}
+.btn-wa{background:rgba(37,211,102,.11);color:#25d366;border-color:rgba(37,211,102,.35)}
+.btn-wa:hover{background:rgba(37,211,102,.2)}
+.btn-sm{padding:6px 12px;font-size:12px;min-height:32px}
+button:disabled{opacity:.42;cursor:not-allowed;transform:none!important}
+
+/* ── Loads grid ────────────────────────────────────────────────────────────── */
+.loads-wrap{padding:16px 18px;max-width:1600px;margin:0 auto}
+.loads-grid{display:flex;flex-direction:column;gap:8px}
+.empty-state{text-align:center;padding:60px 20px;color:var(--tx3)}
+.empty-icon{font-size:48px;margin-bottom:12px;opacity:.45}
+.empty-text{font-size:15px;margin-bottom:4px;color:var(--tx2)}
+.empty-sub{font-size:12px}
+
+/* ── Load card — horizontal row ────────────────────────────────────────────── */
+.load-card{background:rgba(255,255,255,.06);border:1px solid var(--bd);border-radius:14px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0 2px 8px;transition:border-color .2s;overflow:hidden;display:flex;flex-direction:column}
+.load-card:hover{border-color:var(--bd2)}
+
+/* Six-column horizontal row */
+.card-row{display:grid;grid-template-columns:44px 160px minmax(220px,1fr) 90px 105px auto;align-items:stretch;gap:0;padding:0}
+
+/* Column base */
+.col-rank,.col-supplier,.col-items,.col-queue,.col-sla,.col-actions{padding:13px 14px;display:flex;flex-direction:column;justify-content:center}
+.col-rank{padding-right:0;text-align:center;border-right:1px solid var(--bd);justify-content:center;align-items:center}
+.col-supplier{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
+.col-items{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
+.col-items .field-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.col-queue{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
+.col-sla{border-right:1px solid var(--bd);text-align:center;padding:10px 14px}
+.col-actions{display:flex;flex-direction:column;gap:6px;align-items:stretch;min-width:130px}
+
+/* Rank */
+.col-rank .rank-num{font-family:var(--fn-mono);font-size:18px;font-weight:800;color:var(--tx3);line-height:1}
+
+/* Supplier */
+.card-supplier{font-family:var(--fn-display);font-size:16px;font-weight:700;letter-spacing:-.3px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:5px}
+
+/* Status badge */
+.status-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;padding:3px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap;display:inline-flex;align-items:center}
+.status-pending{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
+.status-arrived{background:var(--blb);color:var(--bl);border-color:var(--bd2);animation:sPulse 2s ease-in-out infinite}
+@keyframes sPulse{0%,100%{box-shadow:0 0 0 0 rgba(106,95,193,.3)}50%{box-shadow:0 0 0 4px rgba(106,95,193,0)}}
+.status-delivered{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
+.status-urgent{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.4);animation:urgPulse 1s ease-in-out infinite}
+@keyframes urgPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}
+
+/* Items column */
+.field-label{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+.field-value{font-size:13px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.field-value.mono{font-family:var(--fn-mono);font-size:14px;font-weight:700;color:var(--tx);margin-top:3px;display:block}
+
+/* SLA countdown */
+.col-sla .timer-label{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600;display:block;margin-bottom:4px}
+.col-sla .timer-value{font-family:var(--fn-mono);font-size:22px;font-weight:800;line-height:1;display:block;transition:color .3s}
+.timer-value.overdue{color:var(--rd)}
+.timer-value.arrived{color:var(--bl)}
+.timer-value.delivered{color:var(--gr)}
+
+/* Actions column */
+.col-actions .btn{font-size:12px;padding:8px 12px;min-height:38px;justify-content:center}
+.wa-hint{font-size:10px;color:var(--tx3);text-align:center;line-height:1.4}
+.inv-ref{font-size:10px;color:var(--tx3);font-family:var(--fn-mono);text-align:center}
+
+/* Secondary row — notes, audio (shown below main row) */
+.card-secondary{border-top:1px solid var(--bd);padding:10px 18px;display:flex;flex-direction:column;gap:8px;background:rgba(0,0,0,.12)}
+
+/* Responsive: stack vertically on small screens */
+@media(max-width:700px){
+  .card-row{grid-template-columns:1fr;gap:0}
+  .col-rank,.col-supplier,.col-items,.col-queue,.col-sla,.col-actions{border-right:none;border-bottom:1px solid var(--bd)}
+  .col-actions{border-bottom:none;flex-direction:row;flex-wrap:wrap;gap:8px}
+  .col-sla{text-align:left}
+  .col-sla .timer-value{font-size:18px}
+}
+
+/* ── Modal ─────────────────────────────────────────────────────────────────── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(21,15,35,.88);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:520px;margin:auto;box-shadow:rgba(22,15,36,.9) 0 24px 80px;animation:pop .22s ease}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.modal-title{font-family:var(--fn-display);font-size:19px;font-weight:700;margin-bottom:4px}
+.modal-sub{font-size:13px;color:var(--tx3);margin-bottom:20px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.form-field{display:flex;flex-direction:column;gap:5px}
+.form-field.full{grid-column:1/-1}
+label{font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em}
+input[type=text],input[type=datetime-local],textarea{background:var(--s2);border:1px solid var(--bd);border-radius:9px;color:var(--tx);font-family:var(--fn);font-size:13px;padding:9px 11px;outline:none;width:100%;transition:border-color .15s}
+input:focus,textarea:focus{border-color:var(--bl)}
+textarea{resize:vertical;min-height:56px}
+.modal-actions{display:flex;gap:10px;margin-top:4px}
+.modal-actions .btn{flex:1}
+
+/* ── Toast ─────────────────────────────────────────────────────────────────── */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;padding:12px 20px;font-size:13px;font-weight:500;z-index:1000;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap;max-width:90vw;text-align:center;pointer-events:none}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.ok{border-color:rgba(194,239,78,.4);background:rgba(194,239,78,.1);color:var(--gr)}
+.toast.err{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:var(--rd)}
+.toast.info{border-color:rgba(106,95,193,.4);background:rgba(106,95,193,.1);color:var(--pu)}
+
+/* ── Urgency card states ───────────────────────────────────────────────────── */
+/* ARRIVED floats to top + pulses green — supervisor must act NOW */
+.load-card.state-arrived{border-color:var(--gr);box-shadow:0 0 0 0 rgba(194,239,78,.5);animation:cardPulseGreen 1.4s ease-in-out infinite}
+@keyframes cardPulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(194,239,78,.45)}60%{box-shadow:0 0 0 10px rgba(194,239,78,0)}}
+
+/* Overdue pulses red */
+.load-card.state-overdue{border-color:var(--rd)!important;animation:cardPulseRed 1s ease-in-out infinite}
+@keyframes cardPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}60%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}
+
+/* SLA warning (< 30 min) */
+.load-card.state-warn{border-color:var(--am)}
+
+/* Cards fade when delivered */
+.load-card.state-done{opacity:.58;filter:saturate(.6)}
+
+/* Slide-in for newly added cards */
+@keyframes cardIn{from{opacity:0;transform:translateY(-12px) scale(.97)}to{opacity:1;transform:none}}
+.load-card.card-new{animation:cardIn .35s cubic-bezier(.175,.885,.32,1.275) forwards}
+
+/* ── ARRIVED attention banner ──────────────────────────────────────────────── */
+.arrived-banner{background:linear-gradient(90deg,rgba(194,239,78,.18),rgba(194,239,78,.06));border:1px solid rgba(194,239,78,.4);border-radius:10px;padding:9px 14px;display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700;color:var(--gr);letter-spacing:.04em}
+.arrived-icon{font-size:18px;flex-shrink:0;animation:shake .5s ease-in-out infinite alternate}
+@keyframes shake{from{transform:rotate(-8deg)}to{transform:rotate(8deg)}}
+
+/* ── WhatsApp Voice Note player ────────────────────────────────────────────── */
+.audio-note{background:linear-gradient(135deg,rgba(37,211,102,.09),rgba(37,211,102,.04));border:1px solid rgba(37,211,102,.32);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px}
+.audio-wa-dot{width:10px;height:10px;border-radius:50%;background:#25d366;flex-shrink:0;box-shadow:0 0 0 3px rgba(37,211,102,.18)}
+.audio-col{flex:1;min-width:0}
+.audio-from-label{font-size:10px;color:rgba(37,211,102,.75);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audio-from-label strong{color:#25d366}
+.audio-row{display:flex;align-items:center;gap:8px}
+.audio-play-btn{width:36px;height:36px;border-radius:50%;background:#25d366;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .15s,background .15s;color:#062010}
+.audio-play-btn:hover{transform:scale(1.1);background:#1fb857}
+.audio-play-btn:focus-visible{outline:3px solid rgba(37,211,102,.55);outline-offset:3px}
+.audio-track{flex:1;display:flex;align-items:center}
+.audio-seek{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:rgba(37,211,102,.22);outline:none;cursor:pointer}
+.audio-seek::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#25d366;cursor:pointer;box-shadow:0 0 0 3px rgba(37,211,102,.25)}
+.audio-seek::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#25d366;cursor:pointer;border:none}
+.audio-time-display{font-family:var(--fn-mono);font-size:11px;color:rgba(37,211,102,.75);flex-shrink:0;min-width:36px;text-align:right}
+
+/* ── Confirmation modal ─────────────────────────────────────────────────────── */
+.confirm-box{max-width:400px;text-align:center}
+.confirm-icon-wrap{font-size:36px;margin-bottom:10px;line-height:1}
+.confirm-who-card{background:var(--s2);border:1px solid var(--bd2);border-radius:12px;padding:14px 18px;margin:14px 0;text-align:left}
+.confirm-who-name{font-family:var(--fn-display);font-size:17px;font-weight:700;color:var(--tx);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.confirm-who-id{font-family:var(--fn-mono);font-size:11px;color:var(--tx3)}
+.confirm-desc{font-size:13px;color:var(--tx3);line-height:1.6;text-align:center}
+.confirm-modal-title{font-family:var(--fn-display);font-size:18px;font-weight:700;margin-bottom:0}
+.confirm-pin-row{margin:16px 0 0;text-align:center}
+.confirm-pin-label{font-size:12px;color:var(--tx3);display:block;margin-bottom:9px}
+.confirm-pin-code{color:var(--tx);font-family:var(--fn-mono);font-size:15px;font-weight:800;letter-spacing:5px;background:var(--s2);padding:3px 10px;border-radius:7px;border:1px solid var(--bd2)}
+.confirm-pin-input{width:110px;text-align:center;font-family:var(--fn-mono);font-size:22px;font-weight:800;letter-spacing:6px;text-transform:uppercase;padding:11px 10px;border-radius:12px;background:var(--s2);border:2px solid var(--bd);color:var(--tx);outline:none;transition:border-color .15s,color .15s;display:block;margin:0 auto}
+.confirm-pin-input:focus{border-color:var(--bl)}
+.confirm-pin-input.matched{border-color:var(--gr)!important;color:var(--gr)}
+
+/* ── Notification bell ─────────────────────────────────────────────────────── */
+.notif-btn{position:relative}
+.notif-dot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--rd);display:none;border:2px solid var(--s1)}
+.notif-btn.has-new .notif-dot{display:block}
+
+/* ── Stats bar ─────────────────────────────────────────────────────────────── */
+.stats-bar{display:flex;align-items:center;gap:12px;padding:8px 18px;background:var(--s2);border-bottom:1px solid var(--bd);overflow-x:auto;scrollbar-width:none;flex-shrink:0}
+.stats-bar::-webkit-scrollbar{display:none}
+.stats-live{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.stat-chip{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:9px;font-size:11px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.stat-chip.stat-pending{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
+.stat-chip.stat-arrived{background:var(--blb);color:var(--pu);border-color:var(--bd2)}
+.stat-chip.stat-delivered{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
+.stat-chip.stat-urgent{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.4)}
+.stat-num{font-family:var(--fn-mono);font-size:15px;font-weight:800;line-height:1}
+.stats-divider{width:1px;height:24px;background:var(--bd);flex-shrink:0}
+.stats-history{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.stats-hist-label{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600;white-space:nowrap}
+.stat-period{display:flex;flex-direction:column;align-items:center;gap:0;padding:4px 10px;border-radius:7px;background:rgba(194,239,78,.07);border:1px solid rgba(194,239,78,.15);min-width:48px}
+.stat-period-num{font-family:var(--fn-mono);font-size:16px;font-weight:800;color:var(--gr);line-height:1.1}
+.stat-period-label{font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+
+/* ── Skip link (keyboard users) ───────────────────────────────────────────── */
+.skip-link{position:absolute;top:-100px;left:16px;z-index:9999;background:var(--bl);color:#fff;padding:10px 18px;border-radius:0 0 12px 12px;font-size:14px;font-weight:700;transition:top .15s;text-decoration:none}
+.skip-link:focus{top:0}
+
+/* ── Screen-reader only ────────────────────────────────────────────────────── */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ── Special recommendations note ─────────────────────────────────────────── */
+.notes-row{background:rgba(167,139,250,.09);border:1px solid rgba(167,139,250,.25);border-radius:8px;padding:9px 12px;display:flex;gap:9px;align-items:flex-start;line-height:1.5}
+.notes-icon{flex-shrink:0;font-size:15px;padding-top:1px}
+.notes-text{font-size:13px;color:var(--tx2)}
+
+/* ── Invoice ref footer ────────────────────────────────────────────────────── */
+.inv-ref{font-size:10px;color:var(--tx3);font-family:var(--fn-mono);text-align:right;margin-top:-4px}
+
+/* ── Responsive ────────────────────────────────────────────────────────────── */
+@media(max-width:600px){
+  .loads-grid{grid-template-columns:1fr}
+  .form-grid{grid-template-columns:1fr}
+  .card-details{grid-template-columns:1fr 1fr}
+  .action-bar,.loads-wrap{padding:12px 14px}
+}
+@media(max-width:380px){.card-details{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<a href="#main-content" class="skip-link">Skip to leaderboard</a>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="tb-brand">
+    <div class="tb-logo" aria-hidden="true">&#129525;</div>
+    <div>
+      <div class="tb-name">AbaYa Track</div>
+      <div class="tb-sub">Floor Leaderboard</div>
+    </div>
+  </div>
+  <div class="tb-right">
+    <div class="conn-badge connecting" id="connBadge">
+      <span class="conn-dot"></span>
+      <span id="connLabel">connecting</span>
+    </div>
+    <button class="tb-icon-btn notif-btn" id="btnNotif" title="Enable notifications" aria-label="Notifications">
+      &#128276;<span class="notif-dot" id="notifDot"></span>
+    </button>
+    <button class="tb-icon-btn" id="btnSettings" title="Server settings" aria-label="Settings">&#9881;</button>
+  </div>
+</div>
+
+<!-- CONFIG BAR -->
+<div class="config-bar" id="configBar">
+  <div class="tablet-url-banner" id="tabletUrlBanner">
+    <span class="tablet-url-label" id="tabletUrlLabel">📱 Open on tablet:</span>
+    <span class="tablet-url-value" id="tabletUrlValue">detecting…</span>
+    <button class="btn btn-ghost btn-sm" id="btnCopyTabletUrl" aria-label="Copy tablet URL">Copy</button>
+    <span class="tablet-url-hint" id="tabletUrlHint">Open Chrome → type this address → tap ⋮ → <strong>Add to Home screen</strong></span>
+  </div>
+  <div class="config-row">
+    <span class="config-label">Server URL</span>
+    <input class="config-input" id="serverUrlInput" type="text" placeholder="http://192.168.1.10:3001" aria-label="Server URL">
+    <button class="btn btn-primary btn-sm" id="btnConnect">Connect</button>
+  </div>
+</div>
+
+<!-- ACTION BAR -->
+<div class="action-bar">
+  <button class="btn btn-primary" id="btnAddLoad">+ Add Invoice</button>
+  <div class="action-bar-right">
+    <span class="count-badge" id="countBadge">0 invoices</span>
+  </div>
+</div>
+
+<!-- STATS BAR -->
+<div class="stats-bar" id="statsBar" role="region" aria-label="Delivery statistics">
+  <div class="stats-live" aria-label="Live status">
+    <div class="stat-chip stat-pending" title="Pending deliveries"><span class="stat-num" id="statPending">0</span>&nbsp;Pending</div>
+    <div class="stat-chip stat-arrived" title="Arrived — awaiting supervisor confirmation"><span class="stat-num" id="statArrived">0</span>&nbsp;Arrived</div>
+    <div class="stat-chip stat-urgent" title="Urgent — SLA at risk"><span class="stat-num" id="statUrgent">0</span>&nbsp;Urgent</div>
+    <div class="stat-chip stat-delivered" title="Delivered this session"><span class="stat-num" id="statDelivered">0</span>&nbsp;Delivered</div>
+  </div>
+  <div class="stats-divider" aria-hidden="true"></div>
+  <div class="stats-history" role="group" aria-label="Delivered count by period">
+    <span class="stats-hist-label">Deliveries</span>
+    <div class="stat-period" title="Delivered today"><span class="stat-period-num" id="statToday">0</span><span class="stat-period-label">Today</span></div>
+    <div class="stat-period" title="Delivered this month"><span class="stat-period-num" id="statMonth">0</span><span class="stat-period-label">Month</span></div>
+    <div class="stat-period" title="Delivered this year"><span class="stat-period-num" id="statYear">0</span><span class="stat-period-label">Year</span></div>
+  </div>
+</div>
+
+<!-- LOADS GRID -->
+<main class="loads-wrap" id="main-content" aria-label="Active delivery invoices">
+  <div
+    class="loads-grid"
+    id="loadsGrid"
+    role="list"
+    aria-label="Delivery invoices, sorted by urgency"
+    aria-live="polite"
+    aria-relevant="additions removals"
+  >
+    <div class="empty-state" id="emptyState" role="status">
+      <div class="empty-icon" aria-hidden="true">&#128230;</div>
+      <div class="empty-text">No active invoices</div>
+      <div class="empty-sub">Add one above or wait for supplier / vision engine to push</div>
+    </div>
+  </div>
+</main>
+
+<!-- ADD INVOICE MODAL -->
+<div class="modal-overlay" id="addModal" role="dialog" aria-modal="true" aria-labelledby="addModalTitle">
+  <div class="modal-box">
+    <div class="modal-title" id="addModalTitle">Add Invoice</div>
+    <div class="modal-sub">Register a POS order from the factory invoice</div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="fSupplier">Factory *</label>
+        <input type="text" id="fSupplier" placeholder="e.g. Famous" autocomplete="off">
+      </div>
+      <div class="form-field">
+        <label for="fTargetQueue">POS Sale Ref</label>
+        <input type="text" id="fTargetQueue" placeholder="e.g. POS 1042" autocomplete="off">
+      </div>
+      <div class="form-field full" style="margin-top:4px">
+        <span style="font-size:11px;font-weight:700;color:var(--tx3);text-transform:uppercase;letter-spacing:.4px">Abaya Orders — Style Codes</span>
+      </div>
+      <div id="abayaRow1" class="form-field full" style="display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:end">
+        <div><label for="fItem1Mat">Abaya 1 — Style Code</label><input type="text" id="fItem1Mat" placeholder="e.g. FWAS 3117" autocomplete="off"></div>
+        <div><label for="fItem1Color">Colour</label><input type="text" id="fItem1Color" placeholder="Black" style="width:80px" autocomplete="off"></div>
+        <div><label for="fItem1Qty">Qty</label><input type="text" id="fItem1Qty" placeholder="1" style="width:70px" autocomplete="off"></div>
+      </div>
+      <div id="abayaRow2" class="form-field full" style="display:none;grid-template-columns:1fr auto auto;gap:6px;align-items:end">
+        <div><label for="fItem2Mat">Abaya 2 — Style Code</label><input type="text" id="fItem2Mat" placeholder="e.g. FWAS 3548" autocomplete="off"></div>
+        <div><label for="fItem2Color">Colour</label><input type="text" id="fItem2Color" placeholder="Navy" style="width:80px" autocomplete="off"></div>
+        <div><label for="fItem2Qty">Qty</label><input type="text" id="fItem2Qty" placeholder="1" style="width:70px" autocomplete="off"></div>
+      </div>
+      <div id="abayaRow3" class="form-field full" style="display:none;grid-template-columns:1fr auto auto;gap:6px;align-items:end">
+        <div><label for="fItem3Mat">Abaya 3 — Style Code</label><input type="text" id="fItem3Mat" placeholder="e.g. FWAS 3393" autocomplete="off"></div>
+        <div><label for="fItem3Color">Colour</label><input type="text" id="fItem3Color" placeholder="Brown" style="width:80px" autocomplete="off"></div>
+        <div><label for="fItem3Qty">Qty</label><input type="text" id="fItem3Qty" placeholder="1" style="width:70px" autocomplete="off"></div>
+      </div>
+      <div id="abayaRow4" class="form-field full" style="display:none;grid-template-columns:1fr auto auto;gap:6px;align-items:end">
+        <div><label for="fItem4Mat">Abaya 4 — Style Code</label><input type="text" id="fItem4Mat" placeholder="e.g. FWAS 3562" autocomplete="off"></div>
+        <div><label for="fItem4Color">Colour</label><input type="text" id="fItem4Color" placeholder="Grey" style="width:80px" autocomplete="off"></div>
+        <div><label for="fItem4Qty">Qty</label><input type="text" id="fItem4Qty" placeholder="1" style="width:70px" autocomplete="off"></div>
+      </div>
+      <div class="form-field full" id="addAbayaBtnWrap">
+        <button type="button" class="btn btn-ghost btn-sm" id="btnAddAbayaRow" style="width:100%;border-style:dashed;color:var(--tx3);gap:6px" aria-label="Add another abaya to this order">
+          <span aria-hidden="true" style="font-size:15px">＋</span> Add Another Abaya
+        </button>
+      </div>
+      <div class="form-field full">
+        <label for="fSlaDeadline">SLA Deadline</label>
+        <input type="datetime-local" id="fSlaDeadline">
+      </div>
+      <div class="form-field full">
+        <label for="fNotes">Customer &amp; Measurements</label>
+        <textarea id="fNotes" placeholder="e.g. Amal / AUH / 23+27+40 / Sheila 25-81" rows="3" aria-describedby="fNotesHint"></textarea>
+        <span id="fNotesHint" style="font-size:11px;color:var(--tx3);margin-top:3px;display:block">Customer name, delivery city, measurements (Chest+Hips+Close), tailor name &amp; code</span>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btnCancelAdd">Cancel</button>
+      <button class="btn btn-primary" id="btnSubmitAdd">Add Invoice</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRMATION MODAL — reused for Step 1 and Step 2 -->
+<div class="modal-overlay" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+  <div class="modal-box confirm-box">
+    <div class="confirm-icon-wrap" id="confirmIcon" aria-hidden="true"></div>
+    <div class="confirm-modal-title" id="confirmModalTitle"></div>
+    <div class="confirm-who-card" id="confirmWhoCard">
+      <div class="confirm-who-name" id="confirmWhoName"></div>
+      <div class="confirm-who-id" id="confirmWhoId"></div>
+    </div>
+    <p class="confirm-desc" id="confirmDesc"></p>
+    <div class="confirm-pin-row" id="confirmPinRow">
+      <label class="confirm-pin-label" for="confirmPinInput">Type <span class="confirm-pin-code" id="confirmPinHint"></span> to confirm</label>
+      <input type="text" id="confirmPinInput" class="confirm-pin-input" maxlength="3" autocomplete="off" spellcheck="false" aria-label="Type the last 3 characters of the invoice ID to confirm">
+    </div>
+    <div class="modal-actions" style="margin-top:18px">
+      <button class="btn btn-ghost" id="btnConfirmCancel">Cancel</button>
+      <button class="btn" id="btnConfirmOk" disabled></button>
+    </div>
+  </div>
+</div>
+
+<div class="sr-only" id="srStatus" role="status" aria-live="polite" aria-atomic="true"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'abaya_dispatch_server_url';
+let serverUrl = (() => {
+  const p = new URLSearchParams(location.search).get('server');
+  if (p) { try { localStorage.setItem(STORAGE_KEY, p); } catch (_) {} return p; }
+  try {
+    return localStorage.getItem(STORAGE_KEY) || location.origin; // auto-use page origin (works on LAN tablet)
+  } catch (_) { return location.origin; }
+})();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let invoices = [];
+let waConfigured = false;
+let es = null;
+let reconnectTimer = null;
+let _reconnectDelay = 2000; // ms — resets to 2 s on success, doubles on repeated failure (cap 30 s)
+let tickTimer = null;
+let toastTimer = null;
+
+// Notification / sound state
+const seenIds = new Set();           // ids already shown to user
+const prevStatus = new Map();        // id → last known status
+const notifiedOverdue = new Set();   // ids already notified for overdue
+let initialized = false;             // true after first render (suppresses startup noise)
+let audioCtx = null;
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const connBadge = document.getElementById('connBadge');
+const connLabel = document.getElementById('connLabel');
+const configBar = document.getElementById('configBar');
+const serverUrlInput = document.getElementById('serverUrlInput');
+const loadsGrid = document.getElementById('loadsGrid');
+const emptyState = document.getElementById('emptyState');
+const countBadge = document.getElementById('countBadge');
+const addModal = document.getElementById('addModal');
+const toast = document.getElementById('toast');
+const btnNotif = document.getElementById('btnNotif');
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function showToast(msg, type) {
+  toast.textContent = msg;
+  toast.className = 'toast show ' + (type || 'info');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+}
+function fmtCountdown(slaDeadline, status) {
+  if (status === 'DELIVERED') return { text: 'Delivered', cls: 'delivered' };
+  if (status === 'ARRIVED') return { text: 'At gate — confirm receipt', cls: 'arrived' };
+  const diff = slaDeadline - Date.now();
+  if (diff <= 0) {
+    const over = Math.floor(-diff / 60000);
+    return { text: over < 60 ? over + 'm overdue' : Math.floor(over/60) + 'h overdue', cls: 'overdue' };
+  }
+  const m = Math.floor(diff / 60000);
+  const h = Math.floor(m / 60);
+  const text = h > 0 ? h + 'h ' + (m % 60) + 'm' : m + 'm';
+  const cls = diff < 30 * 60000 ? 'overdue' : '';
+  return { text, cls };
+}
+function waLink(inv) {
+  const itemLines = (inv.items || []).map(it =>
+    `${it.pos}. ${it.materialSpec}${it.color ? ' — ' + it.color : ''}${it.qty ? ' ('+it.qty+')' : ''}`
+  ).join('\n');
+  const msg = `✅ Material Delivered\nRef: ${inv.id}\nSupplier: ${inv.supplier}\nQueue: ${inv.targetQueue || '—'}\n${itemLines}`;
+  return 'https://wa.me/?text=' + encodeURIComponent(msg);
+}
+function cardUrgencyClass(inv) {
+  if (inv.status === 'DELIVERED') return 'state-done';
+  if (inv.status === 'ARRIVED') return 'state-arrived';
+  if (inv.slaDeadline && inv.slaDeadline - Date.now() <= 0) return 'state-overdue';
+  if (inv.slaDeadline && inv.slaDeadline - Date.now() < 30 * 60000) return 'state-warn';
+  return '';
+}
+
+// ── Sound system ──────────────────────────────────────────────────────────────
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function playTone(freq, duration, gain, startOffset, type = 'sine') {
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.connect(g); g.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0, ctx.currentTime + startOffset);
+  g.gain.linearRampToValueAtTime(gain, ctx.currentTime + startOffset + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + startOffset + duration);
+  osc.start(ctx.currentTime + startOffset);
+  osc.stop(ctx.currentTime + startOffset + duration + 0.05);
+}
+function playPing(type) {
+  try {
+    if (type === 'new') {
+      // Single soft chime — new invoice arrived
+      playTone(880, 0.4, 0.18, 0);
+    } else if (type === 'arrived') {
+      // Double urgent chime — supervisor action needed NOW
+      playTone(1047, 0.3, 0.22, 0);
+      playTone(1319, 0.4, 0.22, 0.22);
+    } else if (type === 'overdue') {
+      // Low warning buzz — SLA breached
+      playTone(220, 0.5, 0.15, 0, 'sawtooth');
+    }
+  } catch (_) {}
+}
+
+// ── Notification system ───────────────────────────────────────────────────────
+function updateNotifBtnState() {
+  if (!('Notification' in window)) { btnNotif.style.display = 'none'; return; }
+  const granted = Notification.permission === 'granted';
+  btnNotif.title = granted ? 'Notifications enabled' : 'Enable notifications';
+  btnNotif.style.opacity = granted ? '1' : '0.6';
+}
+async function requestNotifPermission() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') { showToast('Notifications already enabled', 'ok'); return; }
+  const result = await Notification.requestPermission();
+  updateNotifBtnState();
+  if (result === 'granted') showToast('Notifications enabled', 'ok');
+  else showToast('Notifications blocked — browser will still alert you', 'info');
+}
+function notify(title, body, tag) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, {
+      body,
+      tag,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%236a5fc1"/><text y="22" x="7" font-size="18">🧵</text></svg>',
+      silent: true, // we handle sound ourselves
+    });
+    setTimeout(() => n.close(), 8000);
+  } catch (_) {}
+}
+function flashBell() {
+  btnNotif.classList.add('has-new');
+  setTimeout(() => btnNotif.classList.remove('has-new'), 6000);
+}
+
+// ── Screen-reader announcements ───────────────────────────────────────────────
+let _srTimer = null;
+function announceToSR(msg) {
+  const el = document.getElementById('srStatus');
+  if (!el) return;
+  el.textContent = '';
+  clearTimeout(_srTimer);
+  _srTimer = setTimeout(() => { el.textContent = msg; }, 60);
+}
+
+// ── Connection ────────────────────────────────────────────────────────────────
+function setConn(state, label) {
+  connBadge.className = 'conn-badge ' + state;
+  connLabel.textContent = label;
+}
+
+async function fetchConfig() {
+  try {
+    const r = await fetch(serverUrl + '/api/config', { signal: AbortSignal.timeout(4000) });
+    waConfigured = (await r.json()).whatsappConfigured;
+  } catch (_) {}
+}
+
+function connect() {
+  if (es) { es.close(); es = null; }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
+  // Don't even try if the device has no internet (mobile SIM dropped)
+  if (!navigator.onLine) {
+    setConn('offline', 'no signal');
+    // Will reconnect via the 'online' event listener below
+    return;
+  }
+
+  setConn('connecting', 'connecting');
+  try {
+    es = new EventSource(serverUrl + '/api/leaderboard/stream');
+  } catch (_) { setConn('offline', 'bad url'); return; }
+
+  es.onopen = () => {
+    setConn('online', 'live');
+    _reconnectDelay = 2000; // reset backoff — connection is healthy
+    fetchConfig();
+  };
+
+  es.addEventListener('leaderboard-update', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (Array.isArray(d.leaderboard)) { invoices = d.leaderboard; render(); }
+    } catch (_) {}
+  });
+
+  es.addEventListener('ping', () => {
+    setConn('online', 'live');
+    _reconnectDelay = 2000;
+  });
+
+  es.onerror = () => {
+    setConn('offline', 'disconnected');
+    es.close(); es = null;
+    // If device is online, the tunnel/server is temporarily unreachable — back off gently.
+    // If device is offline, the 'online' event will reconnect immediately; no timer needed.
+    if (navigator.onLine) {
+      reconnectTimer = setTimeout(connect, _reconnectDelay);
+      _reconnectDelay = Math.min(_reconnectDelay * 2, 30000); // exponential backoff, cap at 30 s
+    } else {
+      setConn('offline', 'no signal');
+    }
+  };
+}
+
+// Reconnect immediately when the mobile SIM regains internet
+window.addEventListener('online', () => {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  _reconnectDelay = 2000;
+  connect();
+});
+
+// Mark offline instantly when signal drops (don't wait for SSE timeout)
+window.addEventListener('offline', () => {
+  setConn('offline', 'no signal');
+  if (es) { es.close(); es = null; }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+});
+
+// Reconnect when the Android tab comes back to foreground (browser suspends tabs when locked)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (es === null || es.readyState === EventSource.CLOSED) {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    _reconnectDelay = 2000;
+    connect();
+  }
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtTime(s) {
+  const m = Math.floor(s / 60);
+  return m + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function apiPost(path) {
+  try {
+    const r = await fetch(serverUrl + path, { method: 'POST', signal: AbortSignal.timeout(6000) });
+    return await r.json();
+  } catch (_) {
+    showToast('Network error', 'err');
+    return null;
+  }
+}
+
+// ── Confirmation modal ────────────────────────────────────────────────────────
+let _confirmResolve = null;
+let _confirmTrigger = null;
+const confirmModal = document.getElementById('confirmModal');
+const btnConfirmOk = document.getElementById('btnConfirmOk');
+const btnConfirmCancel = document.getElementById('btnConfirmCancel');
+
+function showConfirm({ icon, title, supplierName, invoiceId, desc, okLabel, okClass }) {
+  _confirmTrigger = document.activeElement;
+  const pin = String(invoiceId || '').slice(-3).toUpperCase();
+  document.getElementById('confirmIcon').textContent = icon || '';
+  document.getElementById('confirmModalTitle').textContent = title;
+  document.getElementById('confirmWhoName').textContent = supplierName || '';
+  document.getElementById('confirmWhoId').textContent = invoiceId || '';
+  document.getElementById('confirmDesc').textContent = desc;
+  document.getElementById('confirmPinHint').textContent = pin;
+  const pinInput = document.getElementById('confirmPinInput');
+  pinInput.value = '';
+  pinInput.classList.remove('matched');
+  btnConfirmOk.textContent = okLabel;
+  btnConfirmOk.className = 'btn ' + (okClass || 'btn-primary');
+  btnConfirmOk.disabled = true;
+  confirmModal.classList.add('open');
+  requestAnimationFrame(() => pinInput.focus());
+  return new Promise(resolve => { _confirmResolve = resolve; });
+}
+function closeConfirm(result) {
+  confirmModal.classList.remove('open');
+  const pinInput = document.getElementById('confirmPinInput');
+  pinInput.value = '';
+  pinInput.classList.remove('matched');
+  btnConfirmOk.disabled = true;
+  _confirmResolve?.(result); _confirmResolve = null;
+  try { _confirmTrigger?.focus(); } catch (_) {}
+  _confirmTrigger = null;
+}
+btnConfirmOk.addEventListener('click', () => { if (!btnConfirmOk.disabled) closeConfirm(true); });
+btnConfirmCancel.addEventListener('click', () => closeConfirm(false));
+confirmModal.addEventListener('click', e => { if (e.target === confirmModal) closeConfirm(false); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && confirmModal.classList.contains('open')) closeConfirm(false);
+});
+// Pin input — unlock confirm button when code matches
+document.getElementById('confirmPinInput').addEventListener('input', function () {
+  const pin = document.getElementById('confirmPinHint').textContent;
+  const match = this.value.toUpperCase() === pin;
+  this.classList.toggle('matched', match);
+  btnConfirmOk.disabled = !match;
+});
+document.getElementById('confirmPinInput').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !btnConfirmOk.disabled) btnConfirmOk.click();
+});
+
+async function doStep1(id) {
+  const inv = invoices.find(v => v.id === id);
+  const confirmed = await showConfirm({
+    icon: '📦',
+    title: 'Mark as Arrived?',
+    supplierName: inv?.supplier || id,
+    invoiceId: id,
+    desc: 'This tells the supervisor that material is at the gate. A second confirmation is still needed before delivery is complete.',
+    okLabel: 'Yes, Mark Arrived',
+    okClass: 'btn-amber',
+  });
+  if (!confirmed) return;
+  const r = await apiPost('/api/delivery/step1/' + id);
+  if (r && !r.ok) showToast(r.error || 'Failed', 'err');
+}
+async function doStep2(id) {
+  const inv = invoices.find(v => v.id === id);
+  const confirmed = await showConfirm({
+    icon: '✅',
+    title: 'Confirm Delivery?',
+    supplierName: inv?.supplier || id,
+    invoiceId: id,
+    desc: waConfigured
+      ? 'This permanently marks the order as delivered and fires a WhatsApp alert to the team.'
+      : 'This permanently marks the order as delivered. Use the manual WhatsApp button to notify the team.',
+    okLabel: 'Yes, Confirm Delivered',
+    okClass: 'btn-green',
+  });
+  if (!confirmed) return;
+  const r = await apiPost('/api/delivery/step2/' + id);
+  if (!r) return;
+  if (r.ok) {
+    showToast(r.whatsappConfigured ? 'Delivered — WA alert fired' : 'Delivered — use manual alert below', r.whatsappConfigured ? 'ok' : 'info');
+  } else {
+    showToast(r.error || 'Failed', 'err');
+  }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats() {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const yearStart  = new Date(now.getFullYear(), 0, 1).getTime();
+
+  let pending = 0, arrived = 0, urgent = 0, delivered = 0;
+  let dToday = 0, dMonth = 0, dYear = 0;
+
+  for (const inv of invoices) {
+    if      (inv.status === 'PENDING')   pending++;
+    else if (inv.status === 'ARRIVED')   arrived++;
+    else if (inv.status === 'URGENT')    urgent++;
+    else if (inv.status === 'DELIVERED') {
+      delivered++;
+      const t = inv.updatedAt || 0;
+      if (t >= todayStart) dToday++;
+      if (t >= monthStart) dMonth++;
+      if (t >= yearStart)  dYear++;
+    }
+  }
+
+  document.getElementById('statPending').textContent   = pending;
+  document.getElementById('statArrived').textContent   = arrived;
+  document.getElementById('statUrgent').textContent    = urgent;
+  document.getElementById('statDelivered').textContent = delivered;
+  document.getElementById('statToday').textContent     = dToday;
+  document.getElementById('statMonth').textContent     = dMonth;
+  document.getElementById('statYear').textContent      = dYear;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const total = invoices.length;
+  countBadge.textContent = total + ' invoice' + (total !== 1 ? 's' : '');
+  emptyState.style.display = total === 0 ? 'block' : 'none';
+
+  const existing = new Map([...loadsGrid.querySelectorAll('.load-card')].map(el => [el.dataset.id, el]));
+  const incoming = new Set(invoices.map(inv => inv.id));
+
+  for (const [id, el] of existing) { if (!incoming.has(id)) el.remove(); }
+
+  invoices.forEach((inv, i) => {
+    const old = existing.get(inv.id);
+    const isNew = !seenIds.has(inv.id);
+    const statusChanged = prevStatus.has(inv.id) && prevStatus.get(inv.id) !== inv.status;
+
+    // Track and alert — only after first render to avoid startup noise
+    if (initialized) {
+      if (isNew) {
+        playPing('new');
+        flashBell();
+        notify('New delivery invoice', inv.supplier + (inv.items?.length ? ' · ' + inv.items.length + ' abaya(s)' : ''), 'inv-' + inv.id);
+        showToast('New invoice: ' + inv.supplier, 'info');
+        announceToSR('New invoice from ' + inv.supplier + (inv.items?.length ? ', ' + inv.items.length + ' abaya material' + (inv.items.length !== 1 ? 's' : '') : ''));
+      } else if (statusChanged && inv.status === 'ARRIVED') {
+        playPing('arrived');
+        flashBell();
+        notify('🚨 Supervisor needed', inv.supplier + ' — material at gate', 'arrived-' + inv.id);
+        showToast(inv.supplier + ' — confirm receipt now!', 'info');
+        announceToSR(inv.supplier + ' has arrived at the gate — supervisor confirmation needed');
+      }
+    }
+
+    seenIds.add(inv.id);
+    prevStatus.set(inv.id, inv.status);
+
+    const newEl = buildCard(inv, isNew && initialized);
+    if (!old) {
+      const after = loadsGrid.querySelectorAll('.load-card')[i];
+      if (after) loadsGrid.insertBefore(newEl, after);
+      else loadsGrid.appendChild(newEl);
+    } else if (old.dataset.status !== inv.status) {
+      old.replaceWith(newEl);
+    } else {
+      // Update urgency class in-place without full rebuild (avoids audio element reset)
+      const uc = cardUrgencyClass(inv);
+      old.className = 'load-card' + (uc ? ' ' + uc : '');
+    }
+  });
+
+  if (!initialized) initialized = true;
+  updateTimers();
+  updateStats();
+}
+
+function buildCard(inv, isNew = false) {
+  const card = document.createElement('div');
+  const urgency = cardUrgencyClass(inv);
+  card.className = 'load-card' + (urgency ? ' ' + urgency : '') + (isNew ? ' card-new' : '');
+  card.dataset.id = inv.id;
+  card.dataset.status = inv.status;
+  card.dataset.sla = inv.slaDeadline || '';
+  card.setAttribute('role', 'listitem');
+
+  const statusLabel = { PENDING: 'Pending', ARRIVED: 'Arrived', DELIVERED: 'Delivered', URGENT: 'Urgent' }[inv.status] || inv.status;
+  const statusCls = 'status-badge status-' + inv.status.toLowerCase();
+  const { text: timerTxt, cls: timerCls } = fmtCountdown(inv.slaDeadline, inv.status);
+  const itemCount = inv.items?.length || 0;
+  card.setAttribute('aria-label', `${inv.supplier}, ${statusLabel}, ${itemCount} abaya${itemCount !== 1 ? 's' : ''}, SLA ${timerTxt}`);
+
+  const showWaBtn = inv.status === 'DELIVERED' && !waConfigured;
+  const showStep1 = inv.status === 'PENDING' || inv.status === 'URGENT';
+  const showStep2 = inv.status === 'ARRIVED';
+
+  // Items list — stacked layout (material name + colour/qty)
+  const itemsHtml = (inv.items && inv.items.length)
+    ? `<ul style="list-style:none;padding:0;margin:4px 0 0;width:100%;min-width:0" aria-label="Abaya materials">${inv.items.map(it => `
+        <li style="display:flex;gap:7px;align-items:flex-start;padding:3px 0;border-bottom:1px solid var(--bd);min-width:0;width:100%">
+          <span style="font-size:10px;font-weight:800;color:var(--bl);font-family:var(--fn-mono);flex-shrink:0;padding-top:2px;width:18px;text-align:right">#${it.pos}</span>
+          <span style="min-width:0;flex:1;overflow:hidden">
+            <span style="font-size:13px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.materialSpec)}</span>
+            ${[it.color, it.qty].filter(Boolean).length
+              ? `<span style="font-size:11px;color:var(--tx3);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${[it.color, it.qty].filter(Boolean).join(' · ')}</span>`
+              : ''}
+          </span>
+        </li>`).join('')}</ul>`
+    : `<p style="color:var(--tx3);font-size:12px;margin:5px 0 0">No materials listed</p>`;
+
+  // Actions
+  const actionsHtml = [
+    showStep1 ? `<button class="btn btn-amber step1-btn" data-id="${esc(inv.id)}" aria-label="Mark ${esc(inv.supplier)} as arrived">&#10003; Mark Arrived</button>` : '',
+    showStep2 ? `<button class="btn btn-green step2-btn" data-id="${esc(inv.id)}" aria-label="Confirm receipt for ${esc(inv.supplier)}">&#9989; Confirm Receipt</button>` : '',
+    showWaBtn ? `<a class="btn btn-wa" href="${esc(waLink(inv))}" target="_blank" rel="noopener noreferrer" aria-label="Alert supervisor via WhatsApp">&#128172; Alert Supervisor</a>` : '',
+  ].join('');
+
+  // Secondary row — notes + audio (full width, below main row)
+  const secondaryParts = [];
+  if (inv.notes) secondaryParts.push(`
+    <div class="notes-row" role="note" aria-label="Special recommendations">
+      <span class="notes-icon" aria-hidden="true">📝</span>
+      <span class="notes-text">${esc(inv.notes)}</span>
+    </div>`);
+  if (inv.audioId) secondaryParts.push(`
+    <div class="audio-note">
+      <div class="audio-wa-dot" aria-hidden="true"></div>
+      <div class="audio-col">
+        <div class="audio-from-label">WhatsApp Voice Note &middot; <strong>${esc(inv.supplier)}</strong></div>
+        <div class="audio-row">
+          <button class="audio-play-btn" aria-label="Play voice note from ${esc(inv.supplier)}">
+            <svg width="13" height="15" viewBox="0 0 13 15" fill="currentColor" aria-hidden="true"><path d="M0 0l13 7.5L0 15V0z"/></svg>
+          </button>
+          <div class="audio-track">
+            <input type="range" class="audio-seek" min="0" max="100" value="0" step="0.1" aria-label="Voice note progress">
+          </div>
+          <span class="audio-time-display" aria-live="off">0:00</span>
+        </div>
+      </div>
+      <audio class="audio-el" preload="none" src="${esc(serverUrl)}/api/audio/${esc(inv.audioId)}"></audio>
+    </div>`);
+
+  card.innerHTML = `
+    ${inv.status === 'ARRIVED' ? `<div class="arrived-banner" role="alert"><span class="arrived-icon" aria-hidden="true">🚨</span>SUPERVISOR NEEDED — CONFIRM RECEIPT</div>` : ''}
+    <div class="card-row">
+      <div class="col-rank">
+        <span class="rank-num" aria-label="Priority ${inv.rank || '—'}">#${inv.rank || '—'}</span>
+      </div>
+      <div class="col-supplier">
+        <div class="card-supplier" title="${esc(inv.supplier)}">${esc(inv.supplier)}</div>
+        <span class="${statusCls}" aria-label="Status: ${statusLabel}">${statusLabel}</span>
+      </div>
+      <div class="col-items">
+        <div class="field-label">Abayas${itemCount ? ' (' + itemCount + ')' : ''}</div>
+        ${itemsHtml}
+      </div>
+      <div class="col-queue">
+        <div class="field-label">Queue / Batch</div>
+        <span class="field-value mono">${esc(inv.targetQueue) || '—'}</span>
+      </div>
+      <div class="col-sla" aria-label="${inv.status === 'DELIVERED' ? 'Delivered' : 'SLA: ' + timerTxt}">
+        <span class="timer-label">${inv.status === 'DELIVERED' ? 'Done' : 'SLA'}</span>
+        <span class="timer-value ${timerCls}" data-id="${esc(inv.id)}" data-sla="${inv.slaDeadline || ''}" data-status="${inv.status}" aria-live="off">${timerTxt}</span>
+      </div>
+      <div class="col-actions">
+        ${actionsHtml}
+        ${showWaBtn ? `<p class="wa-hint">WA not configured</p>` : ''}
+        <p class="inv-ref">${esc(inv.id)}</p>
+      </div>
+    </div>
+    ${secondaryParts.length ? `<div class="card-secondary">${secondaryParts.join('')}</div>` : ''}
+  `;
+
+  card.querySelector('.step1-btn')?.addEventListener('click', () => doStep1(inv.id));
+  card.querySelector('.step2-btn')?.addEventListener('click', () => doStep2(inv.id));
+
+  // Wire custom audio player
+  const audioNote = card.querySelector('.audio-note');
+  if (audioNote) {
+    const audio = audioNote.querySelector('.audio-el');
+    const playBtn = audioNote.querySelector('.audio-play-btn');
+    const seekBar = audioNote.querySelector('.audio-seek');
+    const timeDisplay = audioNote.querySelector('.audio-time-display');
+    const PLAY_SVG = '<svg width="13" height="15" viewBox="0 0 13 15" fill="currentColor" aria-hidden="true"><path d="M0 0l13 7.5L0 15V0z"/></svg>';
+    const PAUSE_SVG = '<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor" aria-hidden="true"><rect x="0" y="0" width="4" height="14" rx="1"/><rect x="8" y="0" width="4" height="14" rx="1"/></svg>';
+
+    playBtn.addEventListener('click', () => {
+      if (audio.paused) {
+        audio.play().catch(() => showToast('Could not load voice note', 'err'));
+        playBtn.innerHTML = PAUSE_SVG;
+        playBtn.setAttribute('aria-label', 'Pause voice note');
+      } else {
+        audio.pause();
+        playBtn.innerHTML = PLAY_SVG;
+        playBtn.setAttribute('aria-label', 'Play voice note from ' + inv.supplier);
+      }
+    });
+    audio.addEventListener('timeupdate', () => {
+      if (!audio.duration) return;
+      seekBar.value = (audio.currentTime / audio.duration) * 100;
+      timeDisplay.textContent = fmtTime(audio.currentTime);
+    });
+    audio.addEventListener('loadedmetadata', () => {
+      timeDisplay.textContent = fmtTime(audio.duration);
+    });
+    audio.addEventListener('ended', () => {
+      playBtn.innerHTML = PLAY_SVG;
+      playBtn.setAttribute('aria-label', 'Play voice note from ' + inv.supplier);
+      seekBar.value = 0;
+      timeDisplay.textContent = '0:00';
+    });
+    seekBar.addEventListener('input', () => {
+      if (!audio.duration) return;
+      audio.currentTime = (seekBar.value / 100) * audio.duration;
+    });
+  }
+
+  return card;
+}
+
+function updateTimers() {
+  document.querySelectorAll('.timer-value[data-id]').forEach(el => {
+    const status = el.dataset.status;
+    const sla = Number(el.dataset.sla) || 0;
+    if (!sla && status !== 'DELIVERED' && status !== 'ARRIVED') return;
+    const { text, cls } = fmtCountdown(sla, status);
+    el.textContent = text;
+    el.className = 'timer-value' + (cls ? ' ' + cls : '');
+
+    // Detect first crossing into overdue — notify once per invoice
+    if (initialized && sla && sla - Date.now() <= 0 && status !== 'DELIVERED' && status !== 'ARRIVED') {
+      const id = el.dataset.id;
+      if (!notifiedOverdue.has(id)) {
+        notifiedOverdue.add(id);
+        playPing('overdue');
+        flashBell();
+        const inv = invoices.find(v => v.id === id);
+        notify('SLA breached', (inv?.supplier || id) + ' — delivery is overdue', 'overdue-' + id);
+        showToast((inv?.supplier || id) + ' — SLA breached!', 'err');
+      }
+    }
+
+    // Sync urgency card class
+    const card = loadsGrid.querySelector(`.load-card[data-id="${CSS.escape(el.dataset.id)}"]`);
+    if (card && status !== 'ARRIVED' && status !== 'DELIVERED') {
+      const inv = invoices.find(v => v.id === el.dataset.id);
+      if (inv) {
+        const uc = cardUrgencyClass(inv);
+        card.className = 'load-card' + (uc ? ' ' + uc : '');
+      }
+    }
+  });
+}
+
+// ── Modal focus trap ──────────────────────────────────────────────────────────
+function getFocusable(container) {
+  return [...container.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )];
+}
+addModal.addEventListener('keydown', e => {
+  if (!addModal.classList.contains('open') || e.key !== 'Tab') return;
+  const focusable = getFocusable(addModal.querySelector('.modal-box'));
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function fetchTabletUrl() {
+  const label = document.getElementById('tabletUrlLabel');
+  const value = document.getElementById('tabletUrlValue');
+  const hint  = document.getElementById('tabletUrlHint');
+  try {
+    const r = await fetch(serverUrl + '/api/info', { signal: AbortSignal.timeout(3000) });
+    const d = await r.json();
+    // Prefer the public tunnel URL (works on any SIM) over the LAN IP
+    if (d.publicUrl) {
+      value.textContent = d.publicUrl;
+      value.dataset.url = d.publicUrl;
+      label.textContent = '🌐 Open on any device:';
+      hint.innerHTML = 'Works on <strong>mobile data or WiFi</strong> — open Chrome → type this address → tap ⋮ → <strong>Add to Home screen</strong>';
+    } else if (d.url) {
+      value.textContent = d.url;
+      value.dataset.url = d.url;
+      label.textContent = '📱 Open on tablet (same WiFi):';
+      hint.innerHTML = 'Tablet must be on the <strong>same WiFi or hotspot</strong> as this laptop — open Chrome → type this address → tap ⋮ → <strong>Add to Home screen</strong>';
+    }
+  } catch (_) {
+    value.textContent = serverUrl;
+    value.dataset.url = serverUrl;
+  }
+}
+
+document.getElementById('btnSettings').addEventListener('click', () => {
+  const open = configBar.classList.toggle('open');
+  if (open) { serverUrlInput.value = serverUrl; fetchTabletUrl(); serverUrlInput.focus(); }
+});
+document.getElementById('btnConnect').addEventListener('click', () => {
+  const url = serverUrlInput.value.trim().replace(/\/+$/, '');
+  if (!url) return;
+  serverUrl = url;
+  try { localStorage.setItem(STORAGE_KEY, url); } catch (_) {}
+  configBar.classList.remove('open');
+  connect();
+});
+serverUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('btnConnect').click(); });
+
+document.getElementById('btnCopyTabletUrl').addEventListener('click', async () => {
+  const url = document.getElementById('tabletUrlValue').dataset.url || document.getElementById('tabletUrlValue').textContent;
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('URL copied — paste it in the tablet browser', 'ok');
+  } catch (_) {
+    showToast(url, 'info');
+  }
+});
+
+// ── Notification bell ─────────────────────────────────────────────────────────
+btnNotif.addEventListener('click', requestNotifPermission);
+
+// ── Add Invoice modal — progressive abaya rows ────────────────────────────────
+let _abayaCount = 1;
+
+function resetAbayaRows() {
+  _abayaCount = 1;
+  for (let i = 2; i <= 4; i++) {
+    const row = document.getElementById('abayaRow' + i);
+    if (row) row.style.display = 'none';
+  }
+  const wrap = document.getElementById('addAbayaBtnWrap');
+  if (wrap) wrap.style.display = '';
+}
+
+document.getElementById('btnAddAbayaRow').addEventListener('click', () => {
+  if (_abayaCount >= 4) return;
+  _abayaCount++;
+  const row = document.getElementById('abayaRow' + _abayaCount);
+  if (row) { row.style.display = 'grid'; row.querySelector('input')?.focus(); }
+  if (_abayaCount === 4) document.getElementById('addAbayaBtnWrap').style.display = 'none';
+});
+
+function openModal() {
+  addModal.classList.add('open');
+  requestAnimationFrame(() => document.getElementById('fSupplier').focus());
+}
+function closeModal() {
+  addModal.classList.remove('open');
+  document.getElementById('btnAddLoad').focus();
+}
+document.getElementById('btnAddLoad').addEventListener('click', openModal);
+document.getElementById('btnCancelAdd').addEventListener('click', () => { closeModal(); resetAbayaRows(); });
+addModal.addEventListener('click', e => { if (e.target === addModal) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && addModal.classList.contains('open')) { closeModal(); resetAbayaRows(); } });
+
+document.getElementById('btnSubmitAdd').addEventListener('click', async () => {
+  const supplier = document.getElementById('fSupplier').value.trim();
+  if (!supplier) { showToast('Supplier name is required', 'err'); return; }
+  const slaRaw = document.getElementById('fSlaDeadline').value;
+  const items = [1,2,3,4].map(pos => ({
+    pos,
+    materialSpec: document.getElementById('fItem'+pos+'Mat').value.trim(),
+    color: document.getElementById('fItem'+pos+'Color').value.trim(),
+    qty: document.getElementById('fItem'+pos+'Qty').value.trim(),
+  })).filter(it => it.materialSpec);
+  const body = {
+    supplier,
+    items,
+    targetQueue: document.getElementById('fTargetQueue').value.trim(),
+    slaDeadline: slaRaw ? new Date(slaRaw).getTime() : null,
+    notes: document.getElementById('fNotes').value.trim() || null,
+  };
+  const btn = document.getElementById('btnSubmitAdd');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const r = await fetch(serverUrl + '/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(6000),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('Invoice added: ' + supplier, 'ok');
+      closeModal();
+      resetAbayaRows();
+      ['fSupplier','fTargetQueue','fSlaDeadline','fNotes',
+       'fItem1Mat','fItem1Color','fItem1Qty',
+       'fItem2Mat','fItem2Color','fItem2Qty',
+       'fItem3Mat','fItem3Color','fItem3Qty',
+       'fItem4Mat','fItem4Color','fItem4Qty',
+      ].forEach(id => { document.getElementById(id).value = ''; });
+    } else {
+      showToast(d.error || 'Failed', 'err');
+    }
+  } catch (_) { showToast('Network error', 'err'); }
+  finally { btn.disabled = false; btn.textContent = 'Add Invoice'; }
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+serverUrlInput.value = serverUrl;
+updateNotifBtnState();
+connect();
+tickTimer = setInterval(updateTimers, 1000);
+
+// Register service worker for offline app-shell (PWA)
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
