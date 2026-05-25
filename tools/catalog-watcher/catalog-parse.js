@@ -5,6 +5,7 @@
  */
 const PROCESS_WHITELIST = new Set([
   'Tailor (01)',
+  'Cutting master',
   'Tailor (02)',
   'Hand Work',
   'Stone Work',
@@ -39,7 +40,6 @@ const HEADER_ALIASES = {
   bar_code: 'barcode',
   bc: 'barcode',
   barcode_display_name: 'barcode',
-  barcode_disp_variation: 'barcode',
   display_name: 'barcode',
   barcode_name: 'barcode',
 
@@ -102,17 +102,6 @@ function mapNormalizedHeaderToCanonical(normKey) {
   return null;
 }
 
-/** Category like `Abaya|Standard` → tier `Standard` (last segment). */
-function normalizePipeCategory(tier) {
-  const s = String(tier || '').trim();
-  if (!s) return '';
-  if (s.indexOf('|') >= 0) {
-    const parts = s.split('|').map((p) => p.trim()).filter(Boolean);
-    return parts.length ? parts[parts.length - 1] : '';
-  }
-  return s;
-}
-
 function cellToString(val) {
   if (val == null) return '';
   if (typeof val === 'number' && Number.isFinite(val)) {
@@ -167,7 +156,7 @@ function validateHeadersPresent(columnKeys) {
   return mapped;
 }
 
-function rowToCanonical(rowObj, excelRowNumber, headerToCanonical) {
+function rowToCanonical(rowObj, excelRowNumber) {
   const sources = {
     id: [],
     code: [],
@@ -199,19 +188,7 @@ function rowToCanonical(rowObj, excelRowNumber, headerToCanonical) {
     out[c] = nonEmpty.length ? nonEmpty[0].value : '';
   }
 
-  if (out.tier) out.tier = normalizePipeCategory(out.tier);
-
   return out;
-}
-
-function validateProcessValue(process, excelRowNumber) {
-  if (!process) return;
-  if (!PROCESS_WHITELIST.has(process)) {
-    const allowed = [...PROCESS_WHITELIST].sort().join(', ');
-    throw new Error(
-      `Row ${excelRowNumber}: unknown Process ${JSON.stringify(process)}. Must be exactly one of: ${allowed}`
-    );
-  }
 }
 
 /**

@@ -2,6 +2,7 @@
   AbaYa Track — Cloudflare Deployment Script
   ============================================
   Deploys the CEO dashboard + factory event ingest to Cloudflare Workers + D1.
+  NOTE: This script does NOT deploy the kiosk PWA (Cloudflare Pages).
   Run once from the machine that has internet access and a Cloudflare account.
 
   Usage (from any PowerShell window, no admin needed):
@@ -10,14 +11,15 @@
 
   What this script does, in order:
     1. Verifies Node.js 18+ is installed
-    2. Verifies Wrangler via Yarn (repo devDependency — avoids npx + Yarn PnP + nvm-windows .pnp.cjs errors)
+    2. Runs yarn install at repo root, then npm install in cloudflare/ (Wrangler from node_modules — avoids Yarn PnP EBADF on WSL)
     3. Opens browser for Cloudflare login (one-time, free account)
     4. Creates the D1 database  (abaya-db)
     5. Runs the full schema (tables + indexes)
     6. Creates the R2 bucket   (abaya-exports — for EOD reports)
-    7. Asks you to set two secrets:
-         INGEST_SECRET — shared key between factory server and worker
-         CEO_TOKEN     — the CEO's login password (you choose)
+    7. Asks you to set secrets:
+         INGEST_SECRET  — shared key between factory server and worker
+         CEO_TOKEN      — the CEO's login password (you choose)
+         CEO_JWT_SECRET — auto-generated server-only key for session cookies (not shown)
     8. Deploys the Worker
     9. Patches ../.env with CF_WORKER_URL and CF_INGEST_SECRET automatically
    10. Prints the CEO dashboard URL + QR instructions
@@ -25,6 +27,11 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$allowDbRebindRaw = ''
+if (-not [string]::IsNullOrWhiteSpace($env:ALLOW_DB_REBIND)) {
+    $allowDbRebindRaw = $env:ALLOW_DB_REBIND.Trim().ToLowerInvariant()
+}
+$allowDbRebind = @('1', 'true', 'yes') -contains $allowDbRebindRaw
 
 # ── Colour helpers ──────────────────────────────────────────────────────────────
 function Write-Ok  ($m) { Write-Host "  [OK] $m"  -ForegroundColor Green }
@@ -38,19 +45,13 @@ $ROOT_DIR    = Split-Path -Parent $SCRIPT_DIR
 $TOML_PATH   = Join-Path $SCRIPT_DIR "wrangler.toml"
 $SCHEMA_PATH = Join-Path $SCRIPT_DIR "schema.sql"
 $ENV_PATH    = Join-Path $ROOT_DIR ".env"
+$CF_DIR      = $SCRIPT_DIR
+$WRANGLER_RUNNER = Join-Path $ROOT_DIR "scripts\run-cloudflare-wrangler.cjs"
 
-# Wrangler must run via `yarn run wrangler` from repo root so Yarn PnP resolves the devDependency (avoid nested `yarn exec` + Corepack issues on Windows).
-function Invoke-WranglerFromRepo {
-    param(
-        [Parameter(ValueFromRemainingArguments = $true)]
-        [string[]]$WranglerArgs
-    )
-    Push-Location $ROOT_DIR
-    try {
-        & yarn run wrangler --config $TOML_PATH @WranglerArgs
-    } finally {
-        Pop-Location
-    }
+function Invoke-Wrangler {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$WranglerArgs)
+    # Strips Yarn PnP from NODE_OPTIONS so cloudflare/node_modules/wrangler can require('esbuild').
+    & node $WRANGLER_RUNNER @WranglerArgs
 }
 
 Write-Host ""
@@ -74,18 +75,33 @@ try {
     exit 1
 }
 
-# ── Step 2: Verify Wrangler (yarn run — not npx) ─────────────────────────────
-Write-Step 2 "Verifying Wrangler (yarn run from repo root)"
+# ── Step 2: Repo deps + Wrangler isolated under cloudflare/ (npm, not Yarn PnP — fixes WSL EBADF)
+Write-Step 2 "yarn install (repo root) + npm install (cloudflare/ for Wrangler)"
+try {
+    $yarnVer = & yarn --version 2>&1 | Select-Object -First 1
+    Write-Ok "Yarn $yarnVer"
+} catch {
+    Write-Err "Yarn not found. Enable Corepack (Node 18+):  corepack enable"
+    exit 1
+}
 Push-Location $ROOT_DIR
 try {
-    if (-not (Get-Command yarn -ErrorAction SilentlyContinue)) {
-        Write-Err "yarn not on PATH. Run: corepack enable  then: corepack prepare yarn@4.13.0 --activate"
-        exit 1
-    }
-    $wVer = & yarn run wrangler --version 2>&1 | Select-Object -First 1
+    Write-Info "Running yarn install in repo root..."
+    & yarn install
+} catch {
+    Write-Err "yarn install failed. From repo root run: yarn install"
+    exit 1
+} finally {
+    Pop-Location
+}
+Push-Location $SCRIPT_DIR
+try {
+    Write-Info "Installing Wrangler locally in cloudflare/ (npm install)..."
+    & npm install
+    $wVer = (& node (Join-Path $ROOT_DIR "scripts\run-cloudflare-wrangler.cjs") --version 2>&1 | Select-Object -First 1)
     Write-Ok "Wrangler: $wVer"
 } catch {
-    Write-Err "yarn run wrangler failed. From repo root run: yarn install  (installs devDependency wrangler)"
+    Write-Err "npm install or wrangler failed in cloudflare folder. Try: cd cloudflare && npm install"
     exit 1
 } finally {
     Pop-Location
@@ -96,7 +112,7 @@ Write-Step 3 "Cloudflare Login"
 Write-Info "A browser window will open. Log in to your Cloudflare account."
 Write-Info "If you already logged in before, this may complete instantly."
 Write-Host ""
-Invoke-WranglerFromRepo login
+Invoke-Wrangler login
 Write-Ok "Logged in to Cloudflare"
 
 # ── Step 4: Create D1 database ─────────────────────────────────────────────────
@@ -104,14 +120,14 @@ Write-Step 4 "Creating D1 Database (abaya-db)"
 $DB_ID = $null
 
 # Check if database already exists
-$existingDbs = Invoke-WranglerFromRepo d1 list 2>&1
+$existingDbs = Invoke-Wrangler d1 list 2>&1
 if ($existingDbs -match 'abaya-db') {
     Write-Warn "Database 'abaya-db' already exists. Fetching its ID..."
     # Parse the ID from 'wrangler d1 list' output
-    $existingDbs -split "`n" | ForEach-Object {
-        if ($_ -match 'abaya-db') {
+    foreach ($dbLine in ($existingDbs -split "`n")) {
+        if ($dbLine -match 'abaya-db') {
             # Format: "abaya-db  <uuid>  ..."
-            $parts = ($_ -replace '\s+', ' ').Trim() -split ' '
+            $parts = ($dbLine -replace '\s+', ' ').Trim() -split ' '
             foreach ($p in $parts) {
                 if ($p -match '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
                     $DB_ID = $p
@@ -123,12 +139,12 @@ if ($existingDbs -match 'abaya-db') {
         Write-Ok "Found existing database ID: $DB_ID"
     } else {
         Write-Warn "Could not auto-detect existing DB ID. Creating fresh..."
-        $createOut = Invoke-WranglerFromRepo d1 create abaya-db 2>&1 | Out-String
+        $createOut = Invoke-Wrangler d1 create abaya-db 2>&1 | Out-String
         $DB_ID = ($createOut | Select-String 'database_id\s*=\s*"([^"]+)"').Matches.Groups[1].Value
     }
 } else {
     Write-Info "Creating new D1 database 'abaya-db'..."
-    $createOut = Invoke-WranglerFromRepo d1 create abaya-db 2>&1 | Out-String
+    $createOut = Invoke-Wrangler d1 create abaya-db 2>&1 | Out-String
     $DB_ID = ($createOut | Select-String 'database_id\s*=\s*"([^"]+)"').Matches.Groups[1].Value
     if (-not $DB_ID) {
         # Try UUID pattern directly
@@ -138,9 +154,29 @@ if ($existingDbs -match 'abaya-db') {
 }
 
 if (-not $DB_ID) {
-    Write-Err "Could not determine D1 database ID. Run manually from repo root: yarn run wrangler --config cloudflare/wrangler.toml d1 create abaya-db"
+    Write-Err "Could not determine D1 database ID. From cloudflare/: npm exec wrangler d1 create abaya-db --config wrangler.toml"
     Write-Err "Then copy the 'database_id' value into cloudflare/wrangler.toml and re-run."
     exit 1
+}
+
+$configuredDbId = ''
+try {
+    $configuredToml = Get-Content $TOML_PATH -Raw
+    $m = [regex]::Match($configuredToml, 'database_id\s*=\s*"([^"]+)"')
+    if ($m.Success) {
+        $configuredDbId = $m.Groups[1].Value.Trim()
+    }
+} catch {}
+
+Write-Info "Deploy target database_id detected: $DB_ID"
+if ($configuredDbId) {
+    Write-Info "wrangler.toml currently points to: $configuredDbId"
+    if (($configuredDbId -ne $DB_ID) -and (-not $allowDbRebind)) {
+        Write-Err "Safety stop: database_id mismatch detected."
+        Write-Err "This can switch environments and make data appear reset on other PCs."
+        Write-Err "If you intentionally want to rebind, set ALLOW_DB_REBIND=1 and rerun."
+        exit 1
+    }
 }
 
 # Patch wrangler.toml with the real database_id
@@ -153,23 +189,13 @@ Write-Ok "wrangler.toml updated with database_id = $DB_ID"
 # ── Step 5: Run schema ──────────────────────────────────────────────────────────
 Write-Step 5 "Running database schema (creating tables)"
 Write-Info "Applying schema.sql to remote D1..."
-Push-Location $ROOT_DIR
-try {
-    & yarn run wrangler --config $TOML_PATH d1 execute abaya-db --remote --file $SCHEMA_PATH
-    $MIG_0006 = Join-Path $SCRIPT_DIR "migrations/0006_sync_idempotency.sql"
-    if (Test-Path $MIG_0006) {
-        Write-Info "Applying migration 0006_sync_idempotency.sql..."
-        & yarn run wrangler --config $TOML_PATH d1 execute abaya-db --remote --file $MIG_0006
-    }
-} finally {
-    Pop-Location
-}
+Invoke-Wrangler d1 execute abaya-db --remote --file=$SCHEMA_PATH
 Write-Ok "Schema applied successfully"
 
 # ── Step 6: R2 bucket ───────────────────────────────────────────────────────────
 Write-Step 6 "Creating R2 Bucket (abaya-exports)"
 try {
-    Invoke-WranglerFromRepo r2 bucket create abaya-exports 2>&1 | Out-Null
+    Invoke-Wrangler r2 bucket create abaya-exports 2>&1 | Out-Null
     Write-Ok "R2 bucket 'abaya-exports' created"
 } catch {
     Write-Warn "R2 bucket may already exist (that's fine)."
@@ -179,7 +205,7 @@ try {
 Write-Step 7 "Setting Worker Secrets"
 
 Write-Host ""
-Write-Host "  You need to set 2 secrets:" -ForegroundColor White
+Write-Host "  You need to set INGEST_SECRET and CEO_TOKEN. CEO_JWT_SECRET is generated for you." -ForegroundColor White
 Write-Host ""
 Write-Host "  1. INGEST_SECRET — a strong random key the factory server uses" -ForegroundColor White
 Write-Host "     to authenticate when pushing session data to this worker." -ForegroundColor Gray
@@ -187,6 +213,9 @@ Write-Host "     Example: AbaYa-2024-SecureKey-$(Get-Random -Max 9999)" -Foregro
 Write-Host ""
 Write-Host "  2. CEO_TOKEN — the password the CEO types to open the dashboard." -ForegroundColor White
 Write-Host "     Keep it simple but hard to guess (e.g. FamousAbaya@Dubai)." -ForegroundColor Gray
+Write-Host ""
+Write-Host "  3. CEO_JWT_SECRET — generated automatically (32 bytes, base64)." -ForegroundColor White
+Write-Host "     Used only on the server to sign HttpOnly session cookies; the CEO never sees it." -ForegroundColor Gray
 Write-Host ""
 
 # Generate a suggested ingest secret
@@ -207,27 +236,30 @@ while ([string]::IsNullOrWhiteSpace($CEO_TOKEN)) {
 }
 
 Write-Info "Setting INGEST_SECRET..."
-Push-Location $ROOT_DIR
-try {
-    $INGEST_SECRET | & yarn run wrangler --config $TOML_PATH secret put INGEST_SECRET
-} finally {
-    Pop-Location
-}
+$INGEST_SECRET | & node $WRANGLER_RUNNER secret put INGEST_SECRET
 Write-Ok "INGEST_SECRET set"
 
 Write-Info "Setting CEO_TOKEN..."
-Push-Location $ROOT_DIR
-try {
-    $CEO_TOKEN | & yarn run wrangler --config $TOML_PATH secret put CEO_TOKEN
-} finally {
-    Pop-Location
-}
+$CEO_TOKEN | & node $WRANGLER_RUNNER secret put CEO_TOKEN
 Write-Ok "CEO_TOKEN set"
+
+$jwtChoice = Read-Host "  CEO_JWT_SECRET: [Enter]=generate new (invalidates CEO browser sessions) | keep=skip (use when secret already in Cloudflare)"
+if ([string]::IsNullOrWhiteSpace($jwtChoice) -or $jwtChoice.Trim().ToLowerInvariant() -ne 'keep') {
+    $jwtRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $jwtBytes = New-Object byte[] 32
+    $jwtRng.GetBytes($jwtBytes)
+    $CEO_JWT_SECRET = [Convert]::ToBase64String($jwtBytes)
+    Write-Info "Setting CEO_JWT_SECRET (server-only, not printed)..."
+    $CEO_JWT_SECRET | & node $WRANGLER_RUNNER secret put CEO_JWT_SECRET
+    Write-Ok "CEO_JWT_SECRET set"
+} else {
+    Write-Ok "Skipped CEO_JWT_SECRET (must already exist in Cloudflare for CEO login to work)"
+}
 
 # ── Step 8: Deploy ──────────────────────────────────────────────────────────────
 Write-Step 8 "Deploying Worker to Cloudflare"
 Write-Info "Deploying abaya-track worker to dashboard.farewellabaya.com..."
-$deployOut = Invoke-WranglerFromRepo deploy 2>&1 | Out-String
+$deployOut = Invoke-Wrangler deploy 2>&1 | Out-String
 Write-Host $deployOut
 
 # Custom domain is declared in wrangler.toml [[custom_domains]] — always use it.
@@ -300,16 +332,9 @@ Write-Host "    URL:      https://dashboard.farewellabaya.com" -ForegroundColor 
 Write-Host "    Password: $CEO_TOKEN" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  The CEO opens the URL, types the password, and sees live data." -ForegroundColor Gray
-Write-Host "  Dashboard auto-refreshes every 5 seconds." -ForegroundColor Gray
+Write-Host "  Dashboard polls D1 about every 2.5s; JSON is marked no-store so CDN/browser cannot cache stale numbers." -ForegroundColor Gray
+Write-Host "  After code updates, run this deploy again; hard-refresh the browser (Ctrl+F5) once if the UI looks old." -ForegroundColor Gray
 Write-Host "  Reports can be sent to WhatsApp with one tap." -ForegroundColor Gray
-Write-Host ""
-Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-Write-Host "  Factory kiosk (on-site tablets / LAN):" -ForegroundColor White
-Write-Host "    http://<factory-PC-LAN-IP>:3000/kiosk.html" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Factory kiosk (remote HTTPS via Cloudflare Tunnel):" -ForegroundColor White
-Write-Host "    https://kiosk.farewellabaya.com" -ForegroundColor Cyan
-Write-Host '    (Deployed via Cloudflare Pages - any tablet, any network)' -ForegroundColor Gray
 Write-Host ""
 Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host "  NEXT STEP: Restart the factory server so it starts pushing" -ForegroundColor White

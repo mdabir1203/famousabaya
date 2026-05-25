@@ -6,13 +6,32 @@
   "main": "server.js",
   "scripts": {
     "setup": "node install/setup.cjs",
+    "launcher": "node scripts/run-launcher.cjs",
     "start": "node server.js",
     "icons:build": "node scripts/render-app-icons.cjs",
     "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
     "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:system": "node scripts/test-system.mjs",
-    "cf:d1:0006": "wrangler d1 execute abaya-db --config cloudflare/wrangler.toml --remote --file=cloudflare/migrations/0006_sync_idempotency.sql"
+    "test:offline-store": "node scripts/test-offline-report-store.mjs",
+    "verify:employee-xlsx": "yarn node scripts/verify-employee-xlsx-roundtrip.mjs",
+    "deploy:cf": "node scripts/run-cloudflare-wrangler.cjs deploy --config wrangler.toml",
+    "snapshot:db": "node scripts/snapshot-now.cjs",
+    "snapshot:info": "node scripts/import-snapshot.cjs --info",
+    "snapshot:import": "node scripts/import-snapshot.cjs",
+    "snapshot:verify": "node scripts/snapshot-verify.cjs",
+    "snapshot:harden": "powershell -NoProfile -ExecutionPolicy Bypass -File install/HARDEN-SNAPSHOT-DIR.ps1",
+    "pm2:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File install/SETUP-PM2-BOOT.ps1",
+    "pm2:status": "powershell -NoProfile -ExecutionPolicy Bypass -File install/CHECK-PM2-STATUS.ps1",
+    "pm2:start": "pm2 start ecosystem.config.cjs --update-env",
+    "pm2:reload": "pm2 reload ecosystem.config.cjs --update-env",
+    "pm2:logs": "pm2 logs",
+    "evaluate:rollout": "node scripts/evaluate-rollout.cjs",
+    "evaluate:live": "bash scripts/eval-live-boot.sh",
+    "verify:ceo": "node scripts/verify-ceo-state.mjs",
+    "publish:lan-mirror": "node scripts/publish-lan-update-mirror.mjs",
+    "perf:cf": "echo See cloudflare/docs/PERFORMANCE-CHECKLIST.md (Lighthouse + curl budgets)",
+    "launcher:gui": "node -r ./tools/desktop-launcher/.pnp.cjs ./tools/desktop-launcher/start-electron.cjs"
   },
   "keywords": [],
   "author": "",
@@ -21,17 +40,19 @@
     "node": ">=18"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
+    "chokidar": "^4.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
     "multer": "^2.1.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3",
+    "sql.js": "^1.14.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "sharp": "^0.33.5",
+    "unenv": "2.0.0-rc.24",
     "wrangler": "^4.84.1"
   }
 }

@@ -8,7 +8,8 @@ const { parseItemsXlsx, alignAbayasToEmployeeProcess } = require('./catalog-pars
 const configPath = process.argv[2] || path.join(__dirname, 'config.json');
 
 const DEFAULT_DEBOUNCE_MS = 2000;
-const DEFAULT_DAILY_MS = 24 * 60 * 60 * 1000;
+/** Full-tree resync interval (override with `dailySyncMs` in config.json). */
+const DEFAULT_PERIODIC_SYNC_MS = 30 * 60 * 1000;
 
 function loadConfig() {
   let raw = fs.readFileSync(configPath, 'utf8');
@@ -177,47 +178,59 @@ async function mergeCatalogFromWatchTree(cfg, employees) {
   const byId = new Map();
   const byBc = new Map();
   const sourceFiles = [];
+  const invalidFiles = [];
 
   for (const filePath of files) {
-    const { abayas: parsed } = parseItemsXlsx(filePath);
-    const atRoot = isFileAtWatchRoot(watchResolved, filePath);
-    let employee = null;
-    if (!atRoot) {
-      const folderName = path.basename(path.dirname(filePath));
-      employee = resolveEmployeeFromFolderName(folderName, employees);
-      if (!employee) {
-        const msg = `No employee matches folder name ${JSON.stringify(folderName)} for file ${filePath}`;
-        if (unknownFolder === 'warn') {
-          console.warn('[catalog-watcher]', msg, '— skipping folder alignment');
-        } else {
-          throw new Error(msg + '. Use employee name, code, id, emp_no, or ac_no as the folder name.');
+    try {
+      const { abayas: parsed, sheetUsed } = parseItemsXlsx(filePath);
+      const atRoot = isFileAtWatchRoot(watchResolved, filePath);
+      let employee = null;
+      if (!atRoot) {
+        const folderName = path.basename(path.dirname(filePath));
+        employee = resolveEmployeeFromFolderName(folderName, employees);
+        if (!employee) {
+          const msg = `No employee matches folder name ${JSON.stringify(folderName)} for file ${filePath}`;
+          if (unknownFolder === 'warn') {
+            console.warn('[catalog-watcher]', msg, '— skipping folder alignment');
+          } else {
+            throw new Error(msg + '. Use employee name, code, id, emp_no, or ac_no as the folder name.');
+          }
         }
       }
-    }
 
-    const aligned = alignAbayasToEmployeeProcess(parsed, employee, atRoot ? 'off' : alignMode);
+      const aligned = alignAbayasToEmployeeProcess(parsed, employee, atRoot ? 'off' : alignMode);
 
-    for (const row of aligned) {
-      const process = String(row.process != null ? row.process : '').trim() || defaultCatalogProcess;
-      const rowNorm = { ...row, process };
-      if (byId.has(rowNorm.id) || byBc.has(rowNorm.barcode)) {
-        console.warn(
-          `[catalog-watcher] Skipping duplicate barcode ${JSON.stringify(rowNorm.barcode)} from ${filePath}`
-        );
-        continue;
+      for (const row of aligned) {
+        const process = String(row.process != null ? row.process : '').trim() || defaultCatalogProcess;
+        const rowNorm = { ...row, process };
+        if (byId.has(rowNorm.id) || byBc.has(rowNorm.barcode)) {
+          console.warn(
+            `[catalog-watcher] Skipping duplicate barcode ${JSON.stringify(rowNorm.barcode)} from ${filePath}`
+          );
+          continue;
+        }
+        const tagged = { ...rowNorm, filePath };
+        byId.set(rowNorm.id, tagged);
+        byBc.set(rowNorm.barcode, tagged);
       }
-      const tagged = { ...rowNorm, filePath };
-      byId.set(rowNorm.id, tagged);
-      byBc.set(rowNorm.barcode, tagged);
+      sourceFiles.push(filePath);
+      if (String(cfg.verboseParse || '').toLowerCase() === 'true') {
+        console.log('[catalog-watcher] Parsed', filePath, 'sheet:', sheetUsed, 'rows:', aligned.length);
+      }
+    } catch (e) {
+      invalidFiles.push({ filePath, error: e.message });
+      console.error('[catalog-watcher] Invalid workbook skipped:', filePath);
+      console.error('  reason:', e.message);
+      console.error('  tip: keep data in sheet "Items" (or make first sheet non-empty with required headers).');
+      continue;
     }
-    sourceFiles.push(filePath);
   }
 
   const abayas = [...byId.values()].map((r) => {
     const { filePath: _f, ...rest } = r;
     return rest;
   });
-  return { abayas, sourceFiles };
+  return { abayas, sourceFiles, invalidFiles };
 }
 
 let rebuildTimer = null;
@@ -232,9 +245,16 @@ async function rebuildAndUpload(cfg, employees, reason) {
   rebuildRunning = true;
   try {
     console.log('[catalog-watcher] Rebuilding catalog (' + reason + ')…');
-    const { abayas, sourceFiles } = await mergeCatalogFromWatchTree(cfg, employees);
+    const { abayas, sourceFiles, invalidFiles } = await mergeCatalogFromWatchTree(cfg, employees);
+    if (invalidFiles.length) {
+      console.warn('[catalog-watcher] Skipped', invalidFiles.length, 'invalid workbook(s) in this run');
+    }
     if (!abayas.length) {
-      console.log('[catalog-watcher] No .xlsx files under watchDir; nothing to upload.');
+      if (invalidFiles.length) {
+        console.log('[catalog-watcher] No valid rows found. Fix invalid workbook(s); watcher will retry on change/periodic sync.');
+      } else {
+        console.log('[catalog-watcher] No .xlsx files under watchDir; nothing to upload.');
+      }
       return;
     }
     await uploadCatalog(cfg, abayas);
@@ -257,7 +277,7 @@ async function rebuildAndUpload(cfg, employees, reason) {
     }
   } catch (e) {
     console.error('[catalog-watcher] FAILED:', e.message);
-    console.error('[catalog-watcher] Files left in place for correction; next daily sync or file change will retry.');
+    console.error('[catalog-watcher] Files left in place for correction; next periodic sync or file change will retry.');
   } finally {
     rebuildRunning = false;
     if (pendingRebuild) {
@@ -285,7 +305,7 @@ async function main() {
     process.exit(1);
   }
 
-  const required = ['watchDir', 'processedDir', 'failedDir', 'workerUrl', 'ingestSecret'];
+  const required = ['watchDir', 'processedDir', 'workerUrl', 'ingestSecret'];
   for (const k of required) {
     if (!cfg[k]) {
       console.error('Missing config key:', k);
@@ -295,7 +315,6 @@ async function main() {
 
   fs.mkdirSync(cfg.watchDir, { recursive: true });
   fs.mkdirSync(cfg.processedDir, { recursive: true });
-  fs.mkdirSync(cfg.failedDir, { recursive: true });
 
   const employees = await loadEmployees(cfg);
   if (employees.length) {
@@ -319,11 +338,16 @@ async function main() {
   watcher.on('change', debounced);
   watcher.on('unlink', debounced);
 
-  const dailyMs = Number(cfg.dailySyncMs) > 0 ? Number(cfg.dailySyncMs) : DEFAULT_DAILY_MS;
+  const periodicMs =
+    Number(cfg.dailySyncMs) > 0 ? Number(cfg.dailySyncMs) : DEFAULT_PERIODIC_SYNC_MS;
   setInterval(() => {
-    rebuildAndUpload(cfg, employees, 'daily sync').catch((e) => console.error(e));
-  }, dailyMs);
-  console.log('[catalog-watcher] Full tree resync every', Math.round(dailyMs / 3600000), 'hours');
+    rebuildAndUpload(cfg, employees, 'periodic sync').catch((e) => console.error(e));
+  }, periodicMs);
+  const syncLabel =
+    periodicMs >= 3600000
+      ? Math.round(periodicMs / 3600000) + ' hours'
+      : Math.round(periodicMs / 60000) + ' minutes';
+  console.log('[catalog-watcher] Full tree resync every', syncLabel, '(dailySyncMs in config)');
 
   if (cfg.scanOnStart === true) {
     setTimeout(() => {

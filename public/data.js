@@ -10,8 +10,9 @@ const FACTORY_HOURLY_END = 23;
 const FACTORY_SHIFT_SCHEDULE_TEXT =
   'Sat–Thu: 9:00–13:30, 3:00–8:00 pm, 8:40–11:30 pm. Fri: 3:00–8:00 pm, 8:40–11:30 pm.';
 
-const WORK_TYPES = [
+var WORK_TYPES = [
   'Tailor (01)',
+  'Cutting master',
   'Tailor (02)',
   'Hand Work',
   'Stone Work',

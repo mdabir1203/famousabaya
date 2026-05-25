@@ -81,3 +81,20 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
   k TEXT PRIMARY KEY,
   v TEXT NOT NULL
 );
+
+-- ─── WORKER SETTINGS (working-hours, profiles, etc.) ─────────────────────────
+CREATE TABLE IF NOT EXISTS worker_settings (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL,
+  updated_at INTEGER DEFAULT (unixepoch())
+);
+
+-- ─── CROSS-DAY ABAYA TIME MAPPING (persistent lifecycle rollup) ─────────────
+CREATE TABLE IF NOT EXISTS abaya_time_map (
+  abaya_id TEXT PRIMARY KEY,
+  abaya_code TEXT,
+  cumulative_in_window_sec INTEGER DEFAULT 0,
+  first_started_at INTEGER,
+  last_ended_at INTEGER,
+  updated_at INTEGER DEFAULT (unixepoch())
+);

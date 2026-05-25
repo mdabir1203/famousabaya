@@ -1,0 +1,65 @@
+Production Verification QA — archived output
+Date: 2026-05-02
+Repo: AbaYa-Track-v1.0.2
+
+=== A. Prerequisites ===
+STEP A1 — Node LTS + Corepack + Yarn (WSL)
+- nvm use --lts → Node v24.15.0
+- Yarn: 4.13.0
+- Root package.json: engines.node >=18 → PASS; packageManager yarn@4.13.0 → PASS
+
+STEP A2 — Install
+- Repo root: yarn install --immutable → exit 0 (PnP rebuild warnings only)
+- tools/desktop-launcher: yarn install --immutable → exit 0
+RESULT A: PASS
+
+=== B. Factory server smoke ===
+Server boot (Windows native, PnP):
+- COMMAND: PORT=3999 Start-Process node -r ./.pnp.cjs server.js → logs qa/server-smoke.err.log / qa/server-smoke.out.log
+- GET http://127.0.0.1:3999/api/client-config → 200 JSON ok:true, catalogVersion, serverStartedAt present
+
+STEP B2 — scripts/test-system.mjs
+- COMMAND: set TEST_FACTORY_URL=http://127.0.0.1:3999 && node scripts/test-system.mjs
+- Full output archived: qa/test-system-output.txt
+- Factory tests: 10/10 PASS (client-config, ceo-ingest-status, server-info, state x2, employees, catalog/abayas, floor-sessions rejects/auth/csv).
+- Worker (Cloudflare) tests: 3/4 PASS; FAIL worker POST session_start — HTTP 422 "Outside shift hours" (deployment policy / time-of-day; not regression in repo).
+- Success vs plan B2: FACTORY ACCEPTANCE MET; worker session_start rerun during shift window or mute worker block if purely factory QA.
+
+RESULT B: FACTORY PASS; WORKER session_start POLICY GATE (DOCUMENTED)
+
+Server stopped after QA (PID on port 3999 terminated).
+
+Note (WSL): node server.js without -r ./.pnp.cjs fails MODULE_NOT_FOUND 'dotenv'. Always use README/plan invocation: node -r ./.pnp.cjs server.js (or yarn start from root Yarn env).
+
+=== C. Launcher (repo / dev Electron) ===
+C1 yarn launcher orchestration / PnP
+- Windows: node scripts/run-launcher.cjs --dry-run → exit 0 ("native host, would run: node -r ./tools/desktop-launcher/.pnp.cjs ./tools/desktop-launcher/start-electron.cjs")
+- WSL: same --dry-run → exit 0 (includes --no-sandbox --disable-gpu-sandbox)
+- Electron MUST be resolved from tools/desktop-launcher cwd (PnP issuer); ROOT `node -r ... -e require('electron')` fails ambiguous issuer — BY DESIGN vs START batch path.
+- tools/desktop-launcher: node -r ./.pnp.cjs -e "require('electron')" → PASS (path to electron dist)
+- electron.exe --version → v34.5.8
+RESULT C: PASS (automated gates; GUI window full open not scripted)
+
+=== D. Electron auto-update (Criterion #1 pilot path) ===
+Automated/static verification THIS RUN:
+- .github/workflows/release-desktop-launcher.yml: present; on tag v*, workflow_dispatch; Windows runner; CSC_LINK/CSC_KEY_PASSWORD; tools/desktop-launcher yarn release:gh → D1 prerequisites in repo PASS
+- tools/desktop-launcher/main.js: setupAutoUpdates() skips when !app.isPackaged; sets phase/message "Updates disabled in development mode"; packaged path wires autoUpdater events → aligns with docs/ONLINE_UPDATES.md
+
+NOT EXECUTED HERE (hardware/ops dependency):
+- D2–D5: install older signed NSIS build on pilot PC, Check Updates, download, Install & Restart, version bump confirmation, repeat section B smoke.
+NEXT ACTION FOR OPERATORS: Execute D2–D5 on pilot machine after CI publishes installer + latest.yml to GitHub Release; rollback per docs/ONLINE_UPDATES.md if needed.
+
+RESULT D: STATIC / CI-definition PASS — PILOT E2E PENDING EXTERNAL INSTALLERS
+
+=== E. Active session timestamps (seconds) ===
+STEP E1 — Code + API alignment (static verification)
+- server.js req_lookup: returns session_started_at (epoch ms) for active session.
+- public/kiosk.js: formatExactStartedAt uses second: '2-digit'; wk-started element set from res.session_started_at.
+- public/dashboard.js: startedLabel / startedFull use second: '2-digit' in toLocaleString for live sessions.
+RESULT E: PASS (browser visual spot-check during next kiosk session recommended)
+
+=== Consolidated acceptance ===
+| Criterion | This run |
+|-----------|----------|
+| 1. System updates accordingly | CI workflow + updater code verified; full update loop needs pilot NSIS + Release (D2–D5). |
+| 2. Step-by-step test | A–C + factory B complete and archived; D pilot + E optional UI spot-check remain for operators. |

@@ -1,0 +1,9 @@
+node_modules/
+out/
+.cache/
+.remotion/
+.pnp.*
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/build-state.yml
+*.log

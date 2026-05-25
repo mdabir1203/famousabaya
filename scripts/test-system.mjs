@@ -78,7 +78,11 @@ async function main() {
       data.ok &&
       data.catalogVersion != null &&
       data.serverStartedAt != null &&
-      typeof data.ceoIngestPending === 'number'
+      typeof data.ceoIngestPending === 'number' &&
+      typeof data.offlineReportRestored === 'boolean' &&
+      data.persistence &&
+      typeof data.persistence.offlineReportDir === 'string' &&
+      typeof data.persistence.offlineReportDirWritable === 'boolean'
     ) {
       ok('factory GET /api/client-config');
     } else bad('factory GET /api/client-config', new Error(`status ${status}`));
@@ -88,7 +92,13 @@ async function main() {
 
   try {
     const { status, data } = await getJson(`${FACTORY}/api/ceo-ingest-status`);
-    if (status === 200 && data.ok && typeof data.pending === 'number') {
+    if (
+      status === 200 &&
+      data.ok &&
+      typeof data.pending === 'number' &&
+      typeof data.queueDirWritable === 'boolean' &&
+      typeof data.offlineReportDirWritable === 'boolean'
+    ) {
       ok('factory GET /api/ceo-ingest-status');
     } else bad('factory GET /api/ceo-ingest-status', new Error(`status ${status}`));
   } catch (e) {
@@ -106,10 +116,33 @@ async function main() {
 
   try {
     const { status, data } = await getJson(`${FACTORY}/api/state`);
-    if (status === 200 && data.ok && data.state) ok('factory GET /api/state');
-    else bad('factory GET /api/state', new Error(`status ${status}`));
+    if (
+      status === 200 &&
+      data.ok &&
+      data.state &&
+      data.state.state_meta &&
+      typeof data.state.state_meta.logs_returned === 'number' &&
+      typeof data.state.state_meta.restored_from_offline_cache === 'boolean'
+    ) {
+      ok('factory GET /api/state (bounded + state_meta)');
+    } else bad('factory GET /api/state', new Error(`status ${status}`));
   } catch (e) {
     bad('factory GET /api/state', e);
+  }
+
+  try {
+    const { status, data } = await getJson(`${FACTORY}/api/state?since=1&limit=5`);
+    if (
+      status === 200 &&
+      data.ok &&
+      data.state &&
+      Array.isArray(data.state.logs) &&
+      data.state.logs.length <= 5
+    ) {
+      ok('factory GET /api/state?since=&limit=');
+    } else bad('factory GET /api/state?since=&limit=', new Error(`status ${status}`));
+  } catch (e) {
+    bad('factory GET /api/state?since=&limit=', e);
   }
 
   try {
@@ -128,6 +161,51 @@ async function main() {
     } else bad('factory GET /api/catalog/abayas', new Error(`status ${status}`));
   } catch (e) {
     bad('factory GET /api/catalog/abayas', e);
+  }
+
+  const EXPORT_SEC =
+    process.env.FLOOR_EXPORT_SECRET || process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
+  try {
+    const r = await fetch(`${FACTORY}/api/export/floor-sessions.json`, {
+      headers: { Accept: 'application/json', 'X-Export-Secret': 'wrong' },
+    });
+    if (r.status === 401) ok('factory GET /api/export/floor-sessions.json rejects bad secret');
+    else bad('factory export auth', new Error('expected 401, got ' + r.status));
+  } catch (e) {
+    bad('factory export auth', e);
+  }
+  if (EXPORT_SEC) {
+    try {
+      const { status, data } = await getJson(`${FACTORY}/api/export/floor-sessions.json?summary=1`, {
+        headers: { 'X-Export-Secret': EXPORT_SEC },
+      });
+      if (
+        status === 200 &&
+        data.ok &&
+        data.meta &&
+        typeof data.meta.rowCount === 'number' &&
+        Array.isArray(data.sessions) &&
+        data.byYearMonth != null &&
+        typeof data.byYearMonth === 'object'
+      ) {
+        ok('factory GET /api/export/floor-sessions.json (authenticated)');
+      } else bad('factory export json', new Error(`status ${status} ${JSON.stringify(data).slice(0, 120)}`));
+    } catch (e) {
+      bad('factory export json', e);
+    }
+    try {
+      const r = await fetch(`${FACTORY}/api/export/floor-sessions.csv`, {
+        headers: { 'X-Export-Secret': EXPORT_SEC },
+      });
+      const text = await r.text();
+      if (r.status === 200 && text.includes('emp_id') && text.includes('end_iso')) {
+        ok('factory GET /api/export/floor-sessions.csv');
+      } else bad('factory export csv', new Error('status ' + r.status));
+    } catch (e) {
+      bad('factory export csv', e);
+    }
+  } else {
+    console.log('  (skip) Set FLOOR_EXPORT_SECRET or CATALOG_INGEST_SECRET to test export downloads.\n');
   }
 
   // ── Cloudflare Worker (optional) ─────────────────────────────────────────

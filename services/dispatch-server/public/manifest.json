@@ -1,0 +1,14 @@
+{
+  "name": "AbaYa Track",
+  "short_name": "AbaYa Track",
+  "description": "Factory floor delivery leaderboard — Famous Ladies Gowns Tailoring",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1f1633",
+  "theme_color": "#1f1633",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
