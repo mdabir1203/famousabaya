@@ -21,7 +21,12 @@ module.exports = {
 
       // ── Runtime ────────────────────────────────────────────────────────────
       interpreter: 'node',
-      node_args: '--max-old-space-size=256',  // cap heap; triggers OOM exit so PM2 restarts cleanly
+      // --import ./sw-instrument.mjs  → starts the SkyWalking APM agent BEFORE
+      //   server.js loads. It is a no-op unless SW_AGENT_COLLECTOR_BACKEND_SERVICES
+      //   is set (see env below), so leaving it here never breaks a plain run.
+      // --max-old-space-size=320      → heap cap (was 256; +64 MB headroom for the
+      //   agent's span buffer). Triggers OOM exit so PM2 restarts cleanly.
+      node_args: '--import ./sw-instrument.mjs --max-old-space-size=320',
       cwd: __dirname,
       instances: 1,       // single instance — SSE broadcast requires shared _clients Set
       exec_mode: 'fork',
@@ -29,7 +34,7 @@ module.exports = {
       // ── Auto-restart policy ────────────────────────────────────────────────
       autorestart: true,
       watch: false,        // do NOT watch files; file changes on a live factory machine are noise
-      max_memory_restart: '300M',  // safety net above node_args cap
+      max_memory_restart: '400M',  // safety net above node_args cap (raised for APM agent)
       restart_delay: 1500,         // wait 1.5 s before restarting (avoids EADDRINUSE spin)
       exp_backoff_restart_delay: 100,
       max_restarts: 999,   // effectively unlimited — always keep the server alive
@@ -39,10 +44,26 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         DISPATCH_PORT: '3111',
+        // ── Read access token ───────────────────────────────────────────────
+        // REQUIRED when PUBLIC_URL is set, or the cloudflared tunnel leaks all
+        // invoice data. Tablets open: https://<tunnel>/leaderboard?token=<value>
+        // Empty default keeps LAN-only setups working. See .env.example.
+        DISPATCH_VIEW_TOKEN: '',
+        // ── SkyWalking APM ──────────────────────────────────────────────────
+        // Set the collector address to ENABLE tracing. Leave empty to DISABLE.
+        // OAP gRPC listens on localhost:11800 (see observability/docker-compose.yml).
+        SW_AGENT_COLLECTOR_BACKEND_SERVICES: 'localhost:11800',
+        SW_AGENT_NAME: 'abaya-dispatch',
+        SW_AGENT_INSTANCE_NAME: 'factory-laptop',
       },
       env_development: {
         NODE_ENV: 'development',
         DISPATCH_PORT: '3111',
+        DISPATCH_VIEW_TOKEN: '',  // dev is LAN-only — no token needed
+        // Disabled by default in dev — set to localhost:11800 to trace locally.
+        SW_AGENT_COLLECTOR_BACKEND_SERVICES: '',
+        SW_AGENT_NAME: 'abaya-dispatch-dev',
+        SW_AGENT_INSTANCE_NAME: 'dev-laptop',
       },
 
       // ── Logs ───────────────────────────────────────────────────────────────

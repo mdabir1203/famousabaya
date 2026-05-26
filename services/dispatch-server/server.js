@@ -24,6 +24,11 @@ const BRIDGE_SECRET = process.env.DISPATCH_BRIDGE_SECRET || '';
 // Public URL reachable over the internet (cloudflared tunnel, e.g. https://factory.farewellabaya.com)
 // Required when tablets connect over mobile SIM rather than LAN WiFi.
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+// Read-side access token. When set, GET endpoints that expose business data
+// (invoices, server info, the SSE stream, audio) require this token. MUST be set
+// whenever PUBLIC_URL is configured, otherwise the cloudflared tunnel leaks all
+// supplier/customer data to anyone who learns the URL.
+const VIEW_TOKEN = process.env.DISPATCH_VIEW_TOKEN || '';
 
 // 512 KB is more than enough for any invoice JSON payload.
 // Enforced in readBody() to prevent unbounded memory growth from malformed / malicious requests.
@@ -109,6 +114,16 @@ function checkSecret(req) {
   return (req.headers['x-ingest-secret'] || '') === INGEST_SECRET;
 }
 
+// Read-side guard for data-bearing GET endpoints. Token is accepted via the
+// X-View-Token header OR a ?token= query param — query support is required
+// because EventSource (SSE) and <audio src> cannot send custom headers.
+// When DISPATCH_VIEW_TOKEN is unset, reads stay open (LAN-only deployments).
+function checkViewToken(req, url) {
+  if (!VIEW_TOKEN) return true;
+  const t = req.headers['x-view-token'] || url.searchParams.get('token') || '';
+  return t === VIEW_TOKEN;
+}
+
 function checkBridgeSecret(req) {
   if (!BRIDGE_SECRET) return false;
   return (req.headers['x-bridge-secret'] || '') === BRIDGE_SECRET;
@@ -190,6 +205,7 @@ const server = createServer(async (req, res) => {
 
   // Server info — LAN IP for tablet setup, plus public tunnel URL if configured
   if (pathname === '/api/info' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     const ip = getLocalIp();
     return sendJson(res, {
       ip,
@@ -207,6 +223,7 @@ const server = createServer(async (req, res) => {
 
   // List invoices (REST fallback)
   if (pathname === '/api/invoices' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     return sendJson(res, getLeaderboard({ includeDelivered: true }));
   }
 
@@ -328,6 +345,7 @@ const server = createServer(async (req, res) => {
   // Audio proxy — streams WA voice notes
   const audioMatch = pathname.match(/^\/api\/audio\/([^/]+)$/);
   if (audioMatch && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     const mediaId = audioMatch[1];
     if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — cannot serve audio' }, 503);
     try {
@@ -354,6 +372,7 @@ const server = createServer(async (req, res) => {
 
   // SSE leaderboard stream
   if (pathname === '/api/leaderboard/stream' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -436,6 +455,11 @@ server.listen(PORT, '0.0.0.0', () => {
   const lanUrl    = `http://${ip}:${PORT}`;
   const publicMsg = PUBLIC_URL ? `  public: ${PUBLIC_URL}` : '  public: NOT SET (tablets need same WiFi)';
   console.log(`[dispatch] :${PORT}  LAN: ${lanUrl}${publicMsg}  whatsapp:${WA_TOKEN ? 'configured' : 'not set'}`);
+  // Loud warning: a public tunnel with no read token exposes all invoice data
+  // (suppliers, materials, customer notes) to anyone who learns the URL.
+  if (PUBLIC_URL && !VIEW_TOKEN) {
+    console.warn('[dispatch] ⚠️  PUBLIC_URL is set but DISPATCH_VIEW_TOKEN is empty — read endpoints are UNPROTECTED on the public tunnel. Set DISPATCH_VIEW_TOKEN to lock them down.');
+  }
   syncFromCloud();
 
   // ── Delivered-invoice pruning ─────────────────────────────────────────────

@@ -466,6 +466,24 @@ let serverUrl = (() => {
   } catch (_) { return location.origin; }
 })();
 
+// ── Read token ──────────────────────────────────────────────────────────────
+// When the server sets DISPATCH_VIEW_TOKEN, data endpoints (invoices, info, SSE,
+// audio) require ?token=. Tablets open: https://<tunnel>/leaderboard?token=XXX
+// The token is read from the URL once, then persisted so a relaunched PWA keeps it.
+const TOKEN_KEY = 'abaya_dispatch_view_token';
+const viewToken = (() => {
+  const t = new URLSearchParams(location.search).get('token');
+  if (t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} return t; }
+  try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (_) { return ''; }
+})();
+
+// Append the view token as a query param. Used for fetch URLs, the EventSource
+// URL, and <audio src> — none of which can rely on a custom header.
+function withTok(path) {
+  if (!viewToken) return serverUrl + path;
+  return serverUrl + path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(viewToken);
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let invoices = [];
 let waConfigured = false;
@@ -641,7 +659,7 @@ function connect() {
 
   setConn('connecting', _retryCount > 0 ? `retry ${_retryCount}` : 'connecting');
   try {
-    es = new EventSource(serverUrl + '/api/leaderboard/stream');
+    es = new EventSource(withTok('/api/leaderboard/stream'));
   } catch (_) { setConn('offline', 'bad url'); return; }
 
   es.onopen = () => {
@@ -981,7 +999,7 @@ function buildCard(inv, isNew = false) {
           <span class="audio-time-display" aria-live="off">0:00</span>
         </div>
       </div>
-      <audio class="audio-el" preload="none" src="${esc(serverUrl)}/api/audio/${esc(inv.audioId)}"></audio>
+      <audio class="audio-el" preload="none" src="${esc(withTok('/api/audio/' + inv.audioId))}"></audio>
     </div>`);
 
   card.innerHTML = `
@@ -1117,7 +1135,7 @@ async function fetchTabletUrl() {
   const value = document.getElementById('tabletUrlValue');
   const hint  = document.getElementById('tabletUrlHint');
   try {
-    const r = await fetch(serverUrl + '/api/info', { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(withTok('/api/info'), { signal: AbortSignal.timeout(3000) });
     const d = await r.json();
     // Prefer the public tunnel URL (works on any SIM) over the LAN IP
     if (d.publicUrl) {

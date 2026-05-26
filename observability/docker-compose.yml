@@ -1,0 +1,125 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  elasticsearch:
+    profiles:
+      - "elasticsearch"
+    image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch-oss:7.4.2}
+    container_name: elasticsearch
+    ports:
+      - "9200:9200"
+    networks:
+      - demo
+    healthcheck:
+      test: [ "CMD-SHELL", "curl --silent --fail localhost:9200/_cluster/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+  banyandb:
+    profiles:
+      - "banyandb"
+    image: ${BANYANDB_IMAGE}
+    container_name: banyandb
+    networks:
+      - demo
+    expose:
+      - 17912
+    ports:
+      - 17913:17913
+    command: standalone --stream-root-path /tmp/stream-data --measure-root-path /tmp/measure-data
+    healthcheck:
+      test: [ "CMD", "sh", "-c", "nc -nz 127.0.0.1 17912" ]
+      interval: 5s
+      timeout: 60s
+      retries: 120
+
+  oap-base: &oap-base
+    profiles: [ "none" ]
+    image: ${OAP_IMAGE:-ghcr.io/apache/skywalking/oap:latest}
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+      - "17128:17128"
+    networks:
+      - demo
+    healthcheck:
+      test: [ "CMD-SHELL", "bash -c 'echo >/dev/tcp/localhost/12800'" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    environment: &oap-env
+      SW_HEALTH_CHECKER: default
+      SW_TELEMETRY: prometheus
+      # Reduced from 2048m for factory-floor laptop (8 GB RAM).
+      # Raise to -Xms1024m -Xmx1024m if you have 16+ GB RAM.
+      JAVA_OPTS: "-Xms512m -Xmx512m"
+
+  oap-es:
+    <<: *oap-base
+    profiles: 
+      - "elasticsearch"
+    container_name: oap
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      <<: *oap-env
+      SW_STORAGE: elasticsearch
+      SW_STORAGE_ES_CLUSTER_NODES: elasticsearch:9200
+
+  oap-bdb:
+    <<: *oap-base
+    profiles:
+      - "banyandb"
+    container_name: oap
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    environment:
+      <<: *oap-env
+      SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_TARGETS: banyandb:17912
+
+  # SkyWalking Horizon UI — official web UI as of 10.5.0.
+  # Source: https://github.com/apache/skywalking-horizon-ui
+  # Talks to OAP via the public GraphQL/REST port (12800) and to admin-server
+  # for write APIs (UI templates, runtime-rule, dsl-debugging, status, inspect).
+  ui:
+    image: ${UI_IMAGE:-ghcr.io/apache/skywalking-horizon-ui:latest}
+    container_name: ui
+    ports:
+      - "8080:8080"
+    networks:
+      - demo
+    environment:
+      SW_OAP_ADDRESS: http://oap:12800
+      SW_ADMIN_ADDRESS: http://oap:17128
+      SW_ZIPKIN_ADDRESS: http://oap:9412
+
+networks:
+  demo:
