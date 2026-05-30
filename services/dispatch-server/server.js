@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { networkInterfaces } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 import { upsertInvoice, updateInvoiceStatus, getLeaderboard, getInvoice, pruneDelivered } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
@@ -71,10 +72,23 @@ function getLocalIp() {
 /** @type {Set<import('node:http').ServerResponse>} */
 const _clients = new Set();
 
+// Per-client buffer cap. A stalled tablet (mobile signal dropped without TCP close)
+// would otherwise accumulate buffered writes here and grow server memory unbounded.
+// 64 KB ≈ 10–50 buffered leaderboard updates — generous slack for a brief blip,
+// tight enough to force-close a truly dead client so the tablet reconnects.
+const SSE_BACKPRESSURE_BYTES = 64 * 1024;
+
 function broadcast(eventName, payload) {
   const msg = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
   const dead = [];
   for (const res of _clients) {
+    // Backpressure: if the kernel hasn't drained what we've already queued, the
+    // socket is stalled — stop writing to it and force-close so PWA reconnects.
+    if (res.writableLength > SSE_BACKPRESSURE_BYTES) {
+      dead.push(res);
+      try { res.end(); } catch (_) {}
+      continue;
+    }
     try { res.write(msg); } catch (_) { dead.push(res); }
   }
   dead.forEach(r => _clients.delete(r));
@@ -135,7 +149,14 @@ async function pushToCloud(id, status) {
     await fetch(`${CF_WORKER_URL}/dispatch/invoices/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
       signal: AbortSignal.timeout(5_000),
-      headers: { 'Content-Type': 'application/json', 'X-Bridge-Secret': BRIDGE_SECRET },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bridge-Secret': BRIDGE_SECRET,
+        // Idempotency key — Worker dedupes within a 24 h window, so any future
+        // retry of this exact transition is safely replayable (no double-apply,
+        // no duplicate downstream notifyFactory). Fresh UUID per call site.
+        'X-Idempotency-Key': randomUUID(),
+      },
       body: JSON.stringify({ status }),
     });
   } catch (_) {}

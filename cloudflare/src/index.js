@@ -16,6 +16,7 @@ import { handleState } from './handlers/state.js';
 import { handleReport } from './handlers/report.js';
 import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
+import { handleDispatch, runTunnelProbe } from './handlers/dispatch.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript } from './ui/ceo-pages.js';
 import releaseMomentData from './data/release-moment.json';
@@ -140,6 +141,11 @@ export default {
       return jsonRes({ ok: true, working_hours: cfg }, 200, CEO_JSON_NO_STORE);
     }
 
+    // ── Dispatch routes (bridge-secret auth, not CEO-gated) ──────────────────
+    if (path.startsWith('/dispatch/')) {
+      return handleDispatch(request, env, url);
+    }
+
     const isCEORoute =
       path === '/' ||
       path === '/ceo' ||
@@ -238,6 +244,17 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(sendEODSummary(env));
+    // Multiple crons share this handler — see wrangler.toml [triggers].crons.
+    // Unknown cron strings fall through to the EOD summary to preserve prior
+    // behavior if a cron is renamed without updating this switch.
+    switch (event.cron) {
+      case '* * * * *':
+        ctx.waitUntil(runTunnelProbe(env));
+        break;
+      case '0 14 * * *':
+      default:
+        ctx.waitUntil(sendEODSummary(env));
+        break;
+    }
   },
 };

@@ -98,6 +98,54 @@ async function updateStatusD1(db, id, status) {
     .run();
 }
 
+// ─── Tunnel health probe ──────────────────────────────────────────────────────
+// Called from src/index.js scheduled handler on the every-minute cron.
+// Catches the silent-cloudflared-failure mode: the local cloudflared process
+// is alive but the tunnel itself is broken — nobody notices until a missed
+// delivery. The probe fetches /health (no auth required on the factory) and
+// records one row per attempt. Lazily prunes >7 d of history in the same batch
+// so the table stays bounded without a separate cleanup job.
+
+export async function runTunnelProbe(env) {
+  const tunnelUrl = String(env.FACTORY_TUNNEL_URL || '').trim();
+  if (!tunnelUrl) return; // probe disabled until the tunnel is configured
+
+  const ts = Date.now();
+  let status = 'fail';
+  let httpCode = null;
+  let latencyMs = null;
+  let error = null;
+
+  try {
+    const start = Date.now();
+    const r = await fetch(`${tunnelUrl}/health`, { signal: AbortSignal.timeout(5_000) });
+    latencyMs = Date.now() - start;
+    httpCode = r.status;
+    if (r.ok) {
+      // Defensive: tunnel could 200 with a non-AbaYa body (rare misconfig).
+      const data = await r.json().catch(() => null);
+      if (data && data.ok === true) status = 'ok';
+      else error = 'health body not ok';
+    } else {
+      error = `http ${r.status}`;
+    }
+  } catch (e) {
+    error = String((e && e.message) || e).slice(0, 200);
+  }
+
+  const cutoff = ts - 7 * 24 * 60 * 60 * 1000;
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO tunnel_probes (ts, status, http_code, latency_ms, error) VALUES (?, ?, ?, ?, ?)`
+      ).bind(ts, status, httpCode, latencyMs, error),
+      env.DB.prepare(`DELETE FROM tunnel_probes WHERE ts < ?`).bind(cutoff),
+    ]);
+  } catch (_) {
+    // Probe must never throw out of the scheduled handler — silent on D1 errors.
+  }
+}
+
 // ─── Factory sync-trigger ─────────────────────────────────────────────────────
 
 async function notifyFactory(invoice, env) {
@@ -205,11 +253,42 @@ export async function handleDispatch(request, env, url) {
     return jsonRes({ ok: true, invoices });
   }
 
+  // ── GET /dispatch/tunnel-health ────────────────────────────────────────────
+  // Returns the last N probe rows so the CEO dashboard can render a connectivity
+  // banner. Bridge-secret-gated — same trust boundary as the rest of /dispatch.
+  if (path === '/dispatch/tunnel-health' && request.method === 'GET') {
+    if (!isBridgeAuthed(request, env)) return errRes('unauthorized', 401);
+    const requested = parseInt(url.searchParams.get('limit') || '60', 10);
+    const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 60, 1), 500);
+    const res = await env.DB
+      .prepare(`SELECT ts, status, http_code AS httpCode, latency_ms AS latencyMs, error
+                FROM tunnel_probes ORDER BY ts DESC LIMIT ?`)
+      .bind(limit).all();
+    const probes = res.results || [];
+    return jsonRes({ ok: true, last: probes[0] || null, probes });
+  }
+
   // ── PATCH /dispatch/invoices/:id/status ───────────────────────────────────
   const patchMatch = path.match(/^\/dispatch\/invoices\/([^/]+)\/status$/);
   if (patchMatch && request.method === 'PATCH') {
     if (!isBridgeAuthed(request, env)) return errRes('unauthorized', 401);
     const id = decodeURIComponent(patchMatch[1]);
+
+    // Idempotency: if the factory retries with the same X-Idempotency-Key, return
+    // the current state without re-applying or re-firing notifyFactory. Migration
+    // 0007 creates the idempotency_keys table. Header is optional for backward compat
+    // with pre-0007 factory builds — those simply skip the dedup path.
+    const idemKey = (request.headers.get('X-Idempotency-Key') || '').trim();
+    if (idemKey) {
+      const dup = await env.DB
+        .prepare(`SELECT 1 FROM idempotency_keys WHERE key = ? LIMIT 1`)
+        .bind(idemKey).first();
+      if (dup) {
+        const current = await getInvoiceById(env.DB, id);
+        return jsonRes({ ok: true, invoice: current, idempotent: true });
+      }
+    }
+
     let body;
     try { body = await request.json(); } catch { return errRes('bad json', 400); }
     const status = String(body.status || '');
@@ -217,6 +296,18 @@ export async function handleDispatch(request, env, url) {
     const inv = await getInvoiceById(env.DB, id);
     if (!inv) return errRes('not found', 404);
     await updateStatusD1(env.DB, id, status);
+
+    // Record the key + lazily prune anything older than 24 h. Batched in one
+    // round-trip; DELETE is cheap thanks to the idx_idempotency_keys_created_at index.
+    if (idemKey) {
+      const now = Date.now();
+      const cutoff = now - 24 * 60 * 60 * 1000;
+      await env.DB.batch([
+        env.DB.prepare(`INSERT OR IGNORE INTO idempotency_keys (key, created_at) VALUES (?, ?)`).bind(idemKey, now),
+        env.DB.prepare(`DELETE FROM idempotency_keys WHERE created_at < ?`).bind(cutoff),
+      ]);
+    }
+
     const updated = { ...inv, status, updatedAt: Date.now() };
     // Notify factory so leaderboard stays live even if worker is the authority
     notifyFactory(updated, env);

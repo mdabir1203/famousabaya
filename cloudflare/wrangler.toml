@@ -29,6 +29,14 @@ custom_domain = true
 
 [vars]
 FACTORY_TZ = "Asia/Dubai"
+# URL of the factory's cloudflared tunnel — Worker calls this to push new invoices.
+# Example: https://factory.farewellabaya.com
+# Set to empty string to disable factory push (Worker stores in D1 only).
+FACTORY_TUNNEL_URL = ""
+# Secrets (set via wrangler secret put — never commit values):
+#   npx wrangler secret put DISPATCH_BRIDGE_SECRET   ← shared with factory .env
+#   npx wrangler secret put WHATSAPP_VERIFY_TOKEN
+#   npx wrangler secret put WHATSAPP_TOKEN           ← for outbound alerts
 # Used when catalog rows have no Process column (factory Excel at watch root).
 DEFAULT_CATALOG_PROCESS = "Tailor (01)"
 # Bump to invalidate all CEO JWTs (forces re-login).
@@ -59,8 +67,13 @@ database_id   = "5d61fb15-2ead-491b-80e2-fe2b2fd46d23"
 # bucket_name = "abaya-exports"
 
 # â”€â”€â”€ Cron â€” auto EOD summary at 6pm Dubai time every day â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Multiple crons share the `scheduled` handler in src/index.js, which branches
+# on `event.cron`:
+#   "0 14 * * *"  -> daily EOD summary  (sendEODSummary)
+#   "* * * * *"   -> tunnel health probe (runTunnelProbe in handlers/dispatch.js)
+#                   No-op when FACTORY_TUNNEL_URL is empty, so safe to leave on.
 [triggers]
-crons = ["0 14 * * *"]
+crons = ["0 14 * * *", "* * * * *"]
 
 # â”€â”€â”€ Rate limits (Workers Rate Limiting API â€” unique namespace_id per binding) â”€
 [[ratelimits]]
