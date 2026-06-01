@@ -850,15 +850,28 @@ async function doMaterialCheck(id) {
   else if (r && r.ok) showToast('Material verified — ready for production', 'ok');
 }
 
-// Toggle one abaya's done state. Optimistic: flip immediately, revert on failure.
+// Toggle one abaya's done state — double-confirmed with the last 3 of the invoice ID.
 async function toggleItem(id, pos, btn) {
   const willBeDone = !btn.classList.contains('done');
+  const inv = invoices.find(v => v.id === id);
+  const confirmed = await showConfirm({
+    icon: willBeDone ? '🧵' : '↩️',
+    title: willBeDone ? ('Mark abaya #' + pos + ' done?') : ('Reopen abaya #' + pos + '?'),
+    supplierName: inv?.supplier || id,
+    invoiceId: id,
+    desc: willBeDone
+      ? ('Confirm abaya #' + pos + ' has been completed.')
+      : ('This marks abaya #' + pos + ' as still pending again.'),
+    okLabel: willBeDone ? 'Yes, mark done' : 'Yes, reopen',
+    okClass: willBeDone ? 'btn-green' : 'btn-amber',
+  });
+  if (!confirmed) return;
+  // Optimistic flip; revert on failure (next SSE update reconciles anyway).
   btn.classList.toggle('done', willBeDone);
   btn.closest('.item-li')?.classList.toggle('done', willBeDone);
   btn.setAttribute('aria-pressed', willBeDone ? 'true' : 'false');
   const r = await apiPost('/api/items/' + id + '/' + pos + '/toggle');
   if (!r || !r.ok) {
-    // Revert optimistic change; the next SSE update will reconcile anyway.
     btn.classList.toggle('done', !willBeDone);
     btn.closest('.item-li')?.classList.toggle('done', !willBeDone);
     showToast(r?.error || 'Could not update abaya', 'err');
@@ -1104,7 +1117,7 @@ function buildCard(inv, isNew = false) {
   card.querySelector('.step1-btn')?.addEventListener('click', () => doStep1(inv.id));
   card.querySelector('.matcheck-btn')?.addEventListener('click', () => doMaterialCheck(inv.id));
   card.querySelector('.step2-btn')?.addEventListener('click', () => doStep2(inv.id));
-  // Per-abaya done toggles (no PIN — frequent floor action; optimistic + revert on fail)
+  // Per-abaya done toggles — double-confirmed (last 3 of invoice ID) like every other action
   card.querySelectorAll('.item-toggle').forEach(btn => {
     btn.addEventListener('click', () => toggleItem(btn.dataset.id, btn.dataset.pos, btn));
   });
