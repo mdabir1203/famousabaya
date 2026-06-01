@@ -260,11 +260,16 @@ export async function handleDispatch(request, env, url) {
     if (!isBridgeAuthed(request, env)) return errRes('unauthorized', 401);
     const requested = parseInt(url.searchParams.get('limit') || '60', 10);
     const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 60, 1), 500);
-    const res = await env.DB
-      .prepare(`SELECT ts, status, http_code AS httpCode, latency_ms AS latencyMs, error
-                FROM tunnel_probes ORDER BY ts DESC LIMIT ?`)
-      .bind(limit).all();
-    const probes = res.results || [];
+    let probes = [];
+    try {
+      const res = await env.DB
+        .prepare(`SELECT ts, status, http_code AS httpCode, latency_ms AS latencyMs, error
+                  FROM tunnel_probes ORDER BY ts DESC LIMIT ?`)
+        .bind(limit).all();
+      probes = res.results || [];
+    } catch (_) {
+      // Migration 0008 not applied yet → report empty history rather than 500.
+    }
     return jsonRes({ ok: true, last: probes[0] || null, probes });
   }
 
@@ -280,12 +285,18 @@ export async function handleDispatch(request, env, url) {
     // with pre-0007 factory builds — those simply skip the dedup path.
     const idemKey = (request.headers.get('X-Idempotency-Key') || '').trim();
     if (idemKey) {
-      const dup = await env.DB
-        .prepare(`SELECT 1 FROM idempotency_keys WHERE key = ? LIMIT 1`)
-        .bind(idemKey).first();
-      if (dup) {
-        const current = await getInvoiceById(env.DB, id);
-        return jsonRes({ ok: true, invoice: current, idempotent: true });
+      try {
+        const dup = await env.DB
+          .prepare(`SELECT 1 FROM idempotency_keys WHERE key = ? LIMIT 1`)
+          .bind(idemKey).first();
+        if (dup) {
+          const current = await getInvoiceById(env.DB, id);
+          return jsonRes({ ok: true, invoice: current, idempotent: true });
+        }
+      } catch (_) {
+        // Migration 0007 not applied yet → skip dedup and proceed normally.
+        // The status PATCH is naturally idempotent, so the worst case is a
+        // duplicate notifyFactory — far better than 500-ing every update.
       }
     }
 
@@ -300,12 +311,16 @@ export async function handleDispatch(request, env, url) {
     // Record the key + lazily prune anything older than 24 h. Batched in one
     // round-trip; DELETE is cheap thanks to the idx_idempotency_keys_created_at index.
     if (idemKey) {
-      const now = Date.now();
-      const cutoff = now - 24 * 60 * 60 * 1000;
-      await env.DB.batch([
-        env.DB.prepare(`INSERT OR IGNORE INTO idempotency_keys (key, created_at) VALUES (?, ?)`).bind(idemKey, now),
-        env.DB.prepare(`DELETE FROM idempotency_keys WHERE created_at < ?`).bind(cutoff),
-      ]);
+      try {
+        const now = Date.now();
+        const cutoff = now - 24 * 60 * 60 * 1000;
+        await env.DB.batch([
+          env.DB.prepare(`INSERT OR IGNORE INTO idempotency_keys (key, created_at) VALUES (?, ?)`).bind(idemKey, now),
+          env.DB.prepare(`DELETE FROM idempotency_keys WHERE created_at < ?`).bind(cutoff),
+        ]);
+      } catch (_) {
+        // idempotency_keys table missing → best-effort record, never fail the request.
+      }
     }
 
     const updated = { ...inv, status, updatedAt: Date.now() };
