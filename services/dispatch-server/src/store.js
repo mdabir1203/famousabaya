@@ -18,13 +18,16 @@ const DATA_FILE = join(DATA_DIR, 'invoices.json');
 
 // ─── Types (JSDoc) ────────────────────────────────────────────────────────────
 /**
- * @typedef {'PENDING'|'ARRIVED'|'URGENT'|'DELIVERED'} InvoiceStatus
+ * Lifecycle: PENDING → ARRIVED → READY (supervisor material check done) → DELIVERED.
+ * @typedef {'PENDING'|'ARRIVED'|'READY'|'URGENT'|'DELIVERED'} InvoiceStatus
  *
  * @typedef {Object} InvoiceItem
  * @property {number} pos          - Abaya position 1–4
  * @property {string} materialSpec - Material description (e.g. "Silk Premium Nida")
  * @property {string} [color]      - Colour (e.g. "Midnight Black")
  * @property {string} [qty]        - Quantity string (e.g. "2.5m")
+ * @property {boolean} [done]      - Whether this abaya has been completed
+ * @property {number|null} [doneAt]- Unix ms when marked done (null if not done)
  *
  * @typedef {Object} Invoice
  * @property {string}        id           - Unique invoice reference (e.g. INV-2026-94B)
@@ -38,6 +41,7 @@ const DATA_FILE = join(DATA_DIR, 'invoices.json');
  * @property {string|null}   source       - 'whatsapp' | 'vision' | 'api' | 'cloud' | null
  * @property {string|null}   audioId      - WhatsApp media ID of supplier voice note (optional)
  * @property {string|null}   notes        - Special recommendations from supplier (voice note summary, handling instructions)
+ * @property {string|null}   customerPhone- Customer phone (E.164-ish) parsed from notes; null if none found
  */
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -80,12 +84,71 @@ const _invoices = new Map();
 
 _load(); // restore on startup
 
+// ─── Constants (urgency) ───────────────────────────────────────────────────────
+// An order with abayas still pending is "urgent" once it's within this window of
+// (or past) its SLA deadline. Surfaced on the leaderboard so the floor unblocks it.
+const URGENCY_THRESHOLD_MS = 60 * 60 * 1_000; // 60 minutes
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort parse of a customer phone number out of the free-text notes.
+ * Recognises +9715XXXXXXXX, 05XXXXXXXX (UAE local), or any 7–15 digit run.
+ * Returns a normalised string (digits, optional leading +) or null if none found.
+ * @param {string|null|undefined} notes
+ * @returns {string|null}
+ */
+export function extractCustomerPhone(notes) {
+  if (!notes) return null;
+  const text = String(notes);
+  // Prefer an explicit international number, then a local 05x, then any long digit run.
+  const patterns = [
+    /\+\d[\d\s().-]{6,16}\d/,        // +971 50 123 4567
+    /\b0\d[\d\s().-]{6,12}\d\b/,     // 050 123 4567
+    /\b\d[\d\s().-]{6,14}\d\b/,      // bare 7–15 digit run
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) {
+      const digits = m[0].replace(/[^\d+]/g, '');
+      // Sanity: 7–16 chars including optional leading '+'
+      const bare = digits.replace(/^\+/, '');
+      if (bare.length >= 7 && bare.length <= 15) return digits;
+    }
+  }
+  return null;
+}
+
+/**
+ * Per-abaya completion progress for an invoice.
+ * @param {Invoice} inv
+ * @returns {{ doneCount: number, total: number, pendingCount: number }}
+ */
+export function itemsProgress(inv) {
+  const items = Array.isArray(inv?.items) ? inv.items : [];
+  const total = items.length;
+  const doneCount = items.filter((it) => it && it.done === true).length;
+  return { doneCount, total, pendingCount: total - doneCount };
+}
+
+/**
+ * Whether an invoice should be surfaced as urgent: not yet delivered, has abayas
+ * still pending, and is within URGENCY_THRESHOLD_MS of (or past) its SLA.
+ * @param {Invoice} inv
+ * @returns {boolean}
+ */
+function _isUrgent(inv) {
+  if (inv.status === 'DELIVERED') return false;
+  const { pendingCount, total } = itemsProgress(inv);
+  // If there are no items listed yet, fall back to "any pending work" = true.
+  const hasPending = total === 0 ? true : pendingCount > 0;
+  if (!hasPending) return false;
+  return (inv.slaDeadline - Date.now()) <= URGENCY_THRESHOLD_MS;
+}
 
 /**
  * Compute urgency score for leaderboard sorting.
  * Lower score = more urgent = ranks higher.
- * URGENT status gets a 2x penalty multiplier on remaining time.
  * @param {Invoice} inv
  * @returns {number}
  */
@@ -93,7 +156,16 @@ function _urgencyScore(inv) {
   if (inv.status === 'DELIVERED') return Infinity;   // sink to bottom
   if (inv.status === 'ARRIVED')   return -Infinity;  // float to top — supervisor needed NOW
   const msRemaining = inv.slaDeadline - Date.now();
-  const urgencyMultiplier = inv.status === 'URGENT' ? 0.5 : 1;
+  // READY (in production): weight by how much work is still pending — more
+  // pending abayas near the SLA = more urgent (lower score).
+  if (inv.status === 'READY') {
+    const { pendingCount, total } = itemsProgress(inv);
+    const pendingRatio = total > 0 ? pendingCount / total : 1;
+    // Multiplier in (0,1]: all pending → ×0.5 (more urgent); none pending → ×1.
+    const mult = 1 - 0.5 * pendingRatio;
+    return msRemaining * mult;
+  }
+  const urgencyMultiplier = (inv.status === 'URGENT' || _isUrgent(inv)) ? 0.5 : 1;
   return msRemaining * urgencyMultiplier;
 }
 
@@ -121,11 +193,28 @@ function fmtTimeRemaining(deadline) {
 export function upsertInvoice(data) {
   const now = Date.now();
   const existing = _invoices.get(data.id);
+
+  // Normalise incoming items: ensure each has a `done` flag, preserving any
+  // existing per-abaya completion when the incoming payload omits it (e.g. a
+  // cloud sync that only carries material specs should not reset progress).
+  const rawItems = Array.isArray(data.items) ? data.items : (existing ? existing.items : []);
+  const items = rawItems.map((it) => {
+    const prev = existing?.items?.find((p) => p && p.pos === it?.pos);
+    const done = (it && typeof it.done === 'boolean') ? it.done : (prev?.done === true);
+    return {
+      ...it,
+      done: done === true,
+      doneAt: done === true ? (it?.doneAt ?? prev?.doneAt ?? now) : null,
+    };
+  });
+
+  const notes = data.notes != null ? String(data.notes) : (existing ? (existing.notes ?? null) : null);
+
   /** @type {Invoice} */
   const invoice = {
     id: String(data.id || '').trim(),
     supplier: String(data.supplier || '').trim(),
-    items: Array.isArray(data.items) ? data.items : (existing ? existing.items : []),
+    items,
     targetQueue: String(data.targetQueue || '').trim(),
     status: data.status || 'PENDING',
     slaDeadline: Number(data.slaDeadline) || now + 4 * 60 * 60 * 1000,
@@ -134,13 +223,40 @@ export function upsertInvoice(data) {
     source: data.source || null,
     // Keep existing audioId if new data doesn't supply one (audio arrives separately)
     audioId: data.audioId != null ? String(data.audioId) : (existing ? existing.audioId : null),
-    notes: data.notes != null ? String(data.notes) : (existing ? (existing.notes ?? null) : null),
+    notes,
+    // Customer phone: prefer an explicit value, else parse from notes, else keep prior.
+    customerPhone: data.customerPhone != null
+      ? String(data.customerPhone)
+      : (extractCustomerPhone(notes) ?? (existing ? (existing.customerPhone ?? null) : null)),
   };
 
   if (!invoice.id) throw new Error('Invoice id is required');
   _invoices.set(invoice.id, invoice);
   _persist();
   return invoice;
+}
+
+/**
+ * Toggle (or set) the `done` flag of a single abaya within an invoice.
+ * @param {string} id
+ * @param {number} pos
+ * @param {boolean} [done] - explicit value; if omitted, flips current state
+ * @returns {Invoice|null} Updated invoice or null if invoice/item not found
+ */
+export function setItemDone(id, pos, done) {
+  const inv = _invoices.get(id);
+  if (!inv) return null;
+  const items = Array.isArray(inv.items) ? inv.items : [];
+  const idx = items.findIndex((it) => it && Number(it.pos) === Number(pos));
+  if (idx === -1) return null;
+  const cur = items[idx];
+  const next = (typeof done === 'boolean') ? done : !(cur.done === true);
+  const newItems = items.slice();
+  newItems[idx] = { ...cur, done: next, doneAt: next ? Date.now() : null };
+  const updated = { ...inv, items: newItems, updatedAt: Date.now() };
+  _invoices.set(id, updated);
+  _persist();
+  return updated;
 }
 
 /**
@@ -172,11 +288,19 @@ export function getLeaderboard({ includeDelivered = false } = {}) {
 
   return filtered
     .sort((a, b) => _urgencyScore(a) - _urgencyScore(b))
-    .map((inv, i) => ({
-      ...inv,
-      rank: i + 1,
-      timeRemaining: fmtTimeRemaining(inv.slaDeadline),
-    }));
+    .map((inv, i) => {
+      const { doneCount, total, pendingCount } = itemsProgress(inv);
+      return {
+        ...inv,
+        rank: i + 1,
+        timeRemaining: fmtTimeRemaining(inv.slaDeadline),
+        // Derived per-abaya progress + urgency (UI reads these; not persisted).
+        doneCount,
+        total,
+        pendingCount,
+        isUrgent: _isUrgent(inv),
+      };
+    });
 }
 
 /**

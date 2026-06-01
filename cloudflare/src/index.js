@@ -16,7 +16,7 @@ import { handleState } from './handlers/state.js';
 import { handleReport } from './handlers/report.js';
 import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
-import { handleDispatch, runTunnelProbe } from './handlers/dispatch.js';
+import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript } from './ui/ceo-pages.js';
 import releaseMomentData from './data/release-moment.json';
@@ -207,6 +207,16 @@ export default {
 
       if (path === '/api/trace' && request.method === 'GET') {
         return handleGarmentTrace(env, url);
+      }
+
+      // ── Customer-messaging add-on (CEO toggles; metered for billing) ─────────
+      if (path === '/api/messaging/status' && request.method === 'GET') {
+        return jsonRes(await getMessagingStatus(env), 200, CEO_JSON_NO_STORE);
+      }
+      if (path === '/api/messaging/toggle' && request.method === 'POST') {
+        const b = await request.json().catch(() => ({}));
+        const res = await setMessagingEnabled(env, !!(b && b.enabled));
+        return jsonRes(res, res.ok ? 200 : 500, CEO_JSON_NO_STORE);
       }
 
       if ((path === '/' || path === '/dashboard.html' || path === '/ceo') && request.method === 'GET') {

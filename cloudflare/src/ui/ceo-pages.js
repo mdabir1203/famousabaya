@@ -1609,6 +1609,57 @@ setInterval(function () {
   const ws = document.getElementById('work-status');
   if (ws) ws.textContent = 'Status: ' + String(STATE.working_status || '--');
 }, 2000);
+
+// ── Customer notifications add-on (CEO toggle + usage meter) ───────────────────
+(function () {
+  var card = document.createElement('div');
+  card.id = 'msg-addon';
+  card.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:14px 16px;font-family:system-ui,sans-serif;max-width:300px';
+  card.innerHTML =
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">' +
+      '<div><div style="font-weight:700;font-size:13px;color:#0f172a">Customer notifications</div>' +
+      '<div id="msg-sub" style="font-size:11px;color:#64748b;margin-top:2px">Loading…</div></div>' +
+      '<button id="msg-toggle" role="switch" aria-checked="false" aria-label="Toggle customer notifications" ' +
+        'style="position:relative;width:46px;height:26px;border-radius:999px;border:none;background:#cbd5e1;cursor:pointer;flex-shrink:0;transition:background .2s">' +
+        '<span id="msg-knob" style="position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>' +
+      '</button>' +
+    '</div>';
+  document.body.appendChild(card);
+  var sub = card.querySelector('#msg-sub');
+  var btn = card.querySelector('#msg-toggle');
+  var knob = card.querySelector('#msg-knob');
+  var enabled = false, busy = false;
+
+  function paint() {
+    btn.setAttribute('aria-checked', enabled ? 'true' : 'false');
+    btn.style.background = enabled ? '#14b8a6' : '#cbd5e1';
+    knob.style.left = enabled ? '23px' : '3px';
+  }
+  function load() {
+    fetch(BASE + '/api/messaging/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d) { sub.textContent = 'Sign in to manage'; return; }
+        enabled = !!d.enabled;
+        sub.textContent = (enabled ? 'On' : 'Off') + ' · ' + (d.periodCount || 0) + ' sent this month (' + (d.sentCount || 0) + ' total)';
+        paint();
+      })
+      .catch(function () { sub.textContent = 'Unavailable'; });
+  }
+  btn.addEventListener('click', function () {
+    if (busy) return; busy = true;
+    var next = !enabled;
+    fetch(BASE + '/api/messaging/toggle', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.ok) { enabled = !!d.enabled; paint(); } busy = false; load(); })
+      .catch(function () { busy = false; });
+  });
+  load();
+  setInterval(load, 60000);
+})();
 </script>
 </body>
 </html>`;

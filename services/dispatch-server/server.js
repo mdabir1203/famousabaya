@@ -10,7 +10,7 @@ import { Readable } from 'node:stream';
 import { networkInterfaces } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
-import { upsertInvoice, updateInvoiceStatus, getLeaderboard, getInvoice, pruneDelivered } from './src/store.js';
+import { upsertInvoice, updateInvoiceStatus, setItemDone, getLeaderboard, getInvoice, pruneDelivered, itemsProgress } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -143,7 +143,7 @@ function checkBridgeSecret(req) {
   return (req.headers['x-bridge-secret'] || '') === BRIDGE_SECRET;
 }
 
-async function pushToCloud(id, status) {
+async function pushToCloud(id, status, extra = {}) {
   if (!CF_WORKER_URL || !BRIDGE_SECRET) return;
   try {
     await fetch(`${CF_WORKER_URL}/dispatch/invoices/${encodeURIComponent(id)}/status`, {
@@ -157,9 +157,17 @@ async function pushToCloud(id, status) {
         // no duplicate downstream notifyFactory). Fresh UUID per call site.
         'X-Idempotency-Key': randomUUID(),
       },
-      body: JSON.stringify({ status }),
+      // `extra` carries per-abaya items (with done flags) + customerPhone so the
+      // cloud has what it needs to message the customer on delivery.
+      body: JSON.stringify({ status, ...extra }),
     });
   } catch (_) {}
+}
+
+// Build the bridge `extra` payload (items + customerPhone) from a stored invoice.
+function cloudExtra(inv) {
+  if (!inv) return {};
+  return { items: inv.items || [], customerPhone: inv.customerPhone ?? null };
 }
 
 async function syncFromCloud() {
@@ -304,7 +312,7 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  // Double-confirmation Step 1: PENDING → ARRIVED
+  // Step 1: PENDING → ARRIVED (material physically at the gate)
   const m1 = pathname.match(/^\/api\/delivery\/step1\/([^/]+)$/);
   if (m1 && req.method === 'POST') {
     const inv = getInvoice(m1[1]);
@@ -316,16 +324,43 @@ const server = createServer(async (req, res) => {
     return sendJson(res, { ok: true, invoice: updated });
   }
 
-  // Double-confirmation Step 2: ARRIVED → DELIVERED
+  // Material check: ARRIVED → READY (supervisor verified the material; production can run)
+  const mc = pathname.match(/^\/api\/delivery\/material-check\/([^/]+)$/);
+  if (mc && req.method === 'POST') {
+    const inv = getInvoice(mc[1]);
+    if (!inv) return sendJson(res, { error: 'not found' }, 404);
+    if (inv.status !== 'ARRIVED') return sendJson(res, { error: 'invalid state', current: inv.status }, 409);
+    const updated = updateInvoiceStatus(mc[1], 'READY');
+    pushLeaderboard();
+    pushToCloud(mc[1], 'READY', cloudExtra(updated)).catch(() => {});
+    return sendJson(res, { ok: true, invoice: updated });
+  }
+
+  // Toggle a single abaya's done flag (frequent floor action — no PIN)
+  const it = pathname.match(/^\/api\/items\/([^/]+)\/(\d+)\/toggle$/);
+  if (it && req.method === 'POST') {
+    const updated = setItemDone(it[1], parseInt(it[2], 10));
+    if (!updated) return sendJson(res, { error: 'not found' }, 404);
+    pushLeaderboard();
+    // Sync the new item state to the cloud (status unchanged) so the cloud's
+    // copy stays current for customer messaging on delivery.
+    pushToCloud(it[1], updated.status, cloudExtra(updated)).catch(() => {});
+    const { doneCount, total, pendingCount } = itemsProgress(updated);
+    return sendJson(res, { ok: true, invoice: updated, doneCount, total, pendingCount });
+  }
+
+  // Step 2: READY → DELIVERED (handed to customer). Allowed even if some abayas
+  // are still pending — the UI warns; we never hard-block a real handover.
   const m2 = pathname.match(/^\/api\/delivery\/step2\/([^/]+)$/);
   if (m2 && req.method === 'POST') {
     const inv = getInvoice(m2[1]);
     if (!inv) return sendJson(res, { error: 'not found' }, 404);
-    if (inv.status !== 'ARRIVED') return sendJson(res, { error: 'invalid state', current: inv.status }, 409);
+    if (inv.status !== 'READY') return sendJson(res, { error: 'invalid state', current: inv.status, hint: 'material check (→READY) required before delivery' }, 409);
     const updated = updateInvoiceStatus(m2[1], 'DELIVERED');
     pushLeaderboard();
-    pushToCloud(m2[1], 'DELIVERED').catch(() => {});
-    sendWhatsAppAlert(updated).catch(() => {});
+    // Cloud handles customer notification on DELIVERED (CEO-toggled, metered).
+    pushToCloud(m2[1], 'DELIVERED', cloudExtra(updated)).catch(() => {});
+    sendWhatsAppAlert(updated).catch(() => {}); // factory-local supervisor alert (unchanged)
     return sendJson(res, { ok: true, invoice: updated, whatsappConfigured: !!(WA_TOKEN && WA_PHONE_ID) });
   }
 

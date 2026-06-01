@@ -134,3 +134,26 @@ These are decision points, not implementation details. Each unblocks a stage.
 Stage 1 — add `tenant_id` everywhere with a hardcoded constant. It's the highest-value structural prep that doesn't change behavior for the existing customer, and once done, every future tenant becomes a config row instead of a code change.
 
 > *This doc is intentionally rough — it's a starting frame for a real GTM conversation, not a final go-to-market plan. Update as decisions are made.*
+
+---
+
+## 8. First billable add-on (shipped): customer notifications
+
+The first concrete monetizable feature beyond the base license is **customer delivery notifications** — "send from Dubai, activate at will, we charge them."
+
+**How it works**
+- The CEO flips a single toggle on the cloud dashboard ("Customer notifications"). Off by default.
+- When ON, every order that reaches **DELIVERED** triggers a WhatsApp message to the customer (phone parsed from the order notes), sent from the **cloud Worker** using platform WhatsApp credentials.
+- Every attempt is written to the **`customer_messages`** table (`sent | skipped | failed`) — this is both the audit log and the **billing meter**. The dashboard widget shows "N sent this month / M total".
+
+**Billing model**
+- Metered per message sent (count `customer_messages` where `status='sent'` in the period).
+- Sits on top of the base license tier (§4) as a usage add-on, e.g. a monthly bundle of N messages + overage, or a flat per-message fee. Exact pricing TBD with the founder.
+- The tenant self-activates (toggle) and we invoice from the meter — no engineering involvement per tenant.
+
+**Compliance note**
+- Meta requires a **pre-approved template** for business-initiated messages outside the customer's 24h session window. `messaging_settings.template_mode` supports `freeform` (in-session only) and `template` (approved template name). For reliable cold "your order is ready" sends, the tenant must approve a template in Meta Business — documented as an activation prerequisite.
+
+**Idempotency / safety**
+- A unique index (`customer_messages(invoice_id) WHERE status='sent'`) guarantees **one notification per order**, even on bridge retries.
+- Every messaging path is wrapped so a missing migration or provider error can never break the delivery bridge (consistent with the round-3 hardening).

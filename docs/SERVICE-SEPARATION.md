@@ -132,3 +132,16 @@ These were reviewed and intentionally left as-is for now:
   `pm2 save` / `pm2 startup` to survive a reboot independently of the main server.
 - **Local `dashboard.html`** (main server, port 3000) has no auth — it relies on being
   LAN-only and not tunneled.
+
+---
+
+## 7. Order lifecycle + customer data in the cloud (added)
+
+The invoice lifecycle is now `PENDING → ARRIVED → READY (supervisor material check) → DELIVERED`, with per-abaya `done` flags tracked inside each item and surfaced as progress + urgency on the leaderboard.
+
+What this added to the **cloud** side (D1):
+- `dispatch_invoices.customer_phone` — parsed best-effort from the order `notes` (factory and Worker both parse). Used only for the delivery notification.
+- `messaging_settings` — singleton row the CEO toggles to enable/disable customer notifications.
+- `customer_messages` — per-message log + billing meter.
+
+The bridge payload (`pushToCloud`) now also carries `items` (with done flags) + `customerPhone` on READY/DELIVERED so the cloud can message the customer on delivery. The customer phone is **business data** — it lives in D1 (CEO-JWT-gated dashboard) and is sent outbound only from the cloud Worker when the CEO has enabled messaging. It is **not** exposed by the factory leaderboard's token-gated read endpoints beyond what already flows in `notes`.

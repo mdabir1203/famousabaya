@@ -128,9 +128,21 @@ button:disabled{opacity:.42;cursor:not-allowed;transform:none!important}
 .status-pending{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
 .status-arrived{background:var(--blb);color:var(--bl);border-color:var(--bd2);animation:sPulse 2s ease-in-out infinite}
 @keyframes sPulse{0%,100%{box-shadow:0 0 0 0 rgba(106,95,193,.3)}50%{box-shadow:0 0 0 4px rgba(106,95,193,0)}}
+.status-ready{background:rgba(45,212,191,.16);color:#14b8a6;border-color:rgba(45,212,191,.45)}
 .status-delivered{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
 .status-urgent{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.4);animation:urgPulse 1s ease-in-out infinite}
 @keyframes urgPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}
+
+/* Per-abaya progress + tap-to-toggle items */
+.abaya-progress{display:flex;align-items:center;gap:8px;margin:2px 0 6px}
+.abaya-progress-bar{flex:1;height:7px;border-radius:999px;background:var(--bd);overflow:hidden;min-width:40px}
+.abaya-progress-fill{height:100%;border-radius:999px;background:var(--gr,#c2ef4e);transition:width .35s ease}
+.abaya-progress-fill.all-done{background:#14b8a6}
+.abaya-progress-txt{font-size:11px;font-weight:800;color:var(--tx3);font-family:var(--fn-mono);white-space:nowrap}
+.item-toggle{cursor:pointer;background:none;border:none;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;width:20px;height:20px;border-radius:5px;border:1.5px solid var(--bd2);color:transparent;transition:all .15s ease;margin-top:1px}
+.item-toggle:hover{border-color:#14b8a6}
+.item-toggle.done{background:#14b8a6;border-color:#14b8a6;color:#fff}
+.item-li.done .item-spec{text-decoration:line-through;opacity:.55}
 
 /* Items column */
 .field-label{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
@@ -548,6 +560,8 @@ function waLink(inv) {
 function cardUrgencyClass(inv) {
   if (inv.status === 'DELIVERED') return 'state-done';
   if (inv.status === 'ARRIVED') return 'state-arrived';
+  // Server-derived urgency: pending abayas near/over SLA.
+  if (inv.isUrgent) return 'state-overdue';
   if (inv.slaDeadline && inv.slaDeadline - Date.now() <= 0) return 'state-overdue';
   if (inv.slaDeadline && inv.slaDeadline - Date.now() < 30 * 60000) return 'state-warn';
   return '';
@@ -819,17 +833,53 @@ async function doStep1(id) {
   const r = await apiPost('/api/delivery/step1/' + id);
   if (r && !r.ok) showToast(r.error || 'Failed', 'err');
 }
+async function doMaterialCheck(id) {
+  const inv = invoices.find(v => v.id === id);
+  const confirmed = await showConfirm({
+    icon: '🔍',
+    title: 'Material check done?',
+    supplierName: inv?.supplier || id,
+    invoiceId: id,
+    desc: 'Confirm the material has been checked and verified. The order moves to READY and production can begin.',
+    okLabel: 'Yes, Material OK',
+    okClass: 'btn-amber',
+  });
+  if (!confirmed) return;
+  const r = await apiPost('/api/delivery/material-check/' + id);
+  if (r && !r.ok) showToast(r.error || 'Failed', 'err');
+  else if (r && r.ok) showToast('Material verified — ready for production', 'ok');
+}
+
+// Toggle one abaya's done state. Optimistic: flip immediately, revert on failure.
+async function toggleItem(id, pos, btn) {
+  const willBeDone = !btn.classList.contains('done');
+  btn.classList.toggle('done', willBeDone);
+  btn.closest('.item-li')?.classList.toggle('done', willBeDone);
+  btn.setAttribute('aria-pressed', willBeDone ? 'true' : 'false');
+  const r = await apiPost('/api/items/' + id + '/' + pos + '/toggle');
+  if (!r || !r.ok) {
+    // Revert optimistic change; the next SSE update will reconcile anyway.
+    btn.classList.toggle('done', !willBeDone);
+    btn.closest('.item-li')?.classList.toggle('done', !willBeDone);
+    showToast(r?.error || 'Could not update abaya', 'err');
+  }
+}
+
 async function doStep2(id) {
   const inv = invoices.find(v => v.id === id);
+  const pending = (typeof inv?.pendingCount === 'number')
+    ? inv.pendingCount
+    : (inv?.items || []).filter(i => i && !i.done).length;
+  const baseDesc = waConfigured
+    ? 'This permanently marks the order as delivered and fires a WhatsApp alert to the team.'
+    : 'This permanently marks the order as delivered. Use the manual WhatsApp button to notify the team.';
   const confirmed = await showConfirm({
     icon: '✅',
     title: 'Confirm Delivery?',
     supplierName: inv?.supplier || id,
     invoiceId: id,
-    desc: waConfigured
-      ? 'This permanently marks the order as delivered and fires a WhatsApp alert to the team.'
-      : 'This permanently marks the order as delivered. Use the manual WhatsApp button to notify the team.',
-    okLabel: 'Yes, Confirm Delivered',
+    desc: (pending > 0 ? `⚠️ ${pending} abaya${pending !== 1 ? 's' : ''} still pending. ` : '') + baseDesc,
+    okLabel: pending > 0 ? 'Deliver anyway' : 'Yes, Confirm Delivered',
     okClass: 'btn-green',
   });
   if (!confirmed) return;
@@ -946,34 +996,54 @@ function buildCard(inv, isNew = false) {
   card.dataset.sla = inv.slaDeadline || '';
   card.setAttribute('role', 'listitem');
 
-  const statusLabel = { PENDING: 'Pending', ARRIVED: 'Arrived', DELIVERED: 'Delivered', URGENT: 'Urgent' }[inv.status] || inv.status;
+  const statusLabel = { PENDING: 'Pending', ARRIVED: 'Arrived', READY: 'Ready', DELIVERED: 'Delivered', URGENT: 'Urgent' }[inv.status] || inv.status;
   const statusCls = 'status-badge status-' + inv.status.toLowerCase();
   const { text: timerTxt, cls: timerCls } = fmtCountdown(inv.slaDeadline, inv.status);
   const itemCount = inv.items?.length || 0;
-  card.setAttribute('aria-label', `${inv.supplier}, ${statusLabel}, ${itemCount} abaya${itemCount !== 1 ? 's' : ''}, SLA ${timerTxt}`);
+  // Per-abaya progress (server-derived; fall back to local count if absent).
+  const doneCount = (typeof inv.doneCount === 'number') ? inv.doneCount : (inv.items || []).filter(i => i && i.done).length;
+  const total = (typeof inv.total === 'number') ? inv.total : itemCount;
+  card.setAttribute('aria-label', `${inv.supplier}, ${statusLabel}, ${doneCount} of ${total} abaya${total !== 1 ? 's' : ''} done, SLA ${timerTxt}`);
 
   const showWaBtn = inv.status === 'DELIVERED' && !waConfigured;
   const showStep1 = inv.status === 'PENDING' || inv.status === 'URGENT';
-  const showStep2 = inv.status === 'ARRIVED';
+  const showMatCheck = inv.status === 'ARRIVED';
+  const showStep2 = inv.status === 'READY';
+  // Items get tappable done-toggles once the order is in production (READY) — or
+  // still allow ticking after delivery for record correction.
+  const itemsToggleable = inv.status === 'READY' || inv.status === 'ARRIVED';
 
-  // Items list — stacked layout (material name + colour/qty)
+  // Progress bar (only meaningful when there are abayas to track)
+  const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  const progressHtml = total > 0
+    ? `<div class="abaya-progress" aria-label="${doneCount} of ${total} abayas done">
+         <div class="abaya-progress-bar"><div class="abaya-progress-fill ${doneCount===total?'all-done':''}" style="width:${pct}%"></div></div>
+         <span class="abaya-progress-txt">${doneCount}/${total}</span>
+       </div>`
+    : '';
+
+  // Items list — each row a tap-to-toggle "done" control during production
   const itemsHtml = (inv.items && inv.items.length)
-    ? `<ul style="list-style:none;padding:0;margin:4px 0 0;width:100%;min-width:0" aria-label="Abaya materials">${inv.items.map(it => `
-        <li style="display:flex;gap:7px;align-items:flex-start;padding:3px 0;border-bottom:1px solid var(--bd);min-width:0;width:100%">
-          <span style="font-size:10px;font-weight:800;color:var(--bl);font-family:var(--fn-mono);flex-shrink:0;padding-top:2px;width:18px;text-align:right">#${it.pos}</span>
+    ? `${progressHtml}<ul style="list-style:none;padding:0;margin:0;width:100%;min-width:0" aria-label="Abayas">${inv.items.map(it => `
+        <li class="item-li${it.done ? ' done' : ''}" style="display:flex;gap:7px;align-items:flex-start;padding:3px 0;border-bottom:1px solid var(--bd);min-width:0;width:100%">
+          ${itemsToggleable
+            ? `<button class="item-toggle${it.done?' done':''}" data-id="${esc(inv.id)}" data-pos="${it.pos}" aria-label="${it.done?'Mark abaya '+it.pos+' not done':'Mark abaya '+it.pos+' done'}" aria-pressed="${it.done?'true':'false'}"><svg width="11" height="9" viewBox="0 0 11 9" fill="none" aria-hidden="true"><path d="M1 4.5L4 7.5L10 1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
+            : `<span style="font-size:10px;font-weight:800;color:var(--bl);font-family:var(--fn-mono);flex-shrink:0;padding-top:2px;width:18px;text-align:right">#${it.pos}</span>`}
           <span style="min-width:0;flex:1;overflow:hidden">
-            <span style="font-size:13px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.materialSpec)}</span>
+            <span class="item-spec" style="font-size:13px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.materialSpec)}</span>
             ${[it.color, it.qty].filter(Boolean).length
               ? `<span style="font-size:11px;color:var(--tx3);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${[it.color, it.qty].filter(Boolean).join(' · ')}</span>`
               : ''}
           </span>
         </li>`).join('')}</ul>`
-    : `<p style="color:var(--tx3);font-size:12px;margin:5px 0 0">No materials listed</p>`;
+    : `<p style="color:var(--tx3);font-size:12px;margin:5px 0 0">No abayas listed</p>`;
 
   // Actions
+  const pendingTxt = (total > 0 && doneCount < total) ? ` (${total - doneCount} pending)` : '';
   const actionsHtml = [
     showStep1 ? `<button class="btn btn-amber step1-btn" data-id="${esc(inv.id)}" aria-label="Mark ${esc(inv.supplier)} as arrived">&#10003; Mark Arrived</button>` : '',
-    showStep2 ? `<button class="btn btn-green step2-btn" data-id="${esc(inv.id)}" aria-label="Confirm receipt for ${esc(inv.supplier)}">&#9989; Confirm Receipt</button>` : '',
+    showMatCheck ? `<button class="btn btn-amber matcheck-btn" data-id="${esc(inv.id)}" aria-label="Material check done for ${esc(inv.supplier)}">&#10003; Material Check</button>` : '',
+    showStep2 ? `<button class="btn btn-green step2-btn" data-id="${esc(inv.id)}" aria-label="Confirm delivery for ${esc(inv.supplier)}">&#9989; Confirm Delivery${pendingTxt}</button>` : '',
     showWaBtn ? `<a class="btn btn-wa" href="${esc(waLink(inv))}" target="_blank" rel="noopener noreferrer" aria-label="Alert supervisor via WhatsApp">&#128172; Alert Supervisor</a>` : '',
   ].join('');
 
@@ -1003,7 +1073,8 @@ function buildCard(inv, isNew = false) {
     </div>`);
 
   card.innerHTML = `
-    ${inv.status === 'ARRIVED' ? `<div class="arrived-banner" role="alert"><span class="arrived-icon" aria-hidden="true">🚨</span>SUPERVISOR NEEDED — CONFIRM RECEIPT</div>` : ''}
+    ${inv.status === 'ARRIVED' ? `<div class="arrived-banner" role="alert"><span class="arrived-icon" aria-hidden="true">🚨</span>SUPERVISOR NEEDED — MATERIAL CHECK</div>` : ''}
+    ${(inv.status === 'READY' && inv.isUrgent) ? `<div class="arrived-banner" role="alert" style="background:var(--rdb,#fde8e8);color:var(--rd,#ef4444)"><span class="arrived-icon" aria-hidden="true">⏰</span>${(total - doneCount)} ABAYA${(total - doneCount) !== 1 ? 'S' : ''} PENDING — DEADLINE NEAR</div>` : ''}
     <div class="card-row">
       <div class="col-rank">
         <span class="rank-num" aria-label="Priority ${inv.rank || '—'}">#${inv.rank || '—'}</span>
@@ -1013,7 +1084,7 @@ function buildCard(inv, isNew = false) {
         <span class="${statusCls}" aria-label="Status: ${statusLabel}">${statusLabel}</span>
       </div>
       <div class="col-items">
-        <div class="field-label">Abayas${itemCount ? ' (' + itemCount + ')' : ''}</div>
+        <div class="field-label">Abayas${total ? ' (' + doneCount + '/' + total + ' done)' : ''}</div>
         ${itemsHtml}
       </div>
       <div class="col-queue">
@@ -1034,7 +1105,12 @@ function buildCard(inv, isNew = false) {
   `;
 
   card.querySelector('.step1-btn')?.addEventListener('click', () => doStep1(inv.id));
+  card.querySelector('.matcheck-btn')?.addEventListener('click', () => doMaterialCheck(inv.id));
   card.querySelector('.step2-btn')?.addEventListener('click', () => doStep2(inv.id));
+  // Per-abaya done toggles (no PIN — frequent floor action; optimistic + revert on fail)
+  card.querySelectorAll('.item-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleItem(btn.dataset.id, btn.dataset.pos, btn));
+  });
 
   // Wire custom audio player
   const audioNote = card.querySelector('.audio-note');
