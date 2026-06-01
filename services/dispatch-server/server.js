@@ -10,7 +10,7 @@ import { Readable } from 'node:stream';
 import { networkInterfaces } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
-import { upsertInvoice, updateInvoiceStatus, setItemDone, getLeaderboard, getInvoice, pruneDelivered, itemsProgress } from './src/store.js';
+import { upsertInvoice, updateInvoiceStatus, setItemDone, getLeaderboard, getInvoice, pruneDelivered, itemsProgress, getMaterials } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -254,6 +254,13 @@ const server = createServer(async (req, res) => {
   if (pathname === '/api/invoices' && req.method === 'GET') {
     if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     return sendJson(res, getLeaderboard({ includeDelivered: true }));
+  }
+
+  // Material palette — distinct materials ever used, with usage counts + colours.
+  // Powers a future drag-and-drop material picker in the invoice-creation UI.
+  if (pathname === '/api/materials' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
+    return sendJson(res, { materials: getMaterials() });
   }
 
   // Manual invoice creation (UI form)

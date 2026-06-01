@@ -15,6 +15,9 @@ import { fileURLToPath } from 'node:url';
 const _dir      = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(_dir, '..', 'data');
 const DATA_FILE = join(DATA_DIR, 'invoices.json');
+// Registry of distinct materials ever used — powers a future drag-and-drop
+// material palette in the invoice-creation UI. See recordMaterials/getMaterials.
+const MATERIALS_FILE = join(DATA_DIR, 'materials.json');
 
 // ─── Types (JSDoc) ────────────────────────────────────────────────────────────
 /**
@@ -77,12 +80,79 @@ function _load() {
   }
 }
 
+/** Persist the materials registry (separate file — changes far less often). */
+function _persistMaterials() {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    const rows = Array.from(_materials.values()).map((m) => ({ ...m, colors: Array.from(m.colors) }));
+    writeFileSync(MATERIALS_FILE, JSON.stringify(rows, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[store] materials persist failed:', e.message);
+  }
+}
+
+/** Load the materials registry at startup. */
+function _loadMaterials() {
+  try {
+    if (!existsSync(MATERIALS_FILE)) return;
+    const rows = JSON.parse(readFileSync(MATERIALS_FILE, 'utf8'));
+    if (Array.isArray(rows)) {
+      for (const m of rows) {
+        if (!m || !m.key) continue;
+        _materials.set(m.key, {
+          key: m.key,
+          name: m.name || m.key,
+          count: Number(m.count) || 0,
+          lastUsed: Number(m.lastUsed) || 0,
+          colors: new Set(Array.isArray(m.colors) ? m.colors : []),
+        });
+      }
+      console.log(`[store] restored ${rows.length} material(s) from disk`);
+    }
+  } catch (e) {
+    console.warn('[store] materials load failed — starting fresh:', e.message);
+  }
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 /** @type {Map<string, Invoice>} */
 const _invoices = new Map();
 
-_load(); // restore on startup
+/**
+ * Materials registry: normalised material name → usage stats.
+ * @type {Map<string, { key: string, name: string, count: number, lastUsed: number, colors: Set<string> }>}
+ */
+const _materials = new Map();
+
+_load();          // restore invoices on startup
+_loadMaterials(); // restore materials registry on startup
+
+/**
+ * Record the materials used by an invoice's items so they can later power a
+ * drag-and-drop material picker. Increments usage count, tracks last-used and
+ * any colours seen. Keyed on a normalised material name (case/space-insensitive).
+ * @param {InvoiceItem[]} items
+ */
+function recordMaterials(items) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const now = Date.now();
+  let changed = false;
+  for (const it of items) {
+    const name = String(it?.materialSpec || '').trim();
+    if (!name) continue;
+    const key = name.toLowerCase().replace(/\s+/g, ' ');
+    let m = _materials.get(key);
+    if (!m) { m = { key, name, count: 0, lastUsed: 0, colors: new Set() }; _materials.set(key, m); }
+    m.count += 1;
+    m.lastUsed = now;
+    m.name = name; // keep the most recent original casing
+    const color = String(it?.color || '').trim();
+    if (color) m.colors.add(color);
+    changed = true;
+  }
+  if (changed) _persistMaterials();
+}
 
 // ─── Constants (urgency) ───────────────────────────────────────────────────────
 // An order with abayas still pending is "urgent" once it's within this window of
@@ -233,7 +303,19 @@ export function upsertInvoice(data) {
   if (!invoice.id) throw new Error('Invoice id is required');
   _invoices.set(invoice.id, invoice);
   _persist();
+  recordMaterials(invoice.items); // grow the material palette from real usage
   return invoice;
+}
+
+/**
+ * Return the recorded material palette for a future drag-and-drop picker.
+ * Sorted by usage count (desc), then most-recently-used.
+ * @returns {{ name: string, count: number, lastUsed: number, colors: string[] }[]}
+ */
+export function getMaterials() {
+  return Array.from(_materials.values())
+    .sort((a, b) => (b.count - a.count) || (b.lastUsed - a.lastUsed))
+    .map((m) => ({ name: m.name, count: m.count, lastUsed: m.lastUsed, colors: Array.from(m.colors) }));
 }
 
 /**

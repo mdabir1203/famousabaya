@@ -1031,9 +1031,6 @@ function buildCard(inv, isNew = false) {
             : `<span style="font-size:10px;font-weight:800;color:var(--bl);font-family:var(--fn-mono);flex-shrink:0;padding-top:2px;width:18px;text-align:right">#${it.pos}</span>`}
           <span style="min-width:0;flex:1;overflow:hidden">
             <span class="item-spec" style="font-size:13px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.materialSpec)}</span>
-            ${[it.color, it.qty].filter(Boolean).length
-              ? `<span style="font-size:11px;color:var(--tx3);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${[it.color, it.qty].filter(Boolean).join(' · ')}</span>`
-              : ''}
           </span>
         </li>`).join('')}</ul>`
     : `<p style="color:var(--tx3);font-size:12px;margin:5px 0 0">No abayas listed</p>`;
