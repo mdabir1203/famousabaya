@@ -39,47 +39,56 @@ A modular **Hybrid-Edge** material logistics and real-time shop floor leaderboar
 ## ─── Folder Structure
 
 ```
-services/dispatch-server/
-├── cloud-worker/
-│   └── index.js         ← Cloud Layer: Cloudflare Worker
-├── local-server/
-│   ├── server.js        ← Local Layer: Bun server entry point
-│   ├── store.js         ← Local in-memory sorted cache
-│   └── sse.js           ← Local SSE client registry
+services/dispatch-server/   ← LOCAL layer only (Node/Bun server). The CLOUD edge
+│                              lives in the main Worker at ../../cloudflare/.
+├── server.js            ← Local server entry point (node server.js)
+├── src/
+│   ├── store.js         ← In-memory sorted invoice cache
+│   ├── sse.js           ← SSE client registry
+│   └── whatsapp.js      ← WhatsApp payload parser (local fallback)
 ├── public/
-│   └── leaderboard.html ← Gorgeous responsive leaderboard UI
-├── test/
-│   └── smoke.js         ← End-to-end integration test
-├── schema.sql           ← D1 Database table structure
-├── wrangler.toml        ← Wrangler worker config
+│   └── leaderboard.html ← Responsive leaderboard UI
+├── data/                ← Persisted invoices.json (gitignored)
+├── schema.sql           ← D1 table reference (applied from cloudflare/)
 ├── .env.example         ← Local environment vars
 ├── .gitignore
 ├── package.json
 └── README.md
 ```
 
+> **Note:** there is no `cloud-worker/` or `local-server/` folder. The cloud
+> Cloudflare Worker that this README originally split out was consolidated into
+> the main Worker — its dispatch routes live in
+> `../../cloudflare/src/handlers/dispatch.js` (`handleDispatch`). Do **not** run
+> `wrangler deploy` from this folder.
+
 ---
 
 ## ─── Setup & Deployment
 
-### 1. Cloud Layer (Cloudflare D1 & Worker)
+### 1. Cloud Layer (Cloudflare D1 & Worker) — deployed from `cloudflare/`
 
-Initialize the D1 SQL database table:
-```bash
-# Verify connection & apply schema to local/remote D1
-npx wrangler d1 execute abaya-db --remote --file=schema.sql
-```
+The dispatch edge (WhatsApp webhook + invoice bridge) is part of the **main**
+Worker. Deploy and configure it from the repo's `cloudflare/` directory, not here:
 
-Deploy the Cloud Worker:
 ```bash
-# Set required secrets on Cloudflare Edge
+cd ../../cloudflare
+
+# Apply the D1 schema / migrations (dispatch_invoices etc.)
+npx wrangler d1 execute abaya-db --remote --file=migrations/0006_dispatch_invoices.sql
+
+# Set the dispatch/WhatsApp secrets on the main Worker
 npx wrangler secret put WHATSAPP_VERIFY_TOKEN  # Webhook token for Meta verification
-npx wrangler secret put WHATSAPP_TOKEN         # Permanent Meta API token (read-only)
-npx wrangler secret put DISPATCH_BRIDGE_SECRET # Secret shared key between Cloud and Local Bun
+npx wrangler secret put WHATSAPP_TOKEN         # Permanent Meta API token
+npx wrangler secret put DISPATCH_BRIDGE_SECRET # Shared key between the Worker and this local server
 
-# Deploy worker
+# Deploy the Worker
 npx wrangler deploy
 ```
+
+After deploy the routes are live at `https://dashboard.farewellabaya.com/dispatch/*`.
+Register the Meta webhook URL as
+`https://dashboard.farewellabaya.com/dispatch/webhook/whatsapp`.
 
 ### 2. Local Layer (Bun Dispatch Server)
 

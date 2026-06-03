@@ -18,7 +18,7 @@ import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
 import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
 import { sendEODSummary } from './eod-summary.js';
-import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript } from './ui/ceo-pages.js';
+import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
 import releaseMomentData from './data/release-moment.json';
 
 function cookieHttps(request) {
@@ -124,6 +124,24 @@ export default {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
           Pragma: 'no-cache',
           'CDN-Cache-Control': 'no-store',
+        },
+      });
+    }
+
+    // ── Public legal pages (no auth) — for OAuth/Login dialog review & users ────
+    if ((path === '/privacy' || path === '/privacy.html') && request.method === 'GET') {
+      return new Response(getPrivacyPolicyPage(), {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      });
+    }
+    if ((path === '/terms' || path === '/terms.html') && request.method === 'GET') {
+      return new Response(getTermsOfServicePage(), {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
         },
       });
     }

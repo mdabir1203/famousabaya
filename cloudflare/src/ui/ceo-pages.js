@@ -4,7 +4,7 @@ import { FACTORY_HOURLY_START, FACTORY_HOURLY_END } from '../working-hours.js';
 export function getLoginPage() {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>AbaYa Track — CEO Access</title>
+<title>FarewellAbaya — Sign in</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
@@ -12,24 +12,40 @@ export function getLoginPage() {
 <noscript><link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet"></noscript>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#1f1633;color:#ffffff;font-family:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-  .box{background:rgba(255,255,255,.08);border:1px solid rgba(54,45,89,.5);border-radius:24px;padding:40px;width:100%;max-width:360px;text-align:center;box-shadow:rgba(22,15,36,.9) 0px 24px 80px;backdrop-filter:blur(18px) saturate(180%)}
-  .logo{width:64px;height:64px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 20px}
-  h1{font-family:'Sora','Rubik',sans-serif;font-size:22px;font-weight:700;margin-bottom:6px}
-  p{color:#9c98b0;font-size:13px;margin-bottom:28px}
-  input{width:100%;padding:14px 18px;background:#241a38;border:1px solid rgba(106,95,193,.3);border-radius:12px;color:#ffffff;font-size:16px;text-align:center;letter-spacing:3px;outline:none;transition:border-color .2s;margin-bottom:12px;font-family:'Rubik',sans-serif}
-  input:focus{border-color:#6a5fc1}
-  button{width:100%;padding:15px;background:#79628c;color:#fff;border:1px solid #584674;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;font-family:'Rubik',sans-serif;text-transform:uppercase;letter-spacing:0.2px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
-  button:hover{box-shadow:rgba(0,0,0,.18) 0px .5rem 1.5rem}
-  .err{color:#ef4444;font-size:13px;margin-top:10px;min-height:20px}
+  body{background:#160f24;color:#fff;font-family:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;overflow:hidden;position:relative}
+  /* soft drifting aurora behind the card */
+  body::before,body::after{content:'';position:fixed;width:60vmax;height:60vmax;border-radius:50%;filter:blur(80px);opacity:.5;z-index:0;animation:drift 18s ease-in-out infinite alternate}
+  body::before{background:radial-gradient(circle,#6a5fc1,transparent 60%);top:-15vmax;left:-10vmax}
+  body::after{background:radial-gradient(circle,#a86fd6,transparent 60%);bottom:-18vmax;right:-12vmax;animation-delay:-9s}
+  @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(4vmax,3vmax) scale(1.15)}}
+  @media (prefers-reduced-motion:reduce){body::before,body::after,.logo{animation:none}}
+  .box{position:relative;z-index:1;background:rgba(255,255,255,.07);border:1px solid rgba(150,130,220,.28);border-radius:26px;padding:42px 38px;width:100%;max-width:372px;text-align:center;box-shadow:rgba(15,9,28,.85) 0 30px 90px;backdrop-filter:blur(22px) saturate(180%)}
+  .logo{width:66px;height:66px;background:linear-gradient(135deg,#7c6fe0,#422082);border-radius:18px;display:flex;align-items:center;justify-content:center;font-size:33px;margin:0 auto 18px;box-shadow:0 10px 30px rgba(106,95,193,.45);animation:float 4.5s ease-in-out infinite}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  .hi{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:#a89fd0;margin-bottom:6px}
+  h1{font-family:'Sora','Rubik',sans-serif;font-size:24px;font-weight:800;margin-bottom:8px;background:linear-gradient(90deg,#fff,#c9b8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .sub{color:#9c98b0;font-size:13.5px;margin-bottom:26px;line-height:1.5}
+  input{width:100%;padding:15px 18px;background:#221735;border:1px solid rgba(124,111,224,.3);border-radius:13px;color:#fff;font-size:16px;text-align:center;letter-spacing:3px;outline:none;transition:border-color .2s,box-shadow .2s;margin-bottom:12px;font-family:'Rubik',sans-serif}
+  input::placeholder{letter-spacing:.5px;color:#6f688a}
+  input:focus{border-color:#9d8bff;box-shadow:0 0 0 4px rgba(124,111,224,.18)}
+  button{width:100%;padding:15px;background:linear-gradient(135deg,#7c6fe0,#5a3fb0);color:#fff;border:0;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;transition:transform .12s,box-shadow .2s,filter .2s;font-family:'Rubik',sans-serif;text-transform:uppercase;letter-spacing:.4px}
+  button:hover{filter:brightness(1.08);box-shadow:0 .6rem 1.6rem rgba(106,95,193,.5)}
+  button:active{transform:translateY(1px) scale(.99)}
+  .err{color:#ff8a8a;font-size:13px;margin-top:10px;min-height:20px}
+  .legal{margin-top:22px;font-size:11.5px;color:#6f688a;line-height:1.6}
+  .legal a{color:#a89fd0;text-decoration:none}
+  .legal a:hover{text-decoration:underline}
 </style></head><body>
 <div class="box">
   <div class="logo">&#129525;</div>
-  <h1>CEO Access</h1>
-  <p>AbaYa Track &mdash; Executive Dashboard</p>
-  <input type="password" id="tok" placeholder="Enter Access Code" maxlength="64" onkeydown="if(event.key==='Enter')login()">
-  <button onclick="login()">&#128274; Access Dashboard</button>
+  <div class="hi">FarewellAbaya</div>
+  <h1>Welcome back</h1>
+  <p class="sub">Your atelier, at a glance.<br>Pop in your access code and let's go.</p>
+  <input type="password" id="tok" placeholder="Access code" maxlength="64" autofocus onkeydown="if(event.key==='Enter')login()">
+  <button onclick="login()">Open my dashboard &#10142;</button>
   <div class="err" id="err"></div>
+  <div class="legal">By continuing you agree to our<br>
+    <a href="/terms">Terms</a> &middot; <a href="/privacy">Privacy Policy</a></div>
 </div>
 <script>
 async function login() {
@@ -1663,4 +1679,226 @@ setInterval(function () {
 </script>
 </body>
 </html>`;
+}
+
+// ─── LEGAL PAGES (public — no auth) ───────────────────────────────────────────
+// Served for OAuth/Login dialog review (e.g. Meta App Review) and end users.
+// Privacy policy: /privacy   Terms of Service: /terms
+const LEGAL_BUSINESS = 'FarewellAbaya';
+const LEGAL_EMAIL = 'info@farewellabaya.com';
+const LEGAL_UPDATED = 'June 3, 2026';
+
+function legalShell(title, bodyHtml) {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${title} &mdash; ${LEGAL_BUSINESS}</title>
+<meta name="robots" content="index,follow">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#1f1633;color:#ece9f5;font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.65;padding:0}
+  .wrap{max-width:780px;margin:0 auto;padding:48px 22px 96px}
+  header{border-bottom:1px solid rgba(106,95,193,.3);padding-bottom:22px;margin-bottom:30px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .logo{width:42px;height:42px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px}
+  .brand b{font-size:17px;font-weight:700}
+  h1{font-size:27px;font-weight:800;letter-spacing:-.01em}
+  .updated{color:#9c98b0;font-size:13px;margin-top:8px}
+  h2{font-size:18px;font-weight:700;margin:30px 0 10px;color:#fff}
+  p,li{color:#c9c4dc;font-size:15px;margin:10px 0}
+  ul{padding-left:22px}
+  a{color:#9d8bff;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .box{background:rgba(255,255,255,.05);border:1px solid rgba(106,95,193,.25);border-radius:14px;padding:16px 18px;margin:18px 0}
+  footer{margin-top:40px;border-top:1px solid rgba(106,95,193,.3);padding-top:18px;color:#807c95;font-size:13px}
+  footer a{color:#9c98b0}
+</style></head><body>
+<div class="wrap">
+  <header>
+    <div class="brand"><div class="logo">&#129525;</div><b>${LEGAL_BUSINESS}</b></div>
+    <h1>${title}</h1>
+    <div class="updated">Last updated: ${LEGAL_UPDATED}</div>
+  </header>
+  ${bodyHtml}
+  <footer>
+    &copy; ${LEGAL_BUSINESS}. Contact: <a href="mailto:${LEGAL_EMAIL}">${LEGAL_EMAIL}</a>
+    &middot; <a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms of Service</a>
+  </footer>
+</div>
+</body></html>`;
+}
+
+export function getPrivacyPolicyPage() {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Privacy, in plain words &mdash; ${LEGAL_BUSINESS}</title>
+<meta name="robots" content="index,follow">
+<meta name="description" content="The honest, no-jargon version of how FarewellAbaya handles your data.">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#160f24;color:#ece9f5;font-family:-apple-system,system-ui,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:680px;margin:0 auto;padding:54px 22px 90px}
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:34px}
+  .brand .logo{width:40px;height:40px;background:linear-gradient(135deg,#7c6fe0,#422082);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:21px}
+  .brand b{font-size:16px;font-weight:700}
+  .eyebrow{font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;color:#a89fd0;margin-bottom:10px}
+  h1{font-size:34px;line-height:1.15;font-weight:800;letter-spacing:-.02em;margin-bottom:12px;background:linear-gradient(95deg,#fff,#c9b8ff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lede{color:#b9b3d2;font-size:16.5px;margin-bottom:6px}
+  .updated{color:#7d779a;font-size:13px;margin-bottom:30px}
+  /* TL;DR */
+  .tldr{background:linear-gradient(160deg,rgba(124,111,224,.16),rgba(124,111,224,.04));border:1px solid rgba(150,130,220,.3);border-radius:18px;padding:24px 24px 8px;margin:8px 0 40px}
+  .tldr h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#c9b8ff;margin-bottom:14px}
+  .tldr .row{display:flex;gap:13px;align-items:flex-start;margin-bottom:16px}
+  .tldr .ico{font-size:21px;line-height:1.3;flex:0 0 auto}
+  .tldr .row p{margin:0;font-size:15.5px;color:#e7e3f5}
+  .tldr .row b{color:#fff}
+  section{margin:0 0 30px}
+  h3{font-size:20px;font-weight:700;color:#fff;margin-bottom:8px;display:flex;align-items:center;gap:9px}
+  h3 .e{font-size:20px}
+  p,li{color:#c5c0db;font-size:15.5px;margin:9px 0}
+  ul{padding-left:6px;list-style:none}
+  ul li{position:relative;padding-left:22px}
+  ul li::before{content:'\\2014';position:absolute;left:0;color:#8a7fd0}
+  b{color:#efecfb}
+  a{color:#a89fd0;text-decoration:none;border-bottom:1px solid rgba(168,159,208,.4)}
+  a:hover{color:#fff}
+  .delete{background:rgba(124,111,224,.1);border:1px dashed rgba(150,130,220,.45);border-radius:16px;padding:20px 22px;margin:6px 0}
+  .delete p{margin-top:0}
+  .big-btn{display:inline-block;margin-top:6px;background:linear-gradient(135deg,#7c6fe0,#5a3fb0);color:#fff;border-bottom:0;padding:11px 18px;border-radius:11px;font-weight:700;font-size:14.5px}
+  .big-btn:hover{filter:brightness(1.08);color:#fff}
+  footer{margin-top:44px;border-top:1px solid rgba(106,95,193,.25);padding-top:20px;color:#7d779a;font-size:13px}
+  footer a{color:#a89fd0;border-bottom:0}
+  hr{border:0;border-top:1px solid rgba(106,95,193,.18);margin:34px 0}
+</style></head><body>
+<div class="wrap">
+  <div class="brand"><div class="logo">&#129525;</div><b>${LEGAL_BUSINESS}</b></div>
+
+  <div class="eyebrow">Privacy Policy</div>
+  <h1>Your data, in plain words.</h1>
+  <p class="lede">No 40-page maze, no hidden clauses. Here's exactly what we see, what we do with it, and how to make it disappear &mdash; in about 60 seconds.</p>
+  <div class="updated">Last updated: ${LEGAL_UPDATED}</div>
+
+  <div class="tldr">
+    <h2>The 10-second version</h2>
+    <div class="row"><div class="ico">&#128075;</div><p><b>We see your name and email</b> &mdash; just enough to know it's you when you log in.</p></div>
+    <div class="row"><div class="ico">&#128683;</div><p><b>We never sell it.</b> No ads, no data brokers, no funny business.</p></div>
+    <div class="row"><div class="ico">&#128274;</div><p><b>It's encrypted</b> on the way to us and locked behind your access code.</p></div>
+    <div class="row"><div class="ico">&#128465;&#65039;</div><p><b>Want out?</b> One email and everything about you is gone within 30 days.</p></div>
+  </div>
+
+  <section>
+    <h3><span class="e">&#128064;</span> What we actually collect</h3>
+    <ul>
+      <li><b>Who you are:</b> when you sign in &mdash; including with <b>Facebook Login (Meta)</b> &mdash; we get the basics you approve: your name, email, and an ID that lets us recognize you next time.</li>
+      <li><b>What you do in the app:</b> the orders, garments, and production updates you or your team enter. That's the whole point of the dashboard.</li>
+      <li><b>The technical stuff:</b> things like your IP address and timestamps, kept briefly to keep the app secure and running.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h3><span class="e">&#9881;&#65039;</span> What we do with it</h3>
+    <p>Honestly, not much beyond running the app: we use it to <b>log you in</b>, <b>show you your dashboard</b>, and <b>keep things secure</b>. That's it.</p>
+    <p>What we'll <b>never</b> do: sell it, rent it, or use it to follow you around the internet with ads.</p>
+  </section>
+
+  <section>
+    <h3><span class="e">&#128241;</span> About signing in with Facebook</h3>
+    <p>If you use Facebook to log in, we ask for the bare minimum &mdash; usually your <b>public profile and email</b> &mdash; and we use it only to confirm it's really you. We don't post anything, and we can't see anything you didn't tick "yes" to in the Facebook dialog. (Meta's own rules apply there too.)</p>
+  </section>
+
+  <section>
+    <h3><span class="e">&#129309;</span> Who else sees it</h3>
+    <p>Only the trusted services that help us run the app (like our host, <b>Cloudflare</b>) &mdash; and only as much as they need. The one exception: if the law genuinely requires it. No marketing partners, ever.</p>
+  </section>
+
+  <section>
+    <h3><span class="e">&#9203;</span> How long we keep it</h3>
+    <p>Only as long as you're using the Service (plus a little extra if the law says so). After that, it's deleted or anonymized.</p>
+  </section>
+
+  <section>
+    <h3><span class="e">&#128465;&#65039;</span> Delete everything &mdash; anytime</h3>
+    <div class="delete">
+      <p><b>It's your data. Here's the off switch:</b> email us from the address on your account (or tell us the name you used with Facebook Login) with the subject <b>"Delete my data"</b>. We'll wipe your personal data within <b>30 days</b> and email you to confirm.</p>
+      <a class="big-btn" href="mailto:${LEGAL_EMAIL}?subject=Delete%20my%20data">&#9993;&#65039; Request deletion</a>
+    </div>
+    <p>You can also just ask to <b>see</b> or <b>fix</b> what we hold &mdash; same address, we're happy to help.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h3><span class="e">&#128272;</span> Keeping it safe</h3>
+    <p>We use solid, industry-standard protection: encrypted connections (HTTPS) and access controls. No system on earth is 100% bulletproof, but we treat your data like it's our own.</p>
+  </section>
+
+  <section>
+    <h3><span class="e">&#129516;</span> A few honest footnotes</h3>
+    <ul>
+      <li><b>Not for kids:</b> this is a business tool, not meant for anyone under 13, and we don't knowingly collect their info.</li>
+      <li><b>If this changes:</b> we'll update the date at the top. Big changes, we'll make obvious.</li>
+      <li><b>Got a question?</b> A real person reads <a href="mailto:${LEGAL_EMAIL}">${LEGAL_EMAIL}</a>.</li>
+    </ul>
+  </section>
+
+  <footer>
+    &copy; ${LEGAL_BUSINESS} &middot; <a href="mailto:${LEGAL_EMAIL}">${LEGAL_EMAIL}</a>
+    &middot; <a href="/terms">Terms of Service</a> &middot; <a href="/">Home</a>
+  </footer>
+</div>
+</body></html>`;
+}
+
+export function getTermsOfServicePage() {
+  return legalShell('Terms of Service', `
+  <p>These Terms of Service ("Terms") govern your access to and use of the ${LEGAL_BUSINESS}
+  production tracking and dashboard service (the "Service"). By accessing or using the Service,
+  including by signing in, you agree to these Terms.</p>
+
+  <h2>1. Use of the Service</h2>
+  <p>The Service is provided for authorized business users to track and manage abaya production,
+  orders, and dispatch. You agree to use it only for lawful purposes and in accordance with these
+  Terms.</p>
+
+  <h2>2. Accounts &amp; login</h2>
+  <p>You may sign in using credentials we issue or via a third-party provider such as Facebook
+  Login. You are responsible for activity under your account and for keeping your access
+  credentials confidential. Notify us promptly of any unauthorized use.</p>
+
+  <h2>3. Acceptable use</h2>
+  <ul>
+    <li>Do not attempt to gain unauthorized access to the Service or its data.</li>
+    <li>Do not interfere with, disrupt, or overload the Service.</li>
+    <li>Do not use the Service to store or transmit unlawful or infringing content.</li>
+  </ul>
+
+  <h2>4. Intellectual property</h2>
+  <p>The Service, including its software, design, and content, is owned by ${LEGAL_BUSINESS} and
+  its licensors and is protected by applicable laws. These Terms do not grant you any rights to
+  our trademarks or branding.</p>
+
+  <h2>5. Data</h2>
+  <p>Our handling of personal data is described in our
+  <a href="/privacy">Privacy Policy</a>, which forms part of these Terms.</p>
+
+  <h2>6. Disclaimers</h2>
+  <p>The Service is provided "as is" and "as available" without warranties of any kind, whether
+  express or implied, including merchantability, fitness for a particular purpose, and
+  non-infringement, to the maximum extent permitted by law.</p>
+
+  <h2>7. Limitation of liability</h2>
+  <p>To the maximum extent permitted by law, ${LEGAL_BUSINESS} will not be liable for any
+  indirect, incidental, special, consequential, or punitive damages, or any loss of data,
+  revenue, or profits arising from your use of the Service.</p>
+
+  <h2>8. Termination</h2>
+  <p>We may suspend or terminate access to the Service at any time if you violate these Terms or
+  to protect the Service. You may stop using the Service at any time.</p>
+
+  <h2>9. Changes to these Terms</h2>
+  <p>We may update these Terms from time to time. Continued use of the Service after changes take
+  effect constitutes acceptance of the updated Terms.</p>
+
+  <h2>10. Contact us</h2>
+  <p>Questions about these Terms: <a href="mailto:${LEGAL_EMAIL}">${LEGAL_EMAIL}</a>.</p>
+  `);
 }
