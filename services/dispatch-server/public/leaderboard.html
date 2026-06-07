@@ -1081,7 +1081,12 @@ function buildCard(inv, isNew = false) {
   if (inv.documentId) secondaryParts.push(`
     <div class="notes-row" role="note" aria-label="PDF invoice attachment">
       <span class="notes-icon" aria-hidden="true">📄</span>
-      <a class="notes-text" href="${esc(withTok('/api/document/' + inv.documentId))}" target="_blank" rel="noopener">Open PDF to verify${inv.documentName ? ' &middot; ' + esc(inv.documentName) : ''}</a>
+      <a class="notes-text" href="${esc(withTok('/api/media/' + inv.documentId))}" target="_blank" rel="noopener">Open PDF to verify${inv.documentName ? ' &middot; ' + esc(inv.documentName) : ''}</a>
+    </div>`);
+  if (inv.imageId) secondaryParts.push(`
+    <div class="notes-row" role="note" aria-label="Photo attachment">
+      <span class="notes-icon" aria-hidden="true">🖼️</span>
+      <a class="notes-text" href="${esc(withTok('/api/media/' + inv.imageId))}" target="_blank" rel="noopener">View photo</a>
     </div>`);
 
   card.innerHTML = `

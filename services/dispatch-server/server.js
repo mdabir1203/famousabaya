@@ -259,6 +259,53 @@ async function ingestDocumentInvoice(msg) {
   return true;
 }
 
+/**
+ * Image/voice message with no extractable text — file a PENDING stub so staff can
+ * open the photo or play the voice note from the leaderboard.
+ * @param {{type:string, from?:string, imageId?:string, audioId?:string}} msg
+ */
+function ingestMediaStub(msg) {
+  const isImage = msg.type === 'image';
+  const mid = (isImage ? msg.imageId : msg.audioId) || '';
+  upsertInvoice({
+    id: (isImage ? 'IMG-' : 'VOICE-') + String(mid || Date.now()).slice(-10),
+    supplier: ('WhatsApp ' + (msg.from || '')).trim(),
+    status: 'PENDING',
+    source: 'whatsapp',
+    imageId: isImage ? (mid || null) : null,
+    audioId: isImage ? null : (mid || null),
+  });
+}
+
+/**
+ * Stream a WhatsApp media object (audio / image / PDF) to the client on demand.
+ * Re-fetched from Meta each time (Bearer-authed), never persisted to the factory disk.
+ * @param {string} mediaId
+ * @param {string} fallbackMime  used only if Meta doesn't report a mime type
+ */
+async function proxyWaMedia(req, res, url, mediaId, fallbackMime) {
+  if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
+  if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — set WHATSAPP_TOKEN' }, 503);
+  try {
+    const metaRes = await fetch(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
+      { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
+    );
+    if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
+    const { url: mediaUrl, mime_type } = await metaRes.json();
+    const fileRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+    if (!fileRes.ok) return sendJson(res, { error: 'media fetch failed' }, 502);
+    res.writeHead(200, {
+      'Content-Type': mime_type || fallbackMime,
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    await pipeline(Readable.fromWeb(fileRes.body), res);
+  } catch (e) {
+    if (!res.headersSent) sendJson(res, { error: e.message }, 500);
+  }
+}
+
 const leaderboardHtmlPath = join(__dirname, 'public', 'leaderboard.html');
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
@@ -448,66 +495,21 @@ const server = createServer(async (req, res) => {
         }
       } else if (msg.type === 'document') {
         if (await ingestDocumentInvoice(msg)) ingested++;
+      } else if (msg.type === 'image' || msg.type === 'audio') {
+        ingestMediaStub(msg);
+        ingested++;
       }
     }
     if (ingested > 0) pushLeaderboard();
     return sendJson(res, { ok: true, ingested });
   }
 
-  // Audio proxy — streams WA voice notes
+  // Media proxy — voice notes via /api/audio (the player), photos + PDFs via the
+  // generic /api/media (also accepts the older /api/document and /api/image paths).
   const audioMatch = pathname.match(/^\/api\/audio\/([^/]+)$/);
-  if (audioMatch && req.method === 'GET') {
-    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
-    const mediaId = audioMatch[1];
-    if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — cannot serve audio' }, 503);
-    try {
-      const metaRes = await fetch(
-        `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
-        { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
-      );
-      if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
-      const { url: mediaUrl, mime_type } = await metaRes.json();
-      // 30 s for audio streaming — voice notes can be up to a few MB
-      const audioRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
-      if (!audioRes.ok) return sendJson(res, { error: 'audio fetch failed' }, 502);
-      res.writeHead(200, {
-        'Content-Type': mime_type || 'audio/ogg',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': '*',
-      });
-      await pipeline(Readable.fromWeb(audioRes.body), res);
-    } catch (e) {
-      if (!res.headersSent) sendJson(res, { error: e.message }, 500);
-    }
-    return;
-  }
-
-  // Document proxy — streams WA PDF invoices on demand (re-fetched, not persisted to disk)
-  const docMatch = pathname.match(/^\/api\/document\/([^/]+)$/);
-  if (docMatch && req.method === 'GET') {
-    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
-    const mediaId = docMatch[1];
-    if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — cannot serve document' }, 503);
-    try {
-      const metaRes = await fetch(
-        `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
-        { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
-      );
-      if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
-      const { url: mediaUrl, mime_type } = await metaRes.json();
-      const fileRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
-      if (!fileRes.ok) return sendJson(res, { error: 'document fetch failed' }, 502);
-      res.writeHead(200, {
-        'Content-Type': mime_type || 'application/pdf',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': '*',
-      });
-      await pipeline(Readable.fromWeb(fileRes.body), res);
-    } catch (e) {
-      if (!res.headersSent) sendJson(res, { error: e.message }, 500);
-    }
-    return;
-  }
+  if (audioMatch && req.method === 'GET') { await proxyWaMedia(req, res, url, audioMatch[1], 'audio/ogg'); return; }
+  const mediaMatch = pathname.match(/^\/api\/(?:media|document|image)\/([^/]+)$/);
+  if (mediaMatch && req.method === 'GET') { await proxyWaMedia(req, res, url, mediaMatch[1], 'application/octet-stream'); return; }
 
   // SSE leaderboard stream
   if (pathname === '/api/leaderboard/stream' && req.method === 'GET') {
