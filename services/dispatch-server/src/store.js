@@ -288,6 +288,8 @@ export function upsertInvoice(data) {
     targetQueue: String(data.targetQueue || '').trim(),
     status: data.status || 'PENDING',
     slaDeadline: Number(data.slaDeadline) || now + 4 * 60 * 60 * 1000,
+    // Order/receipt date (when the customer placed the order), distinct from the delivery deadline.
+    orderDate: data.orderDate != null ? (Number(data.orderDate) || null) : (existing ? (existing.orderDate ?? null) : null),
     createdAt: existing ? existing.createdAt : now,
     updatedAt: now,
     source: data.source || null,

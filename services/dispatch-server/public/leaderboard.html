@@ -155,6 +155,8 @@ button:disabled{opacity:.42;cursor:not-allowed;transform:none!important}
 .timer-value.overdue{color:var(--rd)}
 .timer-value.arrived{color:var(--bl)}
 .timer-value.delivered{color:var(--gr)}
+.order-date{font-size:11px;color:var(--tx3);margin-top:5px;letter-spacing:.01em}
+.col-sla .deliver-date{font-size:12px;color:var(--tx2);font-weight:600;margin-top:6px;display:block}
 
 /* Actions column */
 .col-actions .btn{font-size:12px;padding:8px 12px;min-height:38px;justify-content:center}
@@ -987,6 +989,14 @@ function render() {
   for (const id of notifiedOverdue)   { if (!_liveIds.has(id)) notifiedOverdue.delete(id); }
 }
 
+function fmtDate(ms) {
+  const n = Number(ms);
+  if (!n) return '';
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function buildCard(inv, isNew = false) {
   const card = document.createElement('div');
   const urgency = cardUrgencyClass(inv);
@@ -1071,7 +1081,7 @@ function buildCard(inv, isNew = false) {
   if (inv.documentId) secondaryParts.push(`
     <div class="notes-row" role="note" aria-label="PDF invoice attachment">
       <span class="notes-icon" aria-hidden="true">📄</span>
-      <a class="notes-text" href="${esc(withTok('/api/document/' + inv.documentId))}" target="_blank" rel="noopener">View PDF invoice${inv.documentName ? ' &middot; ' + esc(inv.documentName) : ''}</a>
+      <a class="notes-text" href="${esc(withTok('/api/document/' + inv.documentId))}" target="_blank" rel="noopener">Open PDF to verify${inv.documentName ? ' &middot; ' + esc(inv.documentName) : ''}</a>
     </div>`);
 
   card.innerHTML = `
@@ -1084,6 +1094,7 @@ function buildCard(inv, isNew = false) {
       <div class="col-supplier">
         <div class="card-supplier" title="${esc(inv.supplier)}">${esc(inv.supplier)}</div>
         <span class="${statusCls}" aria-label="Status: ${statusLabel}">${statusLabel}</span>
+        ${inv.orderDate ? `<span class="order-date">Ordered ${esc(fmtDate(inv.orderDate))}</span>` : ''}
       </div>
       <div class="col-items">
         <div class="field-label">Abayas${total ? ' (' + doneCount + '/' + total + ' done)' : ''}</div>
@@ -1093,9 +1104,10 @@ function buildCard(inv, isNew = false) {
         <div class="field-label">Queue / Batch</div>
         <span class="field-value mono">${esc(inv.targetQueue) || '—'}</span>
       </div>
-      <div class="col-sla" aria-label="${inv.status === 'DELIVERED' ? 'Delivered' : 'SLA: ' + timerTxt}">
-        <span class="timer-label">${inv.status === 'DELIVERED' ? 'Done' : 'SLA'}</span>
+      <div class="col-sla" aria-label="${inv.status === 'DELIVERED' ? 'Delivered ' + (fmtDate(inv.slaDeadline) || '') : 'Deliver by ' + (fmtDate(inv.slaDeadline) || timerTxt)}">
+        <span class="timer-label">${inv.status === 'DELIVERED' ? 'Done' : 'Deliver by'}</span>
         <span class="timer-value ${timerCls}" data-id="${esc(inv.id)}" data-sla="${inv.slaDeadline || ''}" data-status="${inv.status}" aria-live="off">${timerTxt}</span>
+        ${inv.slaDeadline ? `<span class="deliver-date">${esc(fmtDate(inv.slaDeadline))}</span>` : ''}
       </div>
       <div class="col-actions">
         ${actionsHtml}

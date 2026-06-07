@@ -227,27 +227,16 @@ async function ingestDocumentInvoice(msg) {
   const mediaId = msg.documentId || '';
   const filename = msg.filename || '';
   const isPdf = /pdf/i.test(msg.mimeType || '') || /\.pdf$/i.test(filename);
-  let fields = { id: null, supplier: null, items: [], slaDeadline: null, confidence: 'low' };
-  let note = 'PDF invoice received via WhatsApp — review';
+  let fields = { id: null, supplier: null, items: [], slaDeadline: null, orderDate: null, confidence: 'low' };
 
   if (WA_TOKEN && mediaId && isPdf) {
     try {
       const { buffer } = await downloadWhatsAppMedia(mediaId, WA_TOKEN);
       const text = extractPdfText(buffer);
-      if (text) {
-        fields = extractInvoiceFields(text);
-        note = fields.confidence === 'medium'
-          ? 'Auto-extracted from PDF — please verify'
-          : 'PDF text extracted, low confidence — please review';
-      } else {
-        note = 'Scanned/image PDF (no text layer) — manual entry needed (OCR pending)';
-      }
+      if (text) fields = extractInvoiceFields(text);
     } catch (e) {
       console.warn('[whatsapp] document download/extract failed:', e.message);
-      note = 'PDF received but could not be read automatically — open to review: ' + e.message;
     }
-  } else if (!WA_TOKEN) {
-    note = 'PDF invoice received — set WHATSAPP_TOKEN to auto-download & read it';
   }
 
   // Stable id: extracted invoice no. wins; else derive from filename, else media id.
@@ -260,11 +249,12 @@ async function ingestDocumentInvoice(msg) {
     supplier: fields.supplier || ('WhatsApp ' + (msg.from || '')).trim(),
     items: fields.items,
     slaDeadline: fields.slaDeadline || undefined,
+    orderDate: fields.orderDate || null,
     status: 'PENDING',
     source: 'whatsapp',
     documentId: mediaId || null,
     documentName: filename || null,
-    notes: note,
+    // notes intentionally omitted — staff verify by opening the attached PDF.
   });
   return true;
 }
@@ -331,6 +321,8 @@ const server = createServer(async (req, res) => {
         targetQueue: body.targetQueue || '',
         status: 'PENDING',
         slaDeadline: body.slaDeadline || (Date.now() + 4 * 60 * 60 * 1000),
+        orderDate: body.orderDate || null,
+        documentId: body.documentId || null,
         source: 'api',
         notes: body.notes || null,
       });
