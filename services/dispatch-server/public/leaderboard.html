@@ -1068,6 +1068,11 @@ function buildCard(inv, isNew = false) {
       </div>
       <audio class="audio-el" preload="none" src="${esc(withTok('/api/audio/' + inv.audioId))}"></audio>
     </div>`);
+  if (inv.documentId) secondaryParts.push(`
+    <div class="notes-row" role="note" aria-label="PDF invoice attachment">
+      <span class="notes-icon" aria-hidden="true">📄</span>
+      <a class="notes-text" href="${esc(withTok('/api/document/' + inv.documentId))}" target="_blank" rel="noopener">View PDF invoice${inv.documentName ? ' &middot; ' + esc(inv.documentName) : ''}</a>
+    </div>`);
 
   card.innerHTML = `
     ${inv.status === 'ARRIVED' ? `<div class="arrived-banner" role="alert"><span class="arrived-icon" aria-hidden="true">🚨</span>SUPERVISOR NEEDED — MATERIAL CHECK</div>` : ''}

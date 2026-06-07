@@ -78,6 +78,20 @@ export function parseInboundMessages(body) {
               body: `[audio:${msg.audio?.id || 'unknown'}]`,
               timestamp: ts,
             });
+          } else if (msg.type === 'document') {
+            // PDF (or other) invoice attachment — capture media ID + metadata.
+            // The caller downloads it (needs WHATSAPP_TOKEN), extracts text, and
+            // either auto-fills the invoice or files a manual-review stub.
+            results.push({
+              type: 'document',
+              from,
+              body: `[document:${msg.document?.id || 'unknown'}]`,
+              documentId: String(msg.document?.id || ''),
+              filename: String(msg.document?.filename || ''),
+              mimeType: String(msg.document?.mime_type || ''),
+              caption: String(msg.document?.caption || ''),
+              timestamp: ts,
+            });
           }
         }
       }

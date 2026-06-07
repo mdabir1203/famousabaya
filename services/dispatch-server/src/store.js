@@ -293,6 +293,9 @@ export function upsertInvoice(data) {
     source: data.source || null,
     // Keep existing audioId if new data doesn't supply one (audio arrives separately)
     audioId: data.audioId != null ? String(data.audioId) : (existing ? existing.audioId : null),
+    // PDF invoice attachment (WhatsApp media id + original filename), preserved like audioId.
+    documentId: data.documentId != null ? String(data.documentId) : (existing ? (existing.documentId ?? null) : null),
+    documentName: data.documentName != null ? String(data.documentName) : (existing ? (existing.documentName ?? null) : null),
     notes,
     // Customer phone: prefer an explicit value, else parse from notes, else keep prior.
     customerPhone: data.customerPhone != null

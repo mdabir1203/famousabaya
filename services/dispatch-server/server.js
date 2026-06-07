@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto';
 
 import { upsertInvoice, updateInvoiceStatus, setItemDone, getLeaderboard, getInvoice, pruneDelivered, itemsProgress, getMaterials } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
+import { downloadWhatsAppMedia } from './src/wa-media.js';
+import { extractPdfText, extractInvoiceFields } from './src/pdf-extract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -214,6 +216,59 @@ async function sendWhatsAppAlert(invoice) {
   }
 }
 
+/**
+ * Ingest a WhatsApp document (PDF invoice). Digital PDFs are text-extracted and
+ * auto-filled; scanned/photo PDFs (no text layer) or a missing token produce a
+ * PENDING manual-review stub with the PDF attached. Never throws.
+ * @param {{documentId?:string, filename?:string, mimeType?:string, from?:string}} msg
+ * @returns {Promise<boolean>} whether an invoice was upserted
+ */
+async function ingestDocumentInvoice(msg) {
+  const mediaId = msg.documentId || '';
+  const filename = msg.filename || '';
+  const isPdf = /pdf/i.test(msg.mimeType || '') || /\.pdf$/i.test(filename);
+  let fields = { id: null, supplier: null, items: [], slaDeadline: null, confidence: 'low' };
+  let note = 'PDF invoice received via WhatsApp — review';
+
+  if (WA_TOKEN && mediaId && isPdf) {
+    try {
+      const { buffer } = await downloadWhatsAppMedia(mediaId, WA_TOKEN);
+      const text = extractPdfText(buffer);
+      if (text) {
+        fields = extractInvoiceFields(text);
+        note = fields.confidence === 'medium'
+          ? 'Auto-extracted from PDF — please verify'
+          : 'PDF text extracted, low confidence — please review';
+      } else {
+        note = 'Scanned/image PDF (no text layer) — manual entry needed (OCR pending)';
+      }
+    } catch (e) {
+      console.warn('[whatsapp] document download/extract failed:', e.message);
+      note = 'PDF received but could not be read automatically — open to review: ' + e.message;
+    }
+  } else if (!WA_TOKEN) {
+    note = 'PDF invoice received — set WHATSAPP_TOKEN to auto-download & read it';
+  }
+
+  // Stable id: extracted invoice no. wins; else derive from filename, else media id.
+  const id = (fields.id && fields.id.trim()) ||
+    (filename ? 'PDF-' + filename.replace(/\.pdf$/i, '').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 32) : '') ||
+    ('PDF-' + String(mediaId || Date.now()).slice(-10));
+
+  upsertInvoice({
+    id,
+    supplier: fields.supplier || ('WhatsApp ' + (msg.from || '')).trim(),
+    items: fields.items,
+    slaDeadline: fields.slaDeadline || undefined,
+    status: 'PENDING',
+    source: 'whatsapp',
+    documentId: mediaId || null,
+    documentName: filename || null,
+    notes: note,
+  });
+  return true;
+}
+
 const leaderboardHtmlPath = join(__dirname, 'public', 'leaderboard.html');
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
@@ -399,6 +454,8 @@ const server = createServer(async (req, res) => {
           upsertInvoice({ ...parsed, status: 'PENDING', source: 'whatsapp' });
           ingested++;
         }
+      } else if (msg.type === 'document') {
+        if (await ingestDocumentInvoice(msg)) ingested++;
       }
     }
     if (ingested > 0) pushLeaderboard();
@@ -427,6 +484,33 @@ const server = createServer(async (req, res) => {
         'Access-Control-Allow-Origin': '*',
       });
       await pipeline(Readable.fromWeb(audioRes.body), res);
+    } catch (e) {
+      if (!res.headersSent) sendJson(res, { error: e.message }, 500);
+    }
+    return;
+  }
+
+  // Document proxy — streams WA PDF invoices on demand (re-fetched, not persisted to disk)
+  const docMatch = pathname.match(/^\/api\/document\/([^/]+)$/);
+  if (docMatch && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
+    const mediaId = docMatch[1];
+    if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — cannot serve document' }, 503);
+    try {
+      const metaRes = await fetch(
+        `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
+        { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
+      );
+      if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
+      const { url: mediaUrl, mime_type } = await metaRes.json();
+      const fileRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+      if (!fileRes.ok) return sendJson(res, { error: 'document fetch failed' }, 502);
+      res.writeHead(200, {
+        'Content-Type': mime_type || 'application/pdf',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+      });
+      await pipeline(Readable.fromWeb(fileRes.body), res);
     } catch (e) {
       if (!res.headersSent) sendJson(res, { error: e.message }, 500);
     }
