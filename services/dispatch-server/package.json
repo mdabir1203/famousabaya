@@ -1,0 +1,17 @@
+{
+  "name": "abaya-dispatch-server",
+  "version": "2.0.0",
+  "description": "AbayaTrack v2.0 — Hybrid-Edge Dispatch & Leaderboard System",
+  "module": "local-server/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "bun run local-server/server.js",
+    "dev": "bun --watch run local-server/server.js",
+    "test": "bun run test/smoke.js"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "keywords": ["abaya-track", "dispatch", "sse", "bun", "cloudflare-worker"],
+  "license": "UNLICENSED"
+}
