@@ -43,8 +43,7 @@ const COMMON_RESTART = {
 
 /** Pick yarn-pnp loader if it exists; otherwise plain node. */
 function resolveNodeArgs() {
-  const pnp = path.join(ROOT, '.pnp.cjs');
-  if (fs.existsSync(pnp)) return ['-r', './.pnp.cjs'];
+  // Disabled PnP loader — use npm node_modules instead (more reliable on Windows)
   return [];
 }
 
