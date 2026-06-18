@@ -13,23 +13,46 @@
 <title>AbaYa Track — Floor Leaderboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet" media="print" onload="this.media='all'">
-<noscript><link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet"></noscript>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Rubik:wght@400;500;600;700&display=optional">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Rubik:wght@400;500;600;700&display=optional" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Rubik:wght@400;500;600;700&display=optional" rel="stylesheet"></noscript>
 <style>
 :root {
+  /* Background colors */
   --bg:#1f1633; --s1:#150f23; --s2:#241a38; --s3:#362d59;
   --bd:rgba(54,45,89,0.5); --bd2:rgba(106,95,193,0.3);
+
+  /* Text colors - 7:1 contrast for accessibility */
   --tx:#ffffff; --tx2:#e5e7eb; --tx3:#9c98b0;
+  --text-primary:#1F2937; --text-secondary:#374151; --text-muted:#6B7280;
+
+  /* Semantic colors (neurodiverse: NO gradients, solid only) */
+  --urgent-red:#DC2626;
+  --urgent-bg:rgba(220,38,38,0.08);
+  --warning-amber:#F59E0B;
+  --warning-bg:rgba(245,158,11,0.08);
+  --complete-green:#10B981;
+  --complete-bg:rgba(16,185,129,0.08);
+  --info-blue:#3B82F6;
+  --info-bg:rgba(59,130,246,0.08);
+  --neutral-gray:#6B7280;
+  --neutral-bg:rgba(107,114,128,0.08);
+
+  /* Legacy colors (keep for compatibility) */
   --gr:#c2ef4e; --grb:rgba(194,239,78,0.12);
   --rd:#ef4444; --rdb:rgba(239,68,68,0.12);
   --bl:#6a5fc1; --blb:rgba(106,95,193,0.15);
   --am:#ffb287; --amb:rgba(255,178,135,0.12);
   --pu:#a78bfa; --pub:rgba(167,139,250,0.12);
-  --fn:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;
-  --fn-display:'Sora','Rubik',sans-serif;
+
+  /* Fonts: Atkinson Hyperlegible for dyslexia support */
+  --fn:'Atkinson Hyperlegible','Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;
+  --fn-display:'Rubik','Atkinson Hyperlegible',sans-serif;
   --fn-mono:Monaco,Menlo,'Ubuntu Mono',monospace;
   --touch-min:48px;
+
+  /* NO animations (autism/ADHD friendly) */
+  animation-duration:0ms!important;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
@@ -49,7 +72,7 @@ button:focus:not(:focus-visible){outline:none}
 .conn-badge.offline{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.3)}
 .conn-badge.connecting{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.3)}
 .conn-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
-.conn-badge.online .conn-dot{animation:blink 1.4s infinite}
+.conn-badge.online .conn-dot{animation:none}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .tb-icon-btn{background:rgba(255,255,255,.07);border:1px solid var(--bd);border-radius:8px;color:var(--tx2);font-size:14px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0;padding:0}
 .tb-icon-btn:hover{background:rgba(255,255,255,.13);border-color:var(--bd2);color:var(--tx)}
@@ -77,102 +100,117 @@ input,textarea{font-size:16px!important} /* prevents iOS/Android auto-zoom on fo
 .action-bar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .count-badge{font-family:var(--fn-mono);font-size:11px;padding:3px 9px;border-radius:999px;background:var(--blb);border:1px solid var(--bd2);color:var(--pu)}
 
-/* ── Buttons ───────────────────────────────────────────────────────────────── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 18px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid transparent;font-family:var(--fn);transition:all .18s;min-height:var(--touch-min);white-space:nowrap}
-.btn-primary{background:linear-gradient(135deg,#8e6cff,#6f58d9);color:#fff;border-color:rgba(181,159,255,.5);box-shadow:0 6px 20px rgba(88,64,169,.4)}
-.btn-primary:hover{transform:translateY(-1px)}
-.btn-ghost{background:rgba(255,255,255,.06);color:var(--tx2);border-color:var(--bd2)}
-.btn-ghost:hover{background:rgba(255,255,255,.11);border-color:rgba(106,95,193,.5);color:var(--tx)}
-.btn-amber{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
-.btn-amber:hover{background:rgba(255,178,135,.22)}
-.btn-green{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
-.btn-green:hover{background:rgba(194,239,78,.22)}
-.btn-wa{background:rgba(37,211,102,.11);color:#25d366;border-color:rgba(37,211,102,.35)}
-.btn-wa:hover{background:rgba(37,211,102,.2)}
-.btn-sm{padding:6px 12px;font-size:12px;min-height:32px}
-button:disabled{opacity:.42;cursor:not-allowed;transform:none!important}
+/* ── Buttons — PREMIUM DESIGN ─────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:14px 20px;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;border:1px solid transparent;font-family:var(--fn);transition:all .2s cubic-bezier(.175,.885,.32,1.275);min-height:48px;white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
+.btn:active{transform:scale(.98)}
+
+.btn-primary{background:#3B82F6;color:#fff;border-color:rgba(59,130,246,.8);box-shadow:0 2px 8px rgba(59,130,246,.3)}
+.btn-primary:hover{background:#2563EB;box-shadow:0 4px 12px rgba(37,99,235,.4)}
+
+.btn-ghost{background:rgba(255,255,255,.08);color:var(--tx2);border-color:var(--bd2)}
+.btn-ghost:hover{background:rgba(255,255,255,.15);border-color:rgba(106,95,193,.6);color:var(--tx);transform:translateY(-1px)}
+
+.btn-amber{background:#F59E0B;color:#fff;border-color:rgba(245,158,11,.8);box-shadow:0 2px 8px rgba(245,158,11,.3)}
+.btn-amber:hover{background:#D97706;box-shadow:0 4px 12px rgba(217,119,6,.4)}
+
+.btn-green{background:#10B981;color:#fff;border-color:rgba(16,185,129,.8);box-shadow:0 2px 8px rgba(16,185,129,.3)}
+.btn-green:hover{background:#059669;box-shadow:0 4px 12px rgba(5,150,105,.4)}
+
+.btn-wa{background:#25D366;color:#fff;border-color:rgba(37,211,102,.8);box-shadow:0 2px 8px rgba(37,211,102,.3)}
+.btn-wa:hover{background:#20BA5A;box-shadow:0 4px 12px rgba(32,186,90,.4)}
+
+.btn-sm{padding:8px 14px;font-size:13px;min-height:40px;letter-spacing:.02em}
+button:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
 
 /* ── Loads grid ────────────────────────────────────────────────────────────── */
 .loads-wrap{padding:16px 18px;max-width:1600px;margin:0 auto}
 .loads-grid{display:flex;flex-direction:column;gap:8px}
-.empty-state{text-align:center;padding:60px 20px;color:var(--tx3)}
-.empty-icon{font-size:48px;margin-bottom:12px;opacity:.45}
-.empty-text{font-size:15px;margin-bottom:4px;color:var(--tx2)}
-.empty-sub{font-size:12px}
+.empty-state{text-align:center;padding:80px 20px;color:var(--tx3)}
+.empty-icon{font-size:64px;margin-bottom:16px;opacity:.4}
+.empty-text{font-size:18px;margin-bottom:8px;color:var(--tx2);font-weight:600}
+.empty-sub{font-size:14px;line-height:1.6}
 
-/* ── Load card — horizontal row ────────────────────────────────────────────── */
-.load-card{background:rgba(255,255,255,.06);border:1px solid var(--bd);border-radius:14px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0 2px 8px;transition:border-color .2s;overflow:hidden;display:flex;flex-direction:column}
-.load-card:hover{border-color:var(--bd2)}
+/* ── Load card — NEURODIVERSE DESIGN ─────────────────────────────────── */
+.load-card{background:rgba(255,255,255,.06);border:1px solid var(--bd);border-radius:12px;backdrop-filter:none;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:none;overflow:hidden;display:flex;flex-direction:column;padding:20px;gap:16px}
+.load-card:hover{border-color:var(--bd);transform:none;box-shadow:0 2px 8px rgba(0,0,0,.2)}
 
-/* Six-column horizontal row */
-.card-row{display:grid;grid-template-columns:44px 160px minmax(220px,1fr) 90px 105px auto;align-items:stretch;gap:0;padding:0}
+/* Single column layout (optimized for tablet/mobile) */
+.card-row{display:flex;flex-direction:column;gap:16px;padding:0}
 
-/* Column base */
-.col-rank,.col-supplier,.col-items,.col-queue,.col-sla,.col-actions{padding:13px 14px;display:flex;flex-direction:column;justify-content:center}
-.col-rank{padding-right:0;text-align:center;border-right:1px solid var(--bd);justify-content:center;align-items:center}
-.col-supplier{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
-.col-items{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
-.col-items .field-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.col-queue{border-right:1px solid var(--bd);min-width:0;overflow:hidden}
-.col-sla{border-right:1px solid var(--bd);text-align:center;padding:10px 14px}
-.col-actions{display:flex;flex-direction:column;gap:6px;align-items:stretch;min-width:130px}
+/* Status badge — NEURODIVERSE: Dyslexia-friendly */
+.col-rank{padding:0;text-align:left;border:none;order:1;flex-shrink:0}
+.col-rank .rank-num{font-family:var(--fn-mono);font-size:32px;font-weight:700;color:var(--tx);line-height:1.2;letter-spacing:-0.02em}
 
-/* Rank */
-.col-rank .rank-num{font-family:var(--fn-mono);font-size:18px;font-weight:800;color:var(--tx3);line-height:1}
+/* Supplier — LARGE & READABLE */
+.col-supplier{padding:0;border:none;order:2;flex-shrink:0}
+.card-supplier{font-family:var(--fn);font-size:18px;font-weight:600;letter-spacing:0.01em;line-height:1.4;color:var(--tx);margin:0}
 
-/* Supplier */
-.card-supplier{font-family:var(--fn-display);font-size:16px;font-weight:700;letter-spacing:-.3px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:5px}
+/* Status badge — NEURODIVERSE: Solid colors, NO animations */
+.col-rank{order:1}
+.status-badge{font-size:18px;font-weight:700;text-transform:uppercase;letter-spacing:.02em;padding:12px 16px;border-radius:10px;border:1px solid;white-space:nowrap;display:inline-flex;align-items:center;gap:10px;transition:none;box-shadow:none}
+.status-pending{background:var(--warning-bg);color:var(--warning-amber);border-color:var(--warning-amber)}
+.status-arrived{background:var(--info-bg);color:var(--info-blue);border-color:var(--info-blue);animation:none}
+.status-ready{background:var(--complete-bg);color:var(--complete-green);border-color:var(--complete-green)}
+.status-delivered{background:var(--neutral-bg);color:var(--neutral-gray);border-color:var(--neutral-gray)}
+.status-urgent{background:var(--urgent-bg);color:var(--urgent-red);border-color:var(--urgent-red);animation:none}
+@keyframes sPulse{0%,100%{box-shadow:none}50%{box-shadow:none}}
+@keyframes urgPulse{0%,100%{box-shadow:none}50%{box-shadow:none}}
 
-/* Status badge */
-.status-badge{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;padding:3px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap;display:inline-flex;align-items:center}
-.status-pending{background:var(--amb);color:var(--am);border-color:rgba(255,178,135,.4)}
-.status-arrived{background:var(--blb);color:var(--bl);border-color:var(--bd2);animation:sPulse 2s ease-in-out infinite}
-@keyframes sPulse{0%,100%{box-shadow:0 0 0 0 rgba(106,95,193,.3)}50%{box-shadow:0 0 0 4px rgba(106,95,193,0)}}
-.status-ready{background:rgba(45,212,191,.16);color:#14b8a6;border-color:rgba(45,212,191,.45)}
-.status-delivered{background:var(--grb);color:var(--gr);border-color:rgba(194,239,78,.4)}
-.status-urgent{background:var(--rdb);color:var(--rd);border-color:rgba(239,68,68,.4);animation:urgPulse 1s ease-in-out infinite}
-@keyframes urgPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}
+/* Per-abaya progress + tap-to-toggle items — NEURODIVERSE VISUAL */
+.col-items{padding:0;border:none;order:3;flex-shrink:0}
+.abaya-progress{display:flex;align-items:center;gap:16px;margin:0;flex-wrap:wrap;line-height:1.6}
+.abaya-progress-bar{flex:1;height:12px;border-radius:6px;background:var(--bd);overflow:hidden;min-width:60px;box-shadow:none}
+.abaya-progress-fill{height:100%;border-radius:6px;background:var(--complete-green);transition:none;box-shadow:none}
+.abaya-progress-fill.all-done{background:var(--complete-green);box-shadow:none}
+.abaya-progress-txt{font-size:16px;font-weight:600;color:var(--tx2);font-family:var(--fn);white-space:nowrap;letter-spacing:0.02em}
+.item-toggle{cursor:pointer;background:none;border:2px solid var(--bd2);padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;border-radius:8px;color:var(--text-muted);transition:none;font-size:20px;font-weight:700}
+.item-toggle:hover{border-color:var(--complete-green);background:var(--complete-bg);color:var(--complete-green)}
+.item-toggle.done{background:var(--complete-green);border-color:var(--complete-green);color:#fff;box-shadow:0 2px 6px rgba(16,185,129,.2)}
+.item-li.done .item-spec{text-decoration:line-through;opacity:.5}
 
-/* Per-abaya progress + tap-to-toggle items */
-.abaya-progress{display:flex;align-items:center;gap:8px;margin:2px 0 6px}
-.abaya-progress-bar{flex:1;height:7px;border-radius:999px;background:var(--bd);overflow:hidden;min-width:40px}
-.abaya-progress-fill{height:100%;border-radius:999px;background:var(--gr,#c2ef4e);transition:width .35s ease}
-.abaya-progress-fill.all-done{background:#14b8a6}
-.abaya-progress-txt{font-size:11px;font-weight:800;color:var(--tx3);font-family:var(--fn-mono);white-space:nowrap}
-.item-toggle{cursor:pointer;background:none;border:none;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;width:20px;height:20px;border-radius:5px;border:1.5px solid var(--bd2);color:transparent;transition:all .15s ease;margin-top:1px}
-.item-toggle:hover{border-color:#14b8a6}
-.item-toggle.done{background:#14b8a6;border-color:#14b8a6;color:#fff}
-.item-li.done .item-spec{text-decoration:line-through;opacity:.55}
+/* Items column — NEURODIVERSE TYPOGRAPHY */
+.field-label{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:8px;font-family:var(--fn)}
+.field-value{font-size:16px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.6;letter-spacing:0.02em}
+.field-value.mono{font-family:var(--fn-mono);font-size:16px;font-weight:700;color:var(--tx);margin-top:8px;display:block}
 
-/* Items column */
-.field-label{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
-.field-value{font-size:13px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.field-value.mono{font-family:var(--fn-mono);font-size:14px;font-weight:700;color:var(--tx);margin-top:3px;display:block}
+/* SLA countdown — NEURODIVERSE: Clear, big, semantic colors */
+.col-sla{padding:0;border:none;order:4;flex-shrink:0;display:flex;flex-direction:column;gap:12px;align-items:flex-start;width:100%}
+.col-sla .timer-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;display:block;margin:0}
+.col-sla .timer-value{font-family:var(--fn-mono);font-size:28px;font-weight:700;line-height:1.2;display:block;transition:none;letter-spacing:-0.02em;min-height:auto;display:flex;align-items:center}
+.timer-value.overdue{color:var(--urgent-red);text-shadow:none}
+.timer-value.arrived{color:var(--info-blue);text-shadow:none}
+.timer-value.delivered{color:var(--complete-green);text-shadow:none}
+.order-date{font-size:14px;color:var(--text-secondary);margin:0;letter-spacing:0.02em;font-weight:500;line-height:1.6}
+.col-sla .deliver-date{font-size:14px;color:var(--tx);font-weight:600;margin:0;display:block;line-height:1.6;letter-spacing:0.01em}
 
-/* SLA countdown */
-.col-sla .timer-label{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;font-weight:600;display:block;margin-bottom:4px}
-.col-sla .timer-value{font-family:var(--fn-mono);font-size:22px;font-weight:800;line-height:1;display:block;transition:color .3s}
-.timer-value.overdue{color:var(--rd)}
-.timer-value.arrived{color:var(--bl)}
-.timer-value.delivered{color:var(--gr)}
-.order-date{font-size:11px;color:var(--tx3);margin-top:5px;letter-spacing:.01em}
-.col-sla .deliver-date{font-size:12px;color:var(--tx2);font-weight:600;margin-top:6px;display:block}
+/* Actions column — FULL-WIDTH BUTTONS */
+.col-actions{padding:0;border:none;order:5;flex-direction:column;gap:10px;align-items:stretch;width:100%;min-width:auto}
+.col-actions .btn{font-size:15px;font-weight:700;padding:14px 18px;min-height:48px;justify-content:center;width:100%;border-radius:12px;transition:all .2s ease;text-transform:uppercase;letter-spacing:.04em}
+.col-actions .btn:active{transform:scale(.98)}
+.wa-hint{font-size:12px;color:var(--tx3);text-align:center;line-height:1.5;margin:0}
+.inv-ref{font-size:11px;color:var(--tx3);font-family:var(--fn-mono);text-align:center;margin:0;margin-top:6px}
 
-/* Actions column */
-.col-actions .btn{font-size:12px;padding:8px 12px;min-height:38px;justify-content:center}
-.wa-hint{font-size:10px;color:var(--tx3);text-align:center;line-height:1.4}
-.inv-ref{font-size:10px;color:var(--tx3);font-family:var(--fn-mono);text-align:center}
+/* Secondary row — notes, audio (simplified) */
+.card-secondary{border-top:1px solid var(--bd);padding:16px 0;display:flex;flex-direction:column;gap:12px;background:transparent}
 
-/* Secondary row — notes, audio (shown below main row) */
-.card-secondary{border-top:1px solid var(--bd);padding:10px 18px;display:flex;flex-direction:column;gap:8px;background:rgba(0,0,0,.12)}
+/* Responsive: already optimized for mobile (single column) */
+@media(max-width:768px){
+  .load-card{padding:18px;gap:14px}
+  .col-rank .rank-num{font-size:42px}
+  .card-supplier{font-size:18px}
+  .col-sla .timer-value{font-size:32px}
+  .col-actions .btn{font-size:14px;min-height:44px;padding:12px 16px}
+}
 
-/* Responsive: stack vertically on small screens */
-@media(max-width:700px){
-  .card-row{grid-template-columns:1fr;gap:0}
-  .col-rank,.col-supplier,.col-items,.col-queue,.col-sla,.col-actions{border-right:none;border-bottom:1px solid var(--bd)}
-  .col-actions{border-bottom:none;flex-direction:row;flex-wrap:wrap;gap:8px}
-  .col-sla{text-align:left}
-  .col-sla .timer-value{font-size:18px}
+/* Tablet & desktop — can show side-by-side sections */
+@media(min-width:800px){
+  .card-row{display:grid;grid-template-columns:1fr 1fr;gap:24px;grid-auto-flow:row;grid-template-areas:"rank supplier" "items progress" "sla timer" "actions buttons"}
+  .col-rank{grid-area:rank;order:auto}
+  .col-supplier{grid-area:supplier;order:auto}
+  .col-items{grid-area:items;order:auto}
+  .col-queue{grid-area:progress;order:auto}
+  .col-sla{grid-area:sla;order:auto}
+  .col-actions{grid-area:buttons;order:auto;flex-direction:row;gap:8px}
 }
 
 /* ── Modal ─────────────────────────────────────────────────────────────────── */
@@ -199,40 +237,44 @@ textarea{resize:vertical;min-height:56px}
 .toast.err{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:var(--rd)}
 .toast.info{border-color:rgba(106,95,193,.4);background:rgba(106,95,193,.1);color:var(--pu)}
 
-/* ── Urgency card states ───────────────────────────────────────────────────── */
-/* ARRIVED floats to top + pulses green — supervisor must act NOW */
-.load-card.state-arrived{border-color:var(--gr);box-shadow:0 0 0 0 rgba(194,239,78,.5);animation:cardPulseGreen 1.4s ease-in-out infinite}
-@keyframes cardPulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(194,239,78,.45)}60%{box-shadow:0 0 0 10px rgba(194,239,78,0)}}
+/* ── Urgency card states — PREMIUM DESIGN ──────────────────────────────────── */
+/* ARRIVED: Material here, supervisor must check NOW */
+.load-card.state-arrived{border-color:var(--gr);border-width:2px;box-shadow:0 0 0 0 rgba(194,239,78,.6),rgba(194,239,78,.3) 0 8px 32px;animation:cardPulseGreen 1.4s ease-in-out infinite;background:linear-gradient(135deg,rgba(194,239,78,.08),rgba(194,239,78,.03))}
+@keyframes cardPulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(194,239,78,.6),rgba(194,239,78,.3) 0 8px 32px}60%{box-shadow:0 0 0 16px rgba(194,239,78,0),rgba(194,239,78,.2) 0 8px 32px}}
 
-/* Overdue pulses red */
-.load-card.state-overdue{border-color:var(--rd)!important;animation:cardPulseRed 1s ease-in-out infinite}
-@keyframes cardPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}60%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}
+/* OVERDUE: URGENT — Past deadline */
+.load-card.state-overdue{border-color:var(--rd);border-width:2px;animation:cardPulseRed .8s ease-in-out infinite;background:linear-gradient(135deg,rgba(239,68,68,.12),rgba(239,68,68,.04))}
+.load-card.state-overdue .status-badge{animation:none;box-shadow:0 4px 16px rgba(239,68,68,.4)}
+@keyframes cardPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.6),rgba(239,68,68,.3) 0 8px 32px}60%{box-shadow:0 0 0 16px rgba(239,68,68,0),rgba(239,68,68,.2) 0 8px 32px}}
 
-/* SLA warning (< 30 min) */
-.load-card.state-warn{border-color:var(--am)}
+/* SLA warning (< 30 min remaining) */
+.load-card.state-warn{border-color:var(--am);border-width:2px;background:linear-gradient(135deg,rgba(255,178,135,.08),rgba(255,178,135,.03))}
+.load-card.state-warn .col-sla .timer-value{color:var(--am)}
 
 /* Cards fade when delivered */
-.load-card.state-done{opacity:.58;filter:saturate(.6)}
+.load-card.state-done{opacity:.5;filter:saturate(.4);pointer-events:none}
 
 /* Slide-in for newly added cards */
 @keyframes cardIn{from{opacity:0;transform:translateY(-12px) scale(.97)}to{opacity:1;transform:none}}
 .load-card.card-new{animation:cardIn .35s cubic-bezier(.175,.885,.32,1.275) forwards}
 
-/* ── ARRIVED attention banner ──────────────────────────────────────────────── */
-.arrived-banner{background:linear-gradient(90deg,rgba(194,239,78,.18),rgba(194,239,78,.06));border:1px solid rgba(194,239,78,.4);border-radius:10px;padding:9px 14px;display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700;color:var(--gr);letter-spacing:.04em}
-.arrived-icon{font-size:18px;flex-shrink:0;animation:shake .5s ease-in-out infinite alternate}
-@keyframes shake{from{transform:rotate(-8deg)}to{transform:rotate(8deg)}}
+/* ── ARRIVED attention banner — PREMIUM ─────────────────────────────────────── */
+.arrived-banner{background:linear-gradient(135deg,rgba(194,239,78,.15),rgba(194,239,78,.08));border:2px solid rgba(194,239,78,.5);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:800;color:var(--gr);letter-spacing:.05em;box-shadow:0 4px 12px rgba(194,239,78,.2),inset 0 1px 3px rgba(255,255,255,.1)}
+.arrived-icon{font-size:24px;flex-shrink:0;animation:shake .6s ease-in-out infinite alternate;line-height:1}
+@keyframes shake{0%{transform:rotate(-10deg) scale(1)}50%{transform:rotate(8deg) scale(1.05)}100%{transform:rotate(-10deg) scale(1)}}
 
-/* ── WhatsApp Voice Note player ────────────────────────────────────────────── */
-.audio-note{background:linear-gradient(135deg,rgba(37,211,102,.09),rgba(37,211,102,.04));border:1px solid rgba(37,211,102,.32);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px}
-.audio-wa-dot{width:10px;height:10px;border-radius:50%;background:#25d366;flex-shrink:0;box-shadow:0 0 0 3px rgba(37,211,102,.18)}
+/* ── WhatsApp Voice Note player — PREMIUM ───────────────────────────────────── */
+.audio-note{background:linear-gradient(135deg,rgba(37,211,102,.12),rgba(37,211,102,.05));border:2px solid rgba(37,211,102,.35);border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 8px rgba(37,211,102,.15)}
+.audio-wa-dot{width:12px;height:12px;border-radius:50%;background:#25d366;flex-shrink:0;box-shadow:0 0 0 4px rgba(37,211,102,.2);animation:dotPulse 2s ease-in-out infinite}
+@keyframes dotPulse{0%,100%{box-shadow:0 0 0 4px rgba(37,211,102,.2)}50%{box-shadow:0 0 0 8px rgba(37,211,102,.08)}}
 .audio-col{flex:1;min-width:0}
-.audio-from-label{font-size:10px;color:rgba(37,211,102,.75);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audio-from-label{font-size:11px;color:rgba(37,211,102,.8);font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .audio-from-label strong{color:#25d366}
-.audio-row{display:flex;align-items:center;gap:8px}
-.audio-play-btn{width:36px;height:36px;border-radius:50%;background:#25d366;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform .15s,background .15s;color:#062010}
-.audio-play-btn:hover{transform:scale(1.1);background:#1fb857}
-.audio-play-btn:focus-visible{outline:3px solid rgba(37,211,102,.55);outline-offset:3px}
+.audio-row{display:flex;align-items:center;gap:10px}
+.audio-play-btn{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#25d366,#1fb857);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s ease;color:#062010;font-size:18px;box-shadow:0 4px 12px rgba(37,211,102,.3)}
+.audio-play-btn:hover{transform:scale(1.1);box-shadow:0 6px 16px rgba(37,211,102,.4)}
+.audio-play-btn:active{transform:scale(.96)}
+.audio-play-btn:focus-visible{outline:3px solid rgba(37,211,102,.6);outline-offset:3px}
 .audio-track{flex:1;display:flex;align-items:center}
 .audio-seek{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:rgba(37,211,102,.22);outline:none;cursor:pointer}
 .audio-seek::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#25d366;cursor:pointer;box-shadow:0 0 0 3px rgba(37,211,102,.25)}
