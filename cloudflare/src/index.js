@@ -210,7 +210,12 @@ export default {
       }
 
       if (path === '/api/report' && request.method === 'GET') {
-        return handleReport(env, url);
+        try {
+          return await handleReport(env, url);
+        } catch (e) {
+          console.error('[/api/report] error:', e.message, e.stack);
+          return errRes(`Report generation failed: ${String(e.message).slice(0, 100)}`, 500);
+        }
       }
 
       if (path === '/api/settings/working-hours' && request.method === 'PUT') {
