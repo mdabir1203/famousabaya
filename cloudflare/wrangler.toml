@@ -1,48 +1,81 @@
 name = "abaya-track"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
-compatibility_flags = ["nodejs_compat"]
+# Omit nodejs_compat unless required — lowers startup/CPU overhead for Workers that use Web APIs only.
 account_id = "cac65f11aecab7f7dc4446390d49f4f2"
 
-# ─── Custom domain — CEO dashboard lives at https://dashboard.farewellabaya.com
+# â”€â”€â”€ Custom domain â€” CEO dashboard lives at https://dashboard.farewellabaya.com
 # Cloudflare manages DNS and TLS automatically. No manual DNS record needed.
 [[routes]]
 pattern = "dashboard.farewellabaya.com"
 custom_domain = true
 
-# ─── Timezone for factory day boundaries and hourly charts ───────────────────
+# â”€â”€â”€ Timezone for factory day boundaries and hourly charts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Extra CEO hostname (e.g. dashboard.abaya.com) ───────────────────────────
+# Each hostname needs a Workers Custom Domain pointed at THIS worker plus a matching
+# [[routes]] row with custom_domain = true. Wrong worker or missing route → errors (often 503).
+#
+# Smoke: curl -sS "https://dashboard.farewellabaya.com/api/state?token=YOUR_CEO_PASSWORD" | jq '.ok, .ts'
+# (Query token is the CEO login password; server responds 200 and may set JWT cookies on /ceo redirect.)
+# After browser login: HttpOnly cookies abaya_ceo_session (access JWT) + abaya_ceo_refresh (refresh JWT).
+# Expect HTTP 200 + JSON with "ok":true when session is valid.
+# HTML login page instead of JSON on /api/* → missing or invalid session / wrong password.
+# Logs: cd cloudflare && npx wrangler tail
+#
+# Uncomment after attaching dashboard.abaya.com on this Worker in Cloudflare Dashboard:
+# [[routes]]
+# pattern = "dashboard.abaya.com"
+# custom_domain = true
+
 [vars]
 FACTORY_TZ = "Asia/Dubai"
+# URL of the factory's cloudflared tunnel — Worker calls this to push new invoices.
+# Example: https://factory.farewellabaya.com
+# Set to empty string to disable factory push (Worker stores in D1 only).
+FACTORY_TUNNEL_URL = ""
+# Secrets (set via wrangler secret put — never commit values):
+#   npx wrangler secret put DISPATCH_BRIDGE_SECRET   ← shared with factory .env
+#   npx wrangler secret put WHATSAPP_VERIFY_TOKEN
+#   npx wrangler secret put WHATSAPP_TOKEN           ← for outbound alerts
 # Used when catalog rows have no Process column (factory Excel at watch root).
 DEFAULT_CATALOG_PROCESS = "Tailor (01)"
-# Set to "1" after enabling Cloudflare Access on dashboard.* — Worker trusts Cf-Access-Authenticated-User-Email; CEO_TOKEN still works when header absent (e.g. wrangler dev).
-REQUIRE_CF_ACCESS = "0"
-
-# ─── Secrets (set automatically by DEPLOY.ps1, or manually below) ────────────
+# Bump to invalidate all CEO JWTs (forces re-login).
+CEO_CREDENTIAL_VERSION = "1"
+# Optional JWT TTL (seconds): CEO_ACCESS_TTL_SEC default 3600; CEO_REFRESH_TTL_SEC default 604800
+# â"€â"€â"€ Secrets (set automatically by DEPLOY.ps1, or manually below) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 # Run from the cloudflare\ folder:
 #   npx wrangler secret put INGEST_SECRET
 #   npx wrangler secret put CEO_TOKEN
+#   npx wrangler secret put CEO_JWT_SECRET
 #
-# INGEST_SECRET — shared key between factory server (.env CF_INGEST_SECRET) and this worker
-# CEO_TOKEN     — the CEO's login password (they type this at the dashboard login page)
+# Optional overlap (rotation): CEO_JWT_SECRET_PREVIOUS, CEO_TOKEN_PREVIOUS
+#
+# INGEST_SECRET - shared key between factory server (.env CF_INGEST_SECRET) and this worker
+# CEO_TOKEN     - CEO login password (typed at login)
+# CEO_JWT_SECRET - server-only HMAC key for session JWTs (openssl rand -base64 32). Required for CEO login.
 
-# ─── D1 Database (filled in automatically by DEPLOY.ps1) ────────────────────
+# â”€â”€â”€ D1 Database (filled in automatically by DEPLOY.ps1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 [[d1_databases]]
 binding       = "DB"
 database_name = "abaya-db"
 database_id   = "5d61fb15-2ead-491b-80e2-fe2b2fd46d23"
 
-# ─── R2 Bucket (for end-of-day report storage) ───────────────────────────────
+# â”€â”€â”€ R2 Bucket (for end-of-day report storage) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # NOTE: Enable R2 in Cloudflare Dashboard first, then uncomment:
 # [[r2_buckets]]
 # binding     = "EXPORTS"
 # bucket_name = "abaya-exports"
 
-# ─── Cron — auto EOD summary at 6pm Dubai time every day ────────────────────
+# â”€â”€â”€ Cron â€” auto EOD summary at 6pm Dubai time every day â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Multiple crons share the `scheduled` handler in src/index.js, which branches
+# on `event.cron`:
+#   "0 14 * * *"  -> daily EOD summary  (sendEODSummary)
+#   "* * * * *"   -> tunnel health probe (runTunnelProbe in handlers/dispatch.js)
+#                   No-op when FACTORY_TUNNEL_URL is empty, so safe to leave on.
 [triggers]
-crons = ["0 14 * * *"]
+crons = ["0 14 * * *", "* * * * *"]
 
-# ─── Rate limits (Workers Rate Limiting API — unique namespace_id per binding) ─
+# â”€â”€â”€ Rate limits (Workers Rate Limiting API â€” unique namespace_id per binding) â”€
 [[ratelimits]]
 name = "INGEST_RATE_LIMIT"
 namespace_id = "18701"
@@ -63,3 +96,8 @@ namespace_id = "18703"
   [ratelimits.simple]
   limit = 800
   period = 60
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true

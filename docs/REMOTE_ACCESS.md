@@ -97,7 +97,7 @@ ingress:
 ## Security checklist
 
 - [ ] `.env` not committed; `CF_INGEST_SECRET` stays secret.
-- [ ] CEO Worker dashboard is token-protected (`CEO_TOKEN`).
+- [ ] CEO Worker dashboard uses `CEO_TOKEN` (password) + `CEO_JWT_SECRET` (session JWT signing); optional `CEO_CREDENTIAL_VERSION` bump revokes sessions.
 - [ ] If using Cloudflare Tunnel: Access policy enforced, connector runs as service.
 - [ ] If using Tailscale: only authorized accounts on the tailnet.
 - [ ] Test from mobile data (off factory Wi-Fi) once.

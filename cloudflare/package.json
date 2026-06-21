@@ -1,0 +1,17 @@
+{
+  "name": "abaya-track-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.88.0"
+  },
+  "scripts": {
+    "wrangler-deploy": "node ../scripts/run-cloudflare-wrangler.cjs deploy --config wrangler.toml",
+    "dev": "node ../scripts/run-cloudflare-wrangler.cjs dev --config wrangler.toml --local",
+    "deploy": "npm run wrangler-deploy",
+    "db:create": "node ../scripts/run-cloudflare-wrangler.cjs d1 create abaya-db --config wrangler.toml",
+    "db:init": "node ../scripts/run-cloudflare-wrangler.cjs d1 execute abaya-db --config wrangler.toml --file=schema.sql",
+    "db:init:remote": "node ../scripts/run-cloudflare-wrangler.cjs d1 execute abaya-db --remote --config wrangler.toml --file=schema.sql",
+    "secrets": "echo From repo: npm exec --prefix cloudflare -- wrangler secret put INGEST_SECRET; wrangler secret put CEO_TOKEN; wrangler secret put CEO_JWT_SECRET (required for CEO login)"
+  }
+}

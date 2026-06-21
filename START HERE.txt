@@ -74,9 +74,6 @@ Factory app (server.js, public\, install\) — pick ONE path:
   CEO cloud: https://dashboard.farewellabaya.com  (after Cloudflare deploy)
   Kiosk PWA: https://kiosk.farewellabaya.com     (any tablet, add to home screen)
 
-  D1 migration 0006 (sync batch idempotency): from repo root run  yarn cf:d1:0006
-  (needs internet + wrangler login:  yarn run wrangler login  once per machine).
-
   Note: "wrangler deploy" in cloudflare\ only updates the CEO Worker (D1, ingest).
   It does NOT replace files on the factory PC. Kiosk PWA updates need:
     yarn run deploy:all   or   kiosk-pwa + wrangler pages deploy separately.
@@ -90,15 +87,42 @@ Factory app (server.js, public\, install\) — pick ONE path:
   and sent automatically when the link is back. Export backup: GET /api/ceo-ingest-export with header
   X-Ingest-Secret (same as CF_INGEST_SECRET). Status: GET /api/ceo-ingest-status (pending count).
 
---- Need more? ---
+  Kiosk sessions (client-facing): One Start ties that worker to one catalog item and one process until
+  they tap Finish. Scheduled breaks do not auto-end the session while the server keeps running; only
+  minutes inside configured working hours count toward duration when they Finish. After an overnight
+  PC shutdown, an open session may resume without a new Start only if it was saved in the latest
+  offline snapshot under data\offline-dashboard-reports\ and is still within RESTORE_ACTIVE_SESSION_MAX_AGE_MS
+  (default 48 hours in .env). Abrupt power loss before the next periodic save can still lose the in-progress
+  session; prefer closing the server window normally (Ctrl+C / LAUNCH-ALL) when possible.
 
-  Remote access (Tailscale/tunnel): docs\TAILSCALE_HYBRID.md
+--- Run as a service (PM2 — recommended for always-on) ---
+
+PM2 keeps the server alive across crashes and reboots and gives you `pm2 logs`,
+`pm2 status`, and `pm2 restart` instead of juggling cmd windows.
+
+  One-time setup (PowerShell, run elevated):
+    powershell -NoProfile -ExecutionPolicy Bypass -File install\SETUP-PM2-BOOT.ps1
+  Daily ops:
+    pm2 status
+    pm2 logs abaya-server
+    pm2 restart abaya-server
+    pm2 reload all
+  Quick health check:
+    powershell -NoProfile -ExecutionPolicy Bypass -File install\CHECK-PM2-STATUS.ps1
+  Update after `git pull`:
+    pm2 reload ecosystem.config.cjs --update-env
+
+The ecosystem (ecosystem.config.cjs) auto-includes the cloudflared tunnel and
+the catalog-watcher when their config files are present. Logs land in
+data\pm2-logs\.
+
+--- Need more? ---
   Full remote guide:                docs\REMOTE_ACCESS.md
   Catalog Excel format:             docs\CATALOG_EXCEL_SPEC.md
   Employee Excel format:            docs\EMPLOYEES_EXCEL_SPEC.md
-  Tablet/kiosk deployment:          docs\DEPLOYMENT_KIOSK_FINGERPRINT.md
   Office catalog watcher:           docs\OFFICE_LAPTOP.md
   Full IT install guide:            docs\INSTALL_WINDOWS.md
   Cloud Worker deploy:              install\DEPLOY-CEO-CLOUD.bat
-  Worker + Kiosk Pages (one shot): yarn run deploy:all   (or install\DEPLOY-ALL.ps1)
+  Worker + Dashboard (one shot): yarn run deploy:all   (or install\DEPLOY-ALL.ps1)
   Auto-start at Windows logon:     install\REGISTER-STARTUP-SCHEDULER.ps1 (PowerShell as Admin)
+  Operations runbook:               docs\OPERATIONS_RUNBOOK.md

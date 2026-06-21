@@ -8,9 +8,12 @@ import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { networkInterfaces } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
-import { upsertInvoice, updateInvoiceStatus, getLeaderboard, getInvoice, pruneDelivered } from './src/store.js';
+import { upsertInvoice, updateInvoiceStatus, setItemDone, getLeaderboard, getInvoice, pruneDelivered, itemsProgress, getMaterials } from './src/store.js';
 import { parseInboundMessages, extractInvoiceFromText } from './src/whatsapp.js';
+import { downloadWhatsAppMedia } from './src/wa-media.js';
+import { extractPdfText, extractInvoiceFields } from './src/pdf-extract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +27,11 @@ const BRIDGE_SECRET = process.env.DISPATCH_BRIDGE_SECRET || '';
 // Public URL reachable over the internet (cloudflared tunnel, e.g. https://factory.farewellabaya.com)
 // Required when tablets connect over mobile SIM rather than LAN WiFi.
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+// Read-side access token. When set, GET endpoints that expose business data
+// (invoices, server info, the SSE stream, audio) require this token. MUST be set
+// whenever PUBLIC_URL is configured, otherwise the cloudflared tunnel leaks all
+// supplier/customer data to anyone who learns the URL.
+const VIEW_TOKEN = process.env.DISPATCH_VIEW_TOKEN || '';
 
 // 512 KB is more than enough for any invoice JSON payload.
 // Enforced in readBody() to prevent unbounded memory growth from malformed / malicious requests.
@@ -66,10 +74,23 @@ function getLocalIp() {
 /** @type {Set<import('node:http').ServerResponse>} */
 const _clients = new Set();
 
+// Per-client buffer cap. A stalled tablet (mobile signal dropped without TCP close)
+// would otherwise accumulate buffered writes here and grow server memory unbounded.
+// 64 KB ≈ 10–50 buffered leaderboard updates — generous slack for a brief blip,
+// tight enough to force-close a truly dead client so the tablet reconnects.
+const SSE_BACKPRESSURE_BYTES = 64 * 1024;
+
 function broadcast(eventName, payload) {
   const msg = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
   const dead = [];
   for (const res of _clients) {
+    // Backpressure: if the kernel hasn't drained what we've already queued, the
+    // socket is stalled — stop writing to it and force-close so PWA reconnects.
+    if (res.writableLength > SSE_BACKPRESSURE_BYTES) {
+      dead.push(res);
+      try { res.end(); } catch (_) {}
+      continue;
+    }
     try { res.write(msg); } catch (_) { dead.push(res); }
   }
   dead.forEach(r => _clients.delete(r));
@@ -109,21 +130,46 @@ function checkSecret(req) {
   return (req.headers['x-ingest-secret'] || '') === INGEST_SECRET;
 }
 
+// Read-side guard for data-bearing GET endpoints. Token is accepted via the
+// X-View-Token header OR a ?token= query param — query support is required
+// because EventSource (SSE) and <audio src> cannot send custom headers.
+// When DISPATCH_VIEW_TOKEN is unset, reads stay open (LAN-only deployments).
+function checkViewToken(req, url) {
+  if (!VIEW_TOKEN) return true;
+  const t = req.headers['x-view-token'] || url.searchParams.get('token') || '';
+  return t === VIEW_TOKEN;
+}
+
 function checkBridgeSecret(req) {
   if (!BRIDGE_SECRET) return false;
   return (req.headers['x-bridge-secret'] || '') === BRIDGE_SECRET;
 }
 
-async function pushToCloud(id, status) {
+async function pushToCloud(id, status, extra = {}) {
   if (!CF_WORKER_URL || !BRIDGE_SECRET) return;
   try {
     await fetch(`${CF_WORKER_URL}/dispatch/invoices/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
       signal: AbortSignal.timeout(5_000),
-      headers: { 'Content-Type': 'application/json', 'X-Bridge-Secret': BRIDGE_SECRET },
-      body: JSON.stringify({ status }),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bridge-Secret': BRIDGE_SECRET,
+        // Idempotency key — Worker dedupes within a 24 h window, so any future
+        // retry of this exact transition is safely replayable (no double-apply,
+        // no duplicate downstream notifyFactory). Fresh UUID per call site.
+        'X-Idempotency-Key': randomUUID(),
+      },
+      // `extra` carries per-abaya items (with done flags) + customerPhone so the
+      // cloud has what it needs to message the customer on delivery.
+      body: JSON.stringify({ status, ...extra }),
     });
   } catch (_) {}
+}
+
+// Build the bridge `extra` payload (items + customerPhone) from a stored invoice.
+function cloudExtra(inv) {
+  if (!inv) return {};
+  return { items: inv.items || [], customerPhone: inv.customerPhone ?? null };
 }
 
 async function syncFromCloud() {
@@ -170,6 +216,96 @@ async function sendWhatsAppAlert(invoice) {
   }
 }
 
+/**
+ * Ingest a WhatsApp document (PDF invoice). Digital PDFs are text-extracted and
+ * auto-filled; scanned/photo PDFs (no text layer) or a missing token produce a
+ * PENDING manual-review stub with the PDF attached. Never throws.
+ * @param {{documentId?:string, filename?:string, mimeType?:string, from?:string}} msg
+ * @returns {Promise<boolean>} whether an invoice was upserted
+ */
+async function ingestDocumentInvoice(msg) {
+  const mediaId = msg.documentId || '';
+  const filename = msg.filename || '';
+  const isPdf = /pdf/i.test(msg.mimeType || '') || /\.pdf$/i.test(filename);
+  let fields = { id: null, supplier: null, items: [], slaDeadline: null, orderDate: null, confidence: 'low' };
+
+  if (WA_TOKEN && mediaId && isPdf) {
+    try {
+      const { buffer } = await downloadWhatsAppMedia(mediaId, WA_TOKEN);
+      const text = extractPdfText(buffer);
+      if (text) fields = extractInvoiceFields(text);
+    } catch (e) {
+      console.warn('[whatsapp] document download/extract failed:', e.message);
+    }
+  }
+
+  // Stable id: extracted invoice no. wins; else derive from filename, else media id.
+  const id = (fields.id && fields.id.trim()) ||
+    (filename ? 'PDF-' + filename.replace(/\.pdf$/i, '').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 32) : '') ||
+    ('PDF-' + String(mediaId || Date.now()).slice(-10));
+
+  upsertInvoice({
+    id,
+    supplier: fields.supplier || ('WhatsApp ' + (msg.from || '')).trim(),
+    items: fields.items,
+    slaDeadline: fields.slaDeadline || undefined,
+    orderDate: fields.orderDate || null,
+    status: 'PENDING',
+    source: 'whatsapp',
+    documentId: mediaId || null,
+    documentName: filename || null,
+    // notes intentionally omitted — staff verify by opening the attached PDF.
+  });
+  return true;
+}
+
+/**
+ * Image/voice message with no extractable text — file a PENDING stub so staff can
+ * open the photo or play the voice note from the leaderboard.
+ * @param {{type:string, from?:string, imageId?:string, audioId?:string}} msg
+ */
+function ingestMediaStub(msg) {
+  const isImage = msg.type === 'image';
+  const mid = (isImage ? msg.imageId : msg.audioId) || '';
+  upsertInvoice({
+    id: (isImage ? 'IMG-' : 'VOICE-') + String(mid || Date.now()).slice(-10),
+    supplier: ('WhatsApp ' + (msg.from || '')).trim(),
+    status: 'PENDING',
+    source: 'whatsapp',
+    imageId: isImage ? (mid || null) : null,
+    audioId: isImage ? null : (mid || null),
+  });
+}
+
+/**
+ * Stream a WhatsApp media object (audio / image / PDF) to the client on demand.
+ * Re-fetched from Meta each time (Bearer-authed), never persisted to the factory disk.
+ * @param {string} mediaId
+ * @param {string} fallbackMime  used only if Meta doesn't report a mime type
+ */
+async function proxyWaMedia(req, res, url, mediaId, fallbackMime) {
+  if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
+  if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — set WHATSAPP_TOKEN' }, 503);
+  try {
+    const metaRes = await fetch(
+      `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
+      { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
+    );
+    if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
+    const { url: mediaUrl, mime_type } = await metaRes.json();
+    const fileRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+    if (!fileRes.ok) return sendJson(res, { error: 'media fetch failed' }, 502);
+    res.writeHead(200, {
+      'Content-Type': mime_type || fallbackMime,
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    await pipeline(Readable.fromWeb(fileRes.body), res);
+  } catch (e) {
+    if (!res.headersSent) sendJson(res, { error: e.message }, 500);
+  }
+}
+
 const leaderboardHtmlPath = join(__dirname, 'public', 'leaderboard.html');
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
@@ -190,6 +326,7 @@ const server = createServer(async (req, res) => {
 
   // Server info — LAN IP for tablet setup, plus public tunnel URL if configured
   if (pathname === '/api/info' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     const ip = getLocalIp();
     return sendJson(res, {
       ip,
@@ -207,7 +344,15 @@ const server = createServer(async (req, res) => {
 
   // List invoices (REST fallback)
   if (pathname === '/api/invoices' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     return sendJson(res, getLeaderboard({ includeDelivered: true }));
+  }
+
+  // Material palette — distinct materials ever used, with usage counts + colours.
+  // Powers a future drag-and-drop material picker in the invoice-creation UI.
+  if (pathname === '/api/materials' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
+    return sendJson(res, { materials: getMaterials() });
   }
 
   // Manual invoice creation (UI form)
@@ -223,6 +368,8 @@ const server = createServer(async (req, res) => {
         targetQueue: body.targetQueue || '',
         status: 'PENDING',
         slaDeadline: body.slaDeadline || (Date.now() + 4 * 60 * 60 * 1000),
+        orderDate: body.orderDate || null,
+        documentId: body.documentId || null,
         source: 'api',
         notes: body.notes || null,
       });
@@ -266,7 +413,7 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  // Double-confirmation Step 1: PENDING → ARRIVED
+  // Step 1: PENDING → ARRIVED (material physically at the gate)
   const m1 = pathname.match(/^\/api\/delivery\/step1\/([^/]+)$/);
   if (m1 && req.method === 'POST') {
     const inv = getInvoice(m1[1]);
@@ -278,16 +425,43 @@ const server = createServer(async (req, res) => {
     return sendJson(res, { ok: true, invoice: updated });
   }
 
-  // Double-confirmation Step 2: ARRIVED → DELIVERED
+  // Material check: ARRIVED → READY (supervisor verified the material; production can run)
+  const mc = pathname.match(/^\/api\/delivery\/material-check\/([^/]+)$/);
+  if (mc && req.method === 'POST') {
+    const inv = getInvoice(mc[1]);
+    if (!inv) return sendJson(res, { error: 'not found' }, 404);
+    if (inv.status !== 'ARRIVED') return sendJson(res, { error: 'invalid state', current: inv.status }, 409);
+    const updated = updateInvoiceStatus(mc[1], 'READY');
+    pushLeaderboard();
+    pushToCloud(mc[1], 'READY', cloudExtra(updated)).catch(() => {});
+    return sendJson(res, { ok: true, invoice: updated });
+  }
+
+  // Toggle a single abaya's done flag (frequent floor action — no PIN)
+  const it = pathname.match(/^\/api\/items\/([^/]+)\/(\d+)\/toggle$/);
+  if (it && req.method === 'POST') {
+    const updated = setItemDone(it[1], parseInt(it[2], 10));
+    if (!updated) return sendJson(res, { error: 'not found' }, 404);
+    pushLeaderboard();
+    // Sync the new item state to the cloud (status unchanged) so the cloud's
+    // copy stays current for customer messaging on delivery.
+    pushToCloud(it[1], updated.status, cloudExtra(updated)).catch(() => {});
+    const { doneCount, total, pendingCount } = itemsProgress(updated);
+    return sendJson(res, { ok: true, invoice: updated, doneCount, total, pendingCount });
+  }
+
+  // Step 2: READY → DELIVERED (handed to customer). Allowed even if some abayas
+  // are still pending — the UI warns; we never hard-block a real handover.
   const m2 = pathname.match(/^\/api\/delivery\/step2\/([^/]+)$/);
   if (m2 && req.method === 'POST') {
     const inv = getInvoice(m2[1]);
     if (!inv) return sendJson(res, { error: 'not found' }, 404);
-    if (inv.status !== 'ARRIVED') return sendJson(res, { error: 'invalid state', current: inv.status }, 409);
+    if (inv.status !== 'READY') return sendJson(res, { error: 'invalid state', current: inv.status, hint: 'material check (→READY) required before delivery' }, 409);
     const updated = updateInvoiceStatus(m2[1], 'DELIVERED');
     pushLeaderboard();
-    pushToCloud(m2[1], 'DELIVERED').catch(() => {});
-    sendWhatsAppAlert(updated).catch(() => {});
+    // Cloud handles customer notification on DELIVERED (CEO-toggled, metered).
+    pushToCloud(m2[1], 'DELIVERED', cloudExtra(updated)).catch(() => {});
+    sendWhatsAppAlert(updated).catch(() => {}); // factory-local supervisor alert (unchanged)
     return sendJson(res, { ok: true, invoice: updated, whatsappConfigured: !!(WA_TOKEN && WA_PHONE_ID) });
   }
 
@@ -319,41 +493,27 @@ const server = createServer(async (req, res) => {
           upsertInvoice({ ...parsed, status: 'PENDING', source: 'whatsapp' });
           ingested++;
         }
+      } else if (msg.type === 'document') {
+        if (await ingestDocumentInvoice(msg)) ingested++;
+      } else if (msg.type === 'image' || msg.type === 'audio') {
+        ingestMediaStub(msg);
+        ingested++;
       }
     }
     if (ingested > 0) pushLeaderboard();
     return sendJson(res, { ok: true, ingested });
   }
 
-  // Audio proxy — streams WA voice notes
+  // Media proxy — voice notes via /api/audio (the player), photos + PDFs via the
+  // generic /api/media (also accepts the older /api/document and /api/image paths).
   const audioMatch = pathname.match(/^\/api\/audio\/([^/]+)$/);
-  if (audioMatch && req.method === 'GET') {
-    const mediaId = audioMatch[1];
-    if (!WA_TOKEN) return sendJson(res, { error: 'WhatsApp not configured — cannot serve audio' }, 503);
-    try {
-      const metaRes = await fetch(
-        `https://graph.facebook.com/v19.0/${encodeURIComponent(mediaId)}`,
-        { signal: AbortSignal.timeout(8_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } }
-      );
-      if (!metaRes.ok) return sendJson(res, { error: 'media not found' }, 404);
-      const { url: mediaUrl, mime_type } = await metaRes.json();
-      // 30 s for audio streaming — voice notes can be up to a few MB
-      const audioRes = await fetch(mediaUrl, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${WA_TOKEN}` } });
-      if (!audioRes.ok) return sendJson(res, { error: 'audio fetch failed' }, 502);
-      res.writeHead(200, {
-        'Content-Type': mime_type || 'audio/ogg',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': '*',
-      });
-      await pipeline(Readable.fromWeb(audioRes.body), res);
-    } catch (e) {
-      if (!res.headersSent) sendJson(res, { error: e.message }, 500);
-    }
-    return;
-  }
+  if (audioMatch && req.method === 'GET') { await proxyWaMedia(req, res, url, audioMatch[1], 'audio/ogg'); return; }
+  const mediaMatch = pathname.match(/^\/api\/(?:media|document|image)\/([^/]+)$/);
+  if (mediaMatch && req.method === 'GET') { await proxyWaMedia(req, res, url, mediaMatch[1], 'application/octet-stream'); return; }
 
   // SSE leaderboard stream
   if (pathname === '/api/leaderboard/stream' && req.method === 'GET') {
+    if (!checkViewToken(req, url)) return sendJson(res, { error: 'unauthorized' }, 401);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
@@ -436,6 +596,11 @@ server.listen(PORT, '0.0.0.0', () => {
   const lanUrl    = `http://${ip}:${PORT}`;
   const publicMsg = PUBLIC_URL ? `  public: ${PUBLIC_URL}` : '  public: NOT SET (tablets need same WiFi)';
   console.log(`[dispatch] :${PORT}  LAN: ${lanUrl}${publicMsg}  whatsapp:${WA_TOKEN ? 'configured' : 'not set'}`);
+  // Loud warning: a public tunnel with no read token exposes all invoice data
+  // (suppliers, materials, customer notes) to anyone who learns the URL.
+  if (PUBLIC_URL && !VIEW_TOKEN) {
+    console.warn('[dispatch] ⚠️  PUBLIC_URL is set but DISPATCH_VIEW_TOKEN is empty — read endpoints are UNPROTECTED on the public tunnel. Set DISPATCH_VIEW_TOKEN to lock them down.');
+  }
   syncFromCloud();
 
   // ── Delivered-invoice pruning ─────────────────────────────────────────────

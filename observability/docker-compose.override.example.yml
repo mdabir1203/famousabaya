@@ -1,0 +1,31 @@
+﻿# AbaYa Track — SkyWalking local overrides
+# Copy this file to docker-compose.override.yml and edit as needed.
+# It is automatically merged by docker compose when present.
+#
+# Use this to:
+#  - Change OAP heap size
+#  - Add persistent volumes for BanyanDB
+#  - Change data retention TTL
+
+services:
+  oap-bdb:
+    environment:
+      # JVM heap for OAP. Minimum recommended: 512m.
+      # Factory-floor laptop (8 GB RAM):  512m – 1024m
+      # Development machine (16+ GB RAM): 1024m – 2048m
+      JAVA_OPTS: "-Xms512m -Xmx512m"
+
+      # How many days to keep trace data (default: 7)
+      SW_CORE_RECORD_DATA_TTL: "7"
+      # How many days to keep metric data (default: 7)
+      SW_CORE_METRICS_DATA_TTL: "7"
+
+  # Uncomment to persist BanyanDB data across 'docker compose down':
+  # banyandb:
+  #   volumes:
+  #     - banyandb-stream:/tmp/stream-data
+  #     - banyandb-measure:/tmp/measure-data
+
+# volumes:
+#   banyandb-stream:
+#   banyandb-measure:

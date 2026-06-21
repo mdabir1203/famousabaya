@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
 
-:: ── Read PORT from .env (default 3000) ───────────────────────────────────────
-set ABA_PORT=3000
+:: ── Read PORT from .env (default 3111) ───────────────────────────────────────
+set ABA_PORT=3111
 if exist "%~dp0..\.env" (
   for /f "usebackq tokens=1,* delims==" %%A in ("%~dp0..\.env") do (
     if /i "%%A"=="PORT" set "ABA_PORT=%%B"

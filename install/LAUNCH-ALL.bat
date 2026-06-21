@@ -1,117 +1,111 @@
 @echo off
 setlocal EnableExtensions
-title AbaYa Track - Launch
+title AbaYa Track - Setup ^& Auto-Start
+
 cd /d "%~dp0.."
+set "APP_DIR=%CD%"
+set "BIN_DIR=%APP_DIR%\.bin"
+set "NODE_DIR=%BIN_DIR%\node-v20.12.2-win-x64"
+set "NODE_EXE=%NODE_DIR%\node.exe"
 
-if not exist "server.js" (
-  echo ERROR: server.js not found. Run from the full AbaYa Track folder.
-  pause
-  exit /b 1
+echo =======================================================
+echo AbaYa Track - Portable Auto-Start Setup
+echo =======================================================
+echo.
+
+:: 1. Download Portable Node.js if missing
+if not exist "%NODE_EXE%" (
+    echo [INFO] Downloading Portable Node.js engine (this only happens once, ~30MB)...
+    if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
+    powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://nodejs.org/dist/v20.12.2/node-v20.12.2-win-x64.zip' -OutFile '%BIN_DIR%\node.zip'"
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to download Node.js. Please check your internet connection.
+        pause
+        exit /b 1
+    )
+    echo [INFO] Extracting engine...
+    powershell -NoProfile -Command "Expand-Archive -Path '%BIN_DIR%\node.zip' -DestinationPath '%BIN_DIR%' -Force"
+    del /q "%BIN_DIR%\node.zip"
 )
 
-if not exist ".pnp.cjs" (
-  echo === First-time setup (dependencies) ===
-  call "%~dp0INSTALL.bat" NOPAUSE
-  if errorlevel 1 (
-    echo Install failed. Fix errors above, then run this file again.
-    pause
-    exit /b 1
+:: Add portable node to current path so npm/corepack/setup.cjs work correctly
+set "PATH=%NODE_DIR%;%PATH%"
+
+:: 2. Setup Dependencies (using existing setup.cjs)
+if not exist ".pnp.cjs" if not exist "node_modules\" (
+    echo [INFO] Installing required app packages...
+    "%NODE_EXE%" install\setup.cjs NOPAUSE
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to install dependencies.
+        pause
+        exit /b 1
+    )
+)
+
+:: 3. Setup .env file
+if not exist ".env" (
+  if exist ".env.example" (
+    copy .env.example .env >nul
+  ) else (
+    echo PORT=3000 > .env
   )
 )
 
-set "CF_CFG=%USERPROFILE%\.cloudflared\config.yml"
-if exist "%CF_CFG%" (
-  where cloudflared >nul 2>&1
-  if not errorlevel 1 (
-    echo [Tunnel] Cloudflare connector (minimized^)...
-    start "AbaYa Tunnel" /min cloudflared tunnel --config "%CF_CFG%" run
-    timeout /t 2 /nobreak >nul
-    echo   [i] HTTPS tablets: kiosk app https://kiosk.farewellabaya.com — factory API must be https:// (e.g. tunnel api host^). See docs\REMOTE_ACCESS.md
-  )
-)
-
-:: ── Read PORT from .env (default 3000) ────────────────────────────────────────
-set ABA_PORT=3000
+:: Read port from .env if available, default to 3000
+set PORT=3000
 if exist ".env" (
-  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
-    if /i "%%A"=="PORT" set "ABA_PORT=%%B"
+  for /f "tokens=1,2 delims==" %%A in (.env) do (
+    if /I "%%A"=="PORT" set PORT=%%B
   )
 )
 
-echo.
-echo === AbaYa Track - Starting all components ===
-echo.
+:: 4. Create the Silent Runner Script
+set "VBS_FILE=%APP_DIR%\install\silent-runner.vbs"
+set "BAT_RUNNER=%APP_DIR%\install\run-server.bat"
 
-:: ── 1. Factory server ──────────────────────────────────────────────────────
-echo [1/3] Starting factory server on port %ABA_PORT%...
-start "AbaYa Server — port %ABA_PORT%" cmd /k "cd /d "%~dp0.." && yarn node server.js"
+echo @echo off > "%BAT_RUNNER%"
+echo cd /d "%APP_DIR%" >> "%BAT_RUNNER%"
+echo set "PATH=%NODE_DIR%;%%PATH%%" >> "%BAT_RUNNER%"
+echo :loop >> "%BAT_RUNNER%"
+echo if exist ".pnp.cjs" ( >> "%BAT_RUNNER%"
+echo   "%NODE_EXE%" -r ./.pnp.cjs server.js >> "%BAT_RUNNER%"
+echo ) else ( >> "%BAT_RUNNER%"
+echo   "%NODE_EXE%" server.js >> "%BAT_RUNNER%"
+echo ) >> "%BAT_RUNNER%"
+echo echo [INFO] Server crashed or exited. Restarting automatically in 5 seconds... >> "%BAT_RUNNER%"
+echo timeout /t 5 /nobreak ^>nul >> "%BAT_RUNNER%"
+echo goto loop >> "%BAT_RUNNER%"
 
-:: Give the server a moment to bind before opening browser tabs
-timeout /t 2 /nobreak >nul
+echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_FILE%"
+echo WshShell.Run chr(34) ^& "%BAT_RUNNER%" ^& Chr(34), 0 >> "%VBS_FILE%"
+echo Set WshShell = Nothing >> "%VBS_FILE%"
 
-:: ── 2. Browser tabs ────────────────────────────────────────────────────────
-echo [2/3] Opening kiosk, dashboard, and setup page in browser...
-start "" "http://localhost:%ABA_PORT%/kiosk.html"
-start "" "http://localhost:%ABA_PORT%/dashboard.html"
-start "" "http://localhost:%ABA_PORT%/setup"
+:: 5. Create Startup Shortcut
+echo [INFO] Configuring Windows Auto-Start...
+set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+set "SHORTCUT=%STARTUP_DIR%\AbaYa-Track-Server.lnk"
 
-:: ── 3. Catalog watcher (only if config.json is present) ───────────────────
-echo [3/3] Checking catalog watcher...
-if not exist "tools\catalog-watcher\config.json" (
-  echo   Skipped - no tools\catalog-watcher\config.json found.
-  echo   To enable catalog sync, copy config.example.json to config.json and edit it.
-  echo   See docs\OFFICE_LAPTOP.md for instructions.
-  goto done
-)
+powershell -NoProfile -Command "$wshell = New-Object -ComObject WScript.Shell; $shortcut = $wshell.CreateShortcut('%SHORTCUT%'); $shortcut.TargetPath = 'wscript.exe'; $shortcut.Arguments = '""%VBS_FILE%""'; $shortcut.WorkingDirectory = '%APP_DIR%'; $shortcut.WindowStyle = 1; $shortcut.Description = 'AbaYa Track Background Server'; $shortcut.Save()"
 
-if not exist "tools\catalog-watcher\.pnp.cjs" (
-  echo   Skipped - catalog-watcher PnP not ready. Run install\INSTALL.bat first.
-  goto done
-)
+:: 6. Launch Server Silently (kill existing node.exe running server.js first to avoid port conflict)
+echo [INFO] Starting the server in the background...
+powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | Where-Object { $_.CommandLine -match 'server\.js' } | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
+wscript.exe "%VBS_FILE%"
 
-echo   Starting catalog watcher...
-start "AbaYa Catalog Watcher" cmd /k "cd /d "%~dp0..\tools\catalog-watcher" && yarn node watch-catalog.js"
+:: 7. Wait and Open Browser
+echo [INFO] Waiting for server to initialize...
+timeout /t 5 /nobreak >nul
 
-:done
-
-:: ── Detect LAN IP for CEO / phone access ──────────────────────────────────────
-set LAN_IP=
-for /f "tokens=2 delims=:" %%A in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v "127.0.0.1"') do (
-  set RAW_IP=%%A
-  goto :got_lan_ip
-)
-:got_lan_ip
-for /f "tokens=* delims= " %%A in ("%RAW_IP%") do set LAN_IP=%%A
-if "%LAN_IP%"=="" set LAN_IP=localhost
-
-:: ── Detect Tailscale IP (if installed) ───────────────────────────────────────
-set TS_IP=
-tailscale ip -4 >nul 2>&1 && for /f %%A in ('tailscale ip -4') do set TS_IP=%%A
+echo [INFO] Opening Application...
+start "" "http://localhost:%PORT%/dashboard.html"
+start "" "http://localhost:%PORT%/kiosk.html"
+start "" "http://localhost:%PORT%/setup"
 
 echo.
-echo === All components launched ===
-echo   Kiosk:     http://localhost:%ABA_PORT%/kiosk.html
-echo   Dashboard: http://localhost:%ABA_PORT%/dashboard.html
-echo   QR Setup:  http://localhost:%ABA_PORT%/setup
-echo.
-echo === LAN access (same Wi-Fi) ===
-echo   Dashboard: http://%LAN_IP%:%ABA_PORT%/dashboard.html
-echo   Kiosk:     http://%LAN_IP%:%ABA_PORT%/kiosk.html
-if not "%TS_IP%"=="" (
-echo.
-echo === Tailscale access (any network) ===
-echo   Dashboard: http://%TS_IP%:%ABA_PORT%/dashboard.html
-echo   Kiosk:     http://%TS_IP%:%ABA_PORT%/kiosk.html
-)
-echo.
-echo === CEO cloud dashboard ===
-echo   https://dashboard.farewellabaya.com  (Cloudflare Worker, any network)
-echo.
-if "%TS_IP%"=="" (
-echo   [i] Tailscale not detected. For remote admin access: install\SETUP-TAILSCALE.ps1
-)
-echo   [!] LAN firewall issue? Run:  install\OPEN-CEO-DASHBOARD.bat  (as Admin)
-echo.
-echo   Close this window at any time.
-echo.
-timeout /t 4 /nobreak >nul
+echo =======================================================
+echo AbaYa Track is now running silently in the background!
+echo - It will automatically start every time you turn on your PC.
+echo - No terminals will be kept open.
+echo - To restart the server manually, just run this script again.
+echo =======================================================
+timeout /t 6 >nul

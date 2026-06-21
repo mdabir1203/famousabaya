@@ -71,11 +71,39 @@ export function parseInboundMessages(body) {
               timestamp: ts,
             });
           } else if (msg.type === 'audio') {
-            // For audio messages we capture the media ID for future transcription
+            // Voice note from supplier/customer — capture the media id so it can be played.
             results.push({
               type: 'audio',
               from,
               body: `[audio:${msg.audio?.id || 'unknown'}]`,
+              audioId: String(msg.audio?.id || ''),
+              mimeType: String(msg.audio?.mime_type || ''),
+              timestamp: ts,
+            });
+          } else if (msg.type === 'image') {
+            // Photo (e.g. a snapshot of a paper invoice or a reference picture).
+            // Captured for viewing; OCR of invoice photos is a separate path.
+            results.push({
+              type: 'image',
+              from,
+              body: `[image:${msg.image?.id || 'unknown'}]`,
+              imageId: String(msg.image?.id || ''),
+              mimeType: String(msg.image?.mime_type || ''),
+              caption: String(msg.image?.caption || ''),
+              timestamp: ts,
+            });
+          } else if (msg.type === 'document') {
+            // PDF (or other) invoice attachment — capture media ID + metadata.
+            // The caller downloads it (needs WHATSAPP_TOKEN), extracts text, and
+            // either auto-fills the invoice or files a manual-review stub.
+            results.push({
+              type: 'document',
+              from,
+              body: `[document:${msg.document?.id || 'unknown'}]`,
+              documentId: String(msg.document?.id || ''),
+              filename: String(msg.document?.filename || ''),
+              mimeType: String(msg.document?.mime_type || ''),
+              caption: String(msg.document?.caption || ''),
               timestamp: ts,
             });
           }

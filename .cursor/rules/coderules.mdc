@@ -1,0 +1,142 @@
+# Cursor Rules — Senior Engineering Standard
+
+## Core Principles
+- Simplicity over cleverness
+- Readability over brevity
+- Maintainability always
+- Practical performance only
+- Testability by default
+- Reuse only when justified
+
+---
+
+## 1. Think Before Coding
+- State assumptions explicitly
+- Ask when unclear — never guess
+- Present multiple interpretations if ambiguity exists
+- Prefer simpler approaches — call out overengineering
+
+---
+
+## 2. Simplicity First
+- No unnecessary abstractions
+- No speculative features
+- No premature optimization
+- No impossible edge-case handling
+- Always choose the smallest working solution
+
+---
+
+## 3. Surgical Changes
+- Modify only what is required
+- Do not refactor unrelated code
+- Do not change formatting/style/comments unnecessarily
+- Match existing codebase style
+
+Allowed:
+- Remove code only if your change made it unused
+
+Not allowed:
+- Cleaning unrelated dead code (use TODO instead)
+
+---
+
+## 4. Goal-Driven Execution
+Convert tasks into verifiable outcomes:
+
+Example:
+1. Reproduce issue → verify failure exists
+2. Implement fix → verify it passes
+3. Check regressions → verify nothing else breaks
+
+Avoid vague goals like "improve" or "refactor"
+
+---
+
+## 5. Code Style
+
+### Structure
+- Use early returns
+- Avoid deep nesting
+- Keep functions small and focused
+
+### Naming
+- Use descriptive names
+- Prefix handlers with `handle` (handleClick, handleSubmit)
+
+### Constants
+- Prefer constants over functions when possible
+
+### DRY
+- Extract logic only when duplication is real
+
+---
+
+## 6. Comments & Docs
+- Add a short purpose comment for each function
+- Use JSDoc for JavaScript
+- Avoid obvious comments
+
+For issues:
+```js
+// TODO: explain the problem clearly
+7. Function Order
+High-level functions first
+Helpers below
+8. Execution Workflow (MANDATORY)
+
+Always follow:
+
+Clarify → fully understand task
+Simplify → find minimal solution
+Scope → define smallest change
+Plan → outline steps + verification
+Implement → write minimal code
+Verify → confirm success criteria
+9. Response Structure (MANDATORY)
+
+All coding responses must include:
+
+Assumptions
+Explicit and minimal
+Plan (Pseudocode)
+
+Step → Action → Verification
+
+Implementation
+Minimal, clean code
+Verification
+Clear success validation
+10. Change Discipline
+Every changed line must be necessary
+No "while I'm here" edits
+No silent behavior changes
+11. Red Flags (AUTO-REJECT)
+Overengineering simple problems
+Adding future-proofing prematurely
+Deep nesting instead of early returns
+Large multi-purpose functions
+Hidden assumptions
+12. Self-Check Before Completion
+Can this be simpler? → simplify
+Any unnecessary changes? → revert
+Every line required? → remove extras
+Senior-level clean? → fix if not
+13. Drift Rule
+
+If instructions conflict:
+→ Default to simplicity, minimal changes, explicit reasoning
+
+14. Failure Detection
+
+Fix before responding if:
+
+2 levels nesting → refactor
+
+Function does multiple things → split
+“just in case” logic → remove
+No clear plan → stop and plan
+Enforcement
+
+These rules are NOT suggestions.
+They must be followed in every response.

@@ -3,81 +3,420 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AbaYa Track — Employee &amp; Item Images</title>
+<title>AbaYa Track — Photos &amp; roster</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-:root { --bg:#1f1633; --s2:#241a38; --bd:rgba(106,95,193,.35); --tx:#fff; --tx2:#e5e7eb; --tx3:#9c98b0; --gr:#c2ef4e; --bl:#6a5fc1; --rd:#ef4444; }
+:root {
+  --bg: #1a1228;
+  --s2: #241a38;
+  --bd: rgba(106, 95, 193, 0.4);
+  --tx: #fff;
+  --tx2: #e5e7eb;
+  --tx3: #9c98b0;
+  --gr: #c2ef4e;
+  --bl: #6a5fc1;
+  --rd: #ef4444;
+  --ok-bg: rgba(194, 239, 78, 0.12);
+  --err-bg: rgba(239, 68, 68, 0.12);
+  --maxw: 640px;
+}
 * { box-sizing: border-box; }
-body { font-family: Rubik, system-ui, sans-serif; background: var(--bg); color: var(--tx); margin: 0; padding: 24px 16px 48px; line-height: 1.45; }
-h1 { font-size: 1.35rem; margin: 0 0 8px; }
-p.sub { color: var(--tx3); font-size: 13px; margin: 0 0 22px; max-width: 720px; }
-.card { background: rgba(255,255,255,.06); border: 1px solid var(--bd); border-radius: 14px; padding: 20px; margin-bottom: 18px; max-width: 560px; }
-.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--tx3); margin: 0 0 14px; }
-label { display: block; font-size: 12px; color: var(--tx2); margin-bottom: 6px; }
-input[type="text"], input[type="password"] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--bd); background: var(--s2); color: var(--tx); font-size: 14px; margin-bottom: 12px; }
-input[type="file"] { margin-bottom: 12px; font-size: 13px; color: var(--tx2); }
-button { background: var(--gr); color: #1f1633; border: none; padding: 11px 18px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 14px; }
-button:hover { filter: brightness(1.06); }
-button:disabled { opacity: .55; cursor: not-allowed; }
-.msg { margin-top: 12px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+body {
+  font-family: Rubik, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--tx);
+  margin: 0;
+  padding: 20px 16px 56px;
+  line-height: 1.45;
+}
+h1 { font-size: 1.4rem; margin: 0 0 6px; }
+p.lead { color: var(--tx3); font-size: 14px; margin: 0 0 20px; max-width: 720px; }
+.back { display: inline-block; margin-bottom: 16px; font-size: 13px; color: #a5b4fc; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+
+#global-banner {
+  display: none;
+  max-width: var(--maxw);
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  border: 1px solid var(--bd);
+}
+#global-banner.show { display: block; }
+#global-banner.ok { background: var(--ok-bg); color: var(--tx2); border-color: rgba(194, 239, 78, 0.35); }
+#global-banner.err { background: var(--err-bg); color: #fecaca; border-color: rgba(239, 68, 68, 0.35); }
+#global-banner.info { background: rgba(106, 95, 193, 0.15); color: var(--tx2); }
+
+.card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bd);
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  margin-bottom: 16px;
+  max-width: var(--maxw);
+}
+.card h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--tx3);
+  margin: 0 0 4px;
+}
+.card .step-num {
+  display: inline-block;
+  background: var(--bl);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.card .card-title { font-size: 1.05rem; color: var(--tx); font-weight: 700; margin: 0 0 10px; }
+.card .hint { font-size: 12px; color: var(--tx3); margin: 0 0 14px; }
+
+label { display: block; font-size: 12px; color: var(--tx2); margin-bottom: 5px; font-weight: 600; }
+label .opt { font-weight: 400; color: var(--tx3); }
+input[type="text"], input[type="password"], input[type="search"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--bd);
+  background: var(--s2);
+  color: var(--tx);
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+input[type="file"] { position: absolute; width: 0.1px; height: 0.1px; opacity: 0; overflow: hidden; z-index: -1; }
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--bd);
+  background: var(--s2);
+  color: var(--tx);
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--bd);
+  background: var(--s2);
+  color: var(--tx);
+  font-size: 13px;
+  font-family: ui-monospace, monospace;
+  line-height: 1.4;
+  margin-bottom: 10px;
+  resize: vertical;
+}
+button.primary {
+  background: var(--gr);
+  color: #1f1633;
+  border: none;
+  padding: 11px 18px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 14px;
+}
+button.primary:hover { filter: brightness(1.06); }
+button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+button.ghost {
+  background: transparent;
+  color: var(--tx2);
+  border: 1px solid var(--bd);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+button.danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.dropzone {
+  border: 2px dashed rgba(106, 95, 193, 0.55);
+  border-radius: 12px;
+  padding: 22px 16px;
+  text-align: center;
+  margin-bottom: 12px;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.15);
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover, .dropzone:focus-within { border-color: var(--gr); background: rgba(106, 95, 193, 0.08); }
+.dropzone.dragover { border-color: var(--gr); background: rgba(194, 239, 78, 0.08); }
+.dropzone strong { display: block; font-size: 15px; margin-bottom: 6px; color: var(--tx); }
+.dropzone span { font-size: 13px; color: var(--tx3); }
+
+.msg { margin-top: 10px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
 .msg.ok { color: var(--gr); }
 .msg.err { color: var(--rd); }
-a { color: #a5b4fc; }
-.back { display: inline-block; margin-bottom: 18px; font-size: 13px; }
-.preview-wrap { margin-top: 10px; padding: 10px; background: rgba(0,0,0,.2); border-radius: 10px; border: 1px solid var(--bd); }
-.preview-wrap img { max-width: 100%; max-height: 220px; border-radius: 8px; display: block; }
-.preview-h { font-size: 11px; color: var(--tx3); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; }
-.viewer-link { display: inline-block; margin-top: 8px; font-size: 13px; }
+
+.preview-wrap {
+  margin-top: 10px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  border: 1px solid var(--bd);
+  display: none;
+}
+.preview-wrap.show { display: block; }
+.preview-h { font-size: 11px; color: var(--tx3); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+.preview-wrap img { max-width: 100%; max-height: 200px; border-radius: 8px; display: block; }
+.viewer-link { display: inline-block; margin-top: 8px; font-size: 13px; color: #a5b4fc; }
+
+.row-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+.file-chip { font-size: 12px; color: var(--gr); word-break: break-all; }
+
+.roster-toolbar { margin-bottom: 10px; }
+.roster-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(106, 95, 193, 0.2);
+}
+.roster-row:last-child { border-bottom: none; }
+.roster-meta { font-size: 11px; color: var(--tx3); }
+.roster-name { font-size: 14px; font-weight: 600; color: #fff; }
+
+.field-error { font-size: 12px; color: var(--rd); margin: -6px 0 8px; display: none; }
+.field-error.show { display: block; }
+
+select#emp-process {
+  min-height: 46px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--tx);
+  background-color: var(--s2);
+  cursor: pointer;
+}
+select#emp-process option {
+  background-color: #1f1633;
+  color: var(--tx);
+  font-weight: 500;
+  padding: 10px;
+}
+
+.work-types-list {
+  margin: 0 0 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.work-type-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(106, 95, 193, 0.22);
+  font-size: 14px;
+  color: var(--tx2);
+}
+.work-type-row:last-child { border-bottom: none; }
+.work-type-name { font-weight: 600; color: var(--tx); word-break: break-word; }
+.work-types-empty {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: var(--tx3);
+}
+.catalog-list {
+  margin: 0 0 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.catalog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(106, 95, 193, 0.22);
+}
+.catalog-row:last-child { border-bottom: none; }
+.catalog-meta { font-size: 11px; color: var(--tx3); }
+.catalog-name { font-size: 13px; font-weight: 700; color: var(--tx2); }
+.catalog-empty {
+  padding: 14px 12px;
+  font-size: 13px;
+  color: var(--tx3);
+}
 </style>
 </head>
 <body>
-<a class="back" href="/setup.html">&larr; Back to QR setup</a>
-<h1>Employee &amp; item images</h1>
-<p class="sub">Upload photos next to your Excel-driven data. Files are stored under <code>public/uploads/</code> on the factory PC and linked by <strong>employee barcode</strong> or <strong>item barcode</strong> (must match a row already loaded from <code>employees.xlsx</code> / catalog).</p>
+<a class="back" href="/setup">&larr; Back to QR setup</a>
+
+<h1>Photos &amp; employee roster</h1>
+<p class="lead">
+  Add or remove people and upload photos in a few steps. Barcodes must match your roster.
+  Files save under <code>public/uploads/</code> on this PC. When you use Excel, changes also save to <code>employees.xlsx</code>.
+</p>
+
+<div id="global-banner" role="status" aria-live="polite"></div>
 
 <div class="card">
-  <h2>Optional secret</h2>
-  <p style="font-size:12px;color:var(--tx3);margin:0 0 10px">If <code>ASSET_UPLOAD_SECRET</code> is set in <code>.env</code>, paste the same value here (sent as <code>X-Asset-Upload-Secret</code>).</p>
-  <label for="sec">Upload secret (optional)</label>
-  <input type="password" id="sec" autocomplete="off" placeholder="Leave blank if server has no secret">
+  <h2>Before you start</h2>
+  <p class="hint">Paste secrets once — they are remembered on this browser. Ask a supervisor if you are not sure.</p>
+  <label for="sec">Photo upload secret (only if your factory PC has one) — header <code>X-Asset-Upload-Secret</code></label>
+  <input type="password" id="sec" autocomplete="off" placeholder="Leave blank if not set in .env">
+  <label for="ingest-sec">Roster change secret — header <code>X-Ingest-Secret</code> <span class="opt">(same as CATALOG_INGEST_SECRET)</span></label>
+  <input type="password" id="ingest-sec" autocomplete="off" placeholder="Needed for roster, work types, and some saves">
 </div>
 
 <div class="card">
-  <h2>Employee photo</h2>
-  <label for="emp-bc">Employee barcode (exact match)</label>
-  <input type="text" id="emp-bc" placeholder="e.g. 00000109" autocomplete="off">
-  <label for="emp-file">Image (JPEG / PNG / WebP, max 8 MB)</label>
+  <h2>Factory work types</h2>
+  <p class="card-title">Kiosk buttons and “default process” list</p>
+  <p class="hint">Order matches kiosk roles (first row = first button). You need the roster secret above to add or remove. You cannot remove a name still used by an employee or an open kiosk session.</p>
+  <div id="work-types-list" class="work-types-list" aria-label="Process names"></div>
+  <label for="work-type-new">Add a process name</label>
+  <input type="text" id="work-type-new" placeholder="Type name, then Add" autocomplete="off" spellcheck="false">
+  <div class="row-actions">
+    <button type="button" class="primary" id="btn-add-work-type">Add</button>
+    <button type="button" class="ghost" id="btn-load-work-types">Reload from server</button>
+  </div>
+  <div id="work-types-msg" class="msg" role="status"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">1</span> Add someone new</h2>
+  <p class="card-title">New employee</p>
+  <p class="hint">Fill every required field. After saving, their badge barcode is copied to step 2 so you can drop a photo right away.</p>
+  <label for="emp-name">Full name <span class="opt">(required)</span></label>
+  <input type="text" id="emp-name" placeholder="As it should appear on screen" autocomplete="name">
+  <label for="emp-no">Employee number <span class="opt">(required)</span></label>
+  <input type="text" id="emp-no" inputmode="numeric" placeholder="e.g. 136" autocomplete="off">
+  <label for="emp-ac">AC number (fingerprint / access) <span class="opt">(required)</span></label>
+  <input type="text" id="emp-ac" inputmode="numeric" placeholder="e.g. 27" autocomplete="off">
+  <label for="emp-barcode-new">Badge barcode <span class="opt">(required, exact match)</span></label>
+  <input type="text" id="emp-barcode-new" placeholder="e.g. 00000136" autocomplete="off">
+  <label for="emp-process">Default process <span class="opt">(required)</span></label>
+  <select id="emp-process"></select>
+  <label for="emp-code-opt">Code <span class="opt">(optional)</span></label>
+  <input type="text" id="emp-code-opt" placeholder="Leave blank for EMP + number" autocomplete="off">
+  <div id="emp-add-field-err" class="field-error" aria-live="polite"></div>
+  <button type="button" class="primary" id="btn-emp-add">Save new employee</button>
+  <div id="emp-add-msg" class="msg" role="status"></div>
+</div>
+
+<div class="card">
+  <h2><span class="step-num">2</span> Employee photo</h2>
+  <p class="card-title">Upload or drop a picture</p>
+  <p class="hint">JPEG, PNG, WebP, or GIF — max 8 MB. Use the same barcode as in Excel or step 1.</p>
+  <label for="emp-bc">Badge barcode</label>
+  <input type="text" id="emp-bc" placeholder="Exact barcode" autocomplete="off">
+  <label for="emp-file">Image file</label>
+  <div class="dropzone" id="emp-dropzone" tabindex="0" role="button" aria-label="Drop employee photo here or click to browse">
+    <strong>Drop photo here</strong>
+    <span>or click to choose a file from this computer</span>
+  </div>
   <input type="file" id="emp-file" accept="image/jpeg,image/png,image/webp,image/gif">
-  <div id="emp-preview-wrap" class="preview-wrap" style="display:none">
-    <div class="preview-h">Preview (before upload)</div>
+  <div id="emp-file-chip" class="file-chip"></div>
+  <div id="emp-preview-wrap" class="preview-wrap">
+    <div class="preview-h">Preview</div>
     <img id="emp-preview-img" alt="Employee preview">
   </div>
-  <button type="button" id="btn-emp">Upload employee photo</button>
+  <div class="row-actions">
+    <button type="button" class="primary" id="btn-emp">Send employee photo</button>
+  </div>
   <div id="emp-msg" class="msg" role="status"></div>
-  <div id="emp-viewer" style="display:none;margin-top:10px">
-    <div class="preview-h">Uploaded file</div>
-    <img id="emp-viewer-img" alt="Saved employee photo" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--bd)">
+  <div id="emp-viewer" style="display:none;margin-top:12px">
+    <div class="preview-h">Last uploaded</div>
+    <img id="emp-viewer-img" alt="Saved employee photo" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--bd)">
     <div><a class="viewer-link" id="emp-viewer-link" href="#" target="_blank" rel="noopener">Open image in new tab</a></div>
   </div>
 </div>
 
 <div class="card">
+  <h2><span class="step-num">3</span> Remove from roster</h2>
+  <p class="card-title">Current list</p>
+  <p class="hint">Needs roster secret above. Past work stays in history. You cannot remove someone who still has an open session on the kiosk.</p>
+  <div class="roster-toolbar">
+    <label for="roster-search">Search by name, code, or barcode</label>
+    <input type="search" id="roster-search" placeholder="Type to filter…" autocomplete="off">
+  </div>
+  <button type="button" class="ghost" id="btn-load-roster">Load list from server</button>
+  <div id="roster-list" style="margin-top:12px"></div>
+</div>
+
+<div class="card">
+  <h2>Abaya catalog</h2>
+  <p class="card-title">Add/remove Abayas + drag/drop bulk update</p>
+  <p class="hint">Needs roster secret. Add one item below, remove from list, or drag/drop a JSON catalog file to replace (bulk add/remove at once).</p>
+  <label for="catalog-search">Search current catalog</label>
+  <input type="search" id="catalog-search" placeholder="Find by code, barcode, or design…" autocomplete="off">
+  <button type="button" class="ghost" id="btn-load-catalog">Load catalog from server</button>
+  <div id="catalog-list" class="catalog-list" style="margin-top:10px"></div>
+  <label for="cat-code">New item code <span class="opt">(required)</span></label>
+  <input type="text" id="cat-code" placeholder="e.g. SKY-041" autocomplete="off">
+  <label for="cat-barcode">New item barcode <span class="opt">(required)</span></label>
+  <input type="text" id="cat-barcode" placeholder="e.g. AB00000041" autocomplete="off">
+  <label for="cat-design">Design <span class="opt">(optional)</span></label>
+  <input type="text" id="cat-design" placeholder="optional" autocomplete="off">
+  <label for="cat-process">Process <span class="opt">(optional)</span></label>
+  <input type="text" id="cat-process" placeholder="optional" autocomplete="off">
+  <label for="cat-tier">Tier <span class="opt">(optional)</span></label>
+  <input type="text" id="cat-tier" placeholder="Standard / Premium / Luxury / Plain Abaya" autocomplete="off">
+  <div class="row-actions">
+    <button type="button" class="primary" id="btn-cat-add">Add Abaya</button>
+  </div>
+  <label for="catalog-json-file" style="margin-top:10px">Bulk catalog JSON</label>
+  <div class="dropzone" id="catalog-json-dropzone" tabindex="0" role="button" aria-label="Drop catalog JSON here or click to browse">
+    <strong>Drop catalog JSON here</strong>
+    <span>or click to choose a .json file (replaces full catalog list)</span>
+  </div>
+  <input type="file" id="catalog-json-file" accept="application/json,.json">
+  <div id="catalog-json-file-chip" class="file-chip"></div>
+  <div id="catalog-msg" class="msg" role="status"></div>
+</div>
+
+<div class="card">
   <h2>Catalog item photo</h2>
-  <label for="item-bc">Item barcode (exact match)</label>
+  <p class="card-title">Item picture</p>
+  <p class="hint">Same rules: match item barcode from your catalog. Max 8 MB.</p>
+  <label for="item-bc">Item barcode</label>
   <input type="text" id="item-bc" placeholder="e.g. AB00000041" autocomplete="off">
-  <label for="item-file">Image (JPEG / PNG / WebP, max 8 MB)</label>
+  <div class="dropzone" id="item-dropzone" tabindex="0" role="button" aria-label="Drop item photo here or click to browse">
+    <strong>Drop item photo here</strong>
+    <span>or click to choose a file</span>
+  </div>
   <input type="file" id="item-file" accept="image/jpeg,image/png,image/webp,image/gif">
-  <div id="item-preview-wrap" class="preview-wrap" style="display:none">
-    <div class="preview-h">Preview (before upload)</div>
+  <div id="item-file-chip" class="file-chip"></div>
+  <div id="item-preview-wrap" class="preview-wrap">
+    <div class="preview-h">Preview</div>
     <img id="item-preview-img" alt="Item preview">
   </div>
-  <button type="button" id="btn-item">Upload item photo</button>
+  <div class="row-actions">
+    <button type="button" class="primary" id="btn-item">Send item photo</button>
+  </div>
   <div id="item-msg" class="msg" role="status"></div>
-  <div id="item-viewer" style="display:none;margin-top:10px">
-    <div class="preview-h">Uploaded file</div>
-    <img id="item-viewer-img" alt="Saved item photo" style="max-width:100%;max-height:240px;border-radius:8px;border:1px solid var(--bd)">
+  <div id="item-viewer" style="display:none;margin-top:12px">
+    <div class="preview-h">Last uploaded</div>
+    <img id="item-viewer-img" alt="Saved item" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--bd)">
     <div><a class="viewer-link" id="item-viewer-link" href="#" target="_blank" rel="noopener">Open image in new tab</a></div>
   </div>
 </div>
@@ -85,11 +424,84 @@ a { color: #a5b4fc; }
 <script>
 (function () {
   var SEC_KEY = 'abaya_asset_upload_secret';
+  var INGEST_KEY = 'abaya_ingest_secret';
+  var MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  var rosterData = [];
+  /** Same strings as server DEFAULT_FACTORY_WORK_TYPES / public/data.js — used if GET /api/work-types fails (e.g. old Node process not restarted). */
+  var DEFAULT_WORK_TYPES_FALLBACK = [
+    'Tailor (01)',
+    'Cutting master',
+    'Tailor (02)',
+    'Hand Work',
+    'Stone Work',
+    'Button',
+    'Embroidery',
+    'Ari Work',
+    'Hand Designing',
+    'Invoice maker',
+    'Packaging',
+    'Checker',
+  ];
+  /** In-memory list (mirrors server); drives both the add-employee dropdown and the work-types list UI. */
+  var workTypesListLocal = [];
+  var catalogListLocal = [];
+  var workTypesPersistInFlight = false;
+  var catalogPersistInFlight = false;
+
   try {
     var s = document.getElementById('sec');
     s.value = localStorage.getItem(SEC_KEY) || '';
     s.addEventListener('change', function () { localStorage.setItem(SEC_KEY, s.value.trim()); });
+    var ing = document.getElementById('ingest-sec');
+    ing.value = localStorage.getItem(INGEST_KEY) || '';
+    ing.addEventListener('change', function () { localStorage.setItem(INGEST_KEY, ing.value.trim()); });
   } catch (_) {}
+
+  function showBanner(kind, text) {
+    var el = document.getElementById('global-banner');
+    if (!el) return;
+    if (!text) {
+      el.className = '';
+      el.classList.remove('show');
+      el.textContent = '';
+      return;
+    }
+    el.className = 'show ' + (kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : 'info');
+    el.textContent = text;
+  }
+
+  function clearBanner() {
+    showBanner('', '');
+  }
+
+  function setMsg(msgEl, kind, text) {
+    if (!msgEl) return;
+    msgEl.className = kind ? ('msg ' + kind) : 'msg';
+    msgEl.textContent = text || '';
+  }
+
+  function setDisabledAll(list, disabled) {
+    if (!Array.isArray(list)) return;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i]) list[i].disabled = !!disabled;
+    }
+  }
+
+  function requestJson(url, options) {
+    return fetch(url, options || {})
+      .then(function (r) {
+        return r
+          .json()
+          .then(
+            function (j) {
+              return { ok: r.ok, status: r.status, j: j };
+            },
+            function () {
+              return { ok: r.ok, status: r.status, j: null };
+            }
+          );
+      });
+  }
 
   function headers() {
     var h = {};
@@ -98,30 +510,401 @@ a { color: #a5b4fc; }
     return h;
   }
 
-  function wireFilePreview(inputId, wrapId, imgId) {
-    var inp = document.getElementById(inputId);
+  function ingestHeaders() {
+    var h = { 'Content-Type': 'application/json' };
+    var ing = (document.getElementById('ingest-sec') && document.getElementById('ingest-sec').value) || '';
+    if (ing.trim()) h['X-Ingest-Secret'] = ing.trim();
+    return h;
+  }
+
+  function validateImageFile(f) {
+    if (!f) return 'Choose an image file.';
+    if (f.size > MAX_IMAGE_BYTES) return 'File is too large (max 8 MB).';
+    var ok = /^image\/(jpeg|pjpeg|png|gif|webp)$/i.test(f.type || '');
+    if (!ok) return 'Use JPEG, PNG, WebP, or GIF only.';
+    return '';
+  }
+
+  function setFileOnInput(input, file, chipEl, previewWrap, previewImg) {
+    if (!input || !file) return;
+    try {
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    } catch (e) {
+      return;
+    }
+    if (chipEl) chipEl.textContent = 'Selected: ' + file.name;
+    if (previewWrap && previewImg) {
+      var u = URL.createObjectURL(file);
+      previewImg.onload = function () {
+        try { URL.revokeObjectURL(u); } catch (_) {}
+      };
+      previewImg.src = u;
+      previewWrap.classList.add('show');
+    }
+  }
+
+  function wireDropzone(dropId, inputId, chipId, wrapId, imgId) {
+    var zone = document.getElementById(dropId);
+    var input = document.getElementById(inputId);
+    var chip = chipId ? document.getElementById(chipId) : null;
     var wrap = document.getElementById(wrapId);
     var img = document.getElementById(imgId);
-    if (!inp || !wrap || !img) return;
-    inp.addEventListener('change', function () {
-      var f = inp.files && inp.files[0];
-      if (!f) {
-        wrap.style.display = 'none';
-        img.removeAttribute('src');
+    if (!zone || !input) return;
+
+    zone.addEventListener('click', function () { input.click(); });
+    zone.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        input.click();
+      }
+    });
+
+    ['dragenter', 'dragover'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add('dragover');
+      });
+    });
+    zone.addEventListener('dragleave', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+    });
+    zone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      var f = files[0];
+      var err = validateImageFile(f);
+      if (err) {
+        showBanner('err', err);
         return;
       }
-      var u = URL.createObjectURL(f);
-      img.onload = function () {
-        try {
-          URL.revokeObjectURL(u);
-        } catch (_) {}
-      };
-      img.src = u;
-      wrap.style.display = 'block';
+      clearBanner();
+      setFileOnInput(input, f, chip, wrap, img);
+    });
+
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      if (!f) {
+        if (chip) chip.textContent = '';
+        if (wrap) wrap.classList.remove('show');
+        if (img) img.removeAttribute('src');
+        return;
+      }
+      var err = validateImageFile(f);
+      if (err) {
+        showBanner('err', err);
+        input.value = '';
+        return;
+      }
+      clearBanner();
+      setFileOnInput(input, f, chip, wrap, img);
     });
   }
-  wireFilePreview('emp-file', 'emp-preview-wrap', 'emp-preview-img');
-  wireFilePreview('item-file', 'item-preview-wrap', 'item-preview-img');
+
+  wireDropzone('emp-dropzone', 'emp-file', 'emp-file-chip', 'emp-preview-wrap', 'emp-preview-img');
+  wireDropzone('item-dropzone', 'item-file', 'item-file-chip', 'item-preview-wrap', 'item-preview-img');
+
+  function normalizeCatalogRow(row, fallbackId) {
+    var out = row && typeof row === 'object' ? row : {};
+    var idRaw = out.id != null ? String(out.id).trim() : '';
+    var code = out.code != null ? String(out.code).trim() : '';
+    var barcode = out.barcode != null ? String(out.barcode).trim() : '';
+    return {
+      id: idRaw || String(fallbackId || Date.now()),
+      code: code,
+      barcode: barcode,
+      design: out.design != null ? String(out.design) : '',
+      process: out.process != null ? String(out.process) : '',
+      tier: out.tier != null ? String(out.tier) : '',
+      icon: out.icon != null ? String(out.icon) : '',
+      status: out.status != null ? String(out.status) : 'waiting',
+    };
+  }
+
+  function validateCatalogRowsBasic(rows) {
+    if (!Array.isArray(rows) || !rows.length) return 'Catalog cannot be empty.';
+    var byCode = Object.create(null);
+    var byBarcode = Object.create(null);
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r || !String(r.code || '').trim() || !String(r.barcode || '').trim()) {
+        return 'Every catalog row needs code and barcode.';
+      }
+      var c = String(r.code).trim().toLowerCase();
+      var b = String(r.barcode).trim().toLowerCase();
+      if (byCode[c]) return 'Duplicate code found: ' + r.code;
+      if (byBarcode[b]) return 'Duplicate barcode found: ' + r.barcode;
+      byCode[c] = true;
+      byBarcode[b] = true;
+    }
+    return '';
+  }
+
+  function catalogFilter(q) {
+    var t = (q || '').trim().toLowerCase();
+    if (!t) return catalogListLocal.slice();
+    return catalogListLocal.filter(function (a) {
+      return (
+        String(a.code || '').toLowerCase().indexOf(t) >= 0 ||
+        String(a.barcode || '').toLowerCase().indexOf(t) >= 0 ||
+        String(a.design || '').toLowerCase().indexOf(t) >= 0
+      );
+    });
+  }
+
+  function renderCatalogList() {
+    var listEl = document.getElementById('catalog-list');
+    var q = document.getElementById('catalog-search') && document.getElementById('catalog-search').value;
+    if (!listEl) return;
+    if (!catalogListLocal.length) {
+      listEl.innerHTML = '<div class="catalog-empty">Click “Load catalog from server” first.</div>';
+      return;
+    }
+    var rows = catalogFilter(q);
+    if (!rows.length) {
+      listEl.innerHTML = '<div class="catalog-empty">No catalog rows match your search.</div>';
+      return;
+    }
+    listEl.innerHTML = rows.map(function (a) {
+      return '<div class="catalog-row">' +
+        '<div>' +
+          '<div class="catalog-name">' + escHtml(a.code) + '</div>' +
+          '<div class="catalog-meta">' + escHtml(a.barcode) + (a.design ? ' · ' + escHtml(a.design) : '') + '</div>' +
+        '</div>' +
+        '<button type="button" class="danger rm-catalog-btn" data-catalog-id="' + escHtml(a.id) + '" data-catalog-code="' + escHtml(a.code) + '">Remove</button>' +
+      '</div>';
+    }).join('');
+    var btns = listEl.querySelectorAll('.rm-catalog-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function () {
+        removeCatalogItemById(this.getAttribute('data-catalog-id'), this.getAttribute('data-catalog-code'));
+      });
+    }
+  }
+
+  function setCatalogAndRender(rows) {
+    catalogListLocal = Array.isArray(rows) ? rows.slice() : [];
+    renderCatalogList();
+  }
+
+  function persistCatalogToServer(nextList, msgEl) {
+    if (catalogPersistInFlight) return Promise.resolve();
+    var err = validateCatalogRowsBasic(nextList);
+    if (err) {
+      setMsg(msgEl, 'err', err);
+      showBanner('err', err);
+      return Promise.resolve();
+    }
+    catalogPersistInFlight = true;
+    var addBtn = document.getElementById('btn-cat-add');
+    var loadBtn = document.getElementById('btn-load-catalog');
+    setDisabledAll([addBtn, loadBtn], true);
+    setMsg(msgEl, '', '');
+    clearBanner();
+    return requestJson('/api/catalog/abayas', {
+      method: 'PUT',
+      headers: ingestHeaders(),
+      body: JSON.stringify({ abayas: nextList }),
+    })
+      .then(function (x) {
+        catalogPersistInFlight = false;
+        setDisabledAll([addBtn, loadBtn], false);
+        if (x.j && x.j.ok) {
+          setCatalogAndRender(nextList);
+          setMsg(msgEl, 'ok', 'Catalog saved (' + nextList.length + ' items).');
+          showBanner('ok', 'Abaya catalog updated.');
+        } else {
+          var t = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+          if (x.status === 401) t += ' — set roster secret above.';
+          setMsg(msgEl, 'err', t);
+          showBanner('err', t);
+          return loadCatalogEditor();
+        }
+      })
+      .catch(function (e) {
+        catalogPersistInFlight = false;
+        setDisabledAll([addBtn, loadBtn], false);
+        setMsg(msgEl, 'err', e.message || String(e));
+        showBanner('err', msgEl ? msgEl.textContent : String(e));
+      });
+  }
+
+  function loadCatalogEditor() {
+    var msg = document.getElementById('catalog-msg');
+    setMsg(msg, '', '');
+    return requestJson('/api/catalog/abayas', { cache: 'no-store' })
+      .then(function (d) {
+        if (!d || !d.ok || !d.j || !Array.isArray(d.j.abayas)) {
+          setCatalogAndRender([]);
+          showBanner('err', 'Could not load catalog from server.');
+          return;
+        }
+        var rows = d.j.abayas.map(function (a, idx) {
+          return normalizeCatalogRow(a, idx + 1);
+        });
+        setCatalogAndRender(rows);
+        showBanner('ok', 'Loaded ' + rows.length + ' catalog item(s).');
+      })
+      .catch(function (e) {
+        setCatalogAndRender([]);
+        showBanner('err', e.message || String(e));
+      });
+  }
+
+  function addCatalogItemFromForm() {
+    var msg = document.getElementById('catalog-msg');
+    var codeEl = document.getElementById('cat-code');
+    var barcodeEl = document.getElementById('cat-barcode');
+    var designEl = document.getElementById('cat-design');
+    var processEl = document.getElementById('cat-process');
+    var tierEl = document.getElementById('cat-tier');
+    if (!msg || !codeEl || !barcodeEl) return;
+    setMsg(msg, '', '');
+    var code = String(codeEl.value || '').trim();
+    var barcode = String(barcodeEl.value || '').trim();
+    if (!code || !barcode) {
+      setMsg(msg, 'err', 'Code and barcode are required.');
+      return;
+    }
+    var codeTaken = catalogListLocal.some(function (a) {
+      return String(a.code || '').trim().toLowerCase() === code.toLowerCase();
+    });
+    if (codeTaken) {
+      setMsg(msg, 'err', 'Code already exists.');
+      return;
+    }
+    var barcodeTaken = catalogListLocal.some(function (a) {
+      return String(a.barcode || '').trim().toLowerCase() === barcode.toLowerCase();
+    });
+    if (barcodeTaken) {
+      setMsg(msg, 'err', 'Barcode already exists.');
+      return;
+    }
+    var maxId = 0;
+    for (var i = 0; i < catalogListLocal.length; i++) {
+      var n = Number(catalogListLocal[i] && catalogListLocal[i].id);
+      if (Number.isFinite(n) && n > maxId) maxId = n;
+    }
+    var nextRow = normalizeCatalogRow({
+      id: String(maxId + 1),
+      code: code,
+      barcode: barcode,
+      design: designEl ? designEl.value : '',
+      process: processEl ? processEl.value : '',
+      tier: tierEl ? tierEl.value : '',
+      icon: '',
+      status: 'waiting',
+    }, maxId + 1);
+    var next = catalogListLocal.concat([nextRow]);
+    persistCatalogToServer(next, msg).then(function () {
+      if (msg.className === 'msg ok') {
+        codeEl.value = '';
+        barcodeEl.value = '';
+        if (designEl) designEl.value = '';
+        if (processEl) processEl.value = '';
+        if (tierEl) tierEl.value = '';
+      }
+    });
+  }
+
+  function removeCatalogItemById(id, code) {
+    if (!id) return;
+    if (!window.confirm('Remove Abaya "' + code + '" from catalog?')) return;
+    var msg = document.getElementById('catalog-msg');
+    var next = catalogListLocal.filter(function (a) {
+      return String(a.id) !== String(id);
+    });
+    persistCatalogToServer(next, msg);
+  }
+
+  function wireCatalogJsonDropzone() {
+    var zone = document.getElementById('catalog-json-dropzone');
+    var input = document.getElementById('catalog-json-file');
+    var chip = document.getElementById('catalog-json-file-chip');
+    var msg = document.getElementById('catalog-msg');
+    if (!zone || !input || !chip || !msg) return;
+    function parseAndApply(file) {
+      if (!file) return;
+      var name = String(file.name || '').toLowerCase();
+      if (!/\.json$/.test(name) && file.type !== 'application/json') {
+        setMsg(msg, 'err', 'Use a JSON file for bulk catalog replace.');
+        showBanner('err', msg.textContent);
+        return;
+      }
+      file.text()
+        .then(function (text) {
+          var parsed = null;
+          try {
+            parsed = JSON.parse(text);
+          } catch (_) {
+            throw new Error('Invalid JSON file.');
+          }
+          var rawRows = Array.isArray(parsed) ? parsed : (parsed && parsed.abayas);
+          if (!Array.isArray(rawRows)) throw new Error('JSON must be array or { abayas: [] }.');
+          var rows = rawRows.map(function (r, idx) {
+            return normalizeCatalogRow(r, idx + 1);
+          });
+          var basicErr = validateCatalogRowsBasic(rows);
+          if (basicErr) throw new Error(basicErr);
+          return persistCatalogToServer(rows, msg);
+        })
+        .catch(function (e) {
+          setMsg(msg, 'err', e.message || String(e));
+          showBanner('err', msg.textContent);
+        });
+    }
+
+    zone.addEventListener('click', function () { input.click(); });
+    zone.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        input.click();
+      }
+    });
+    ['dragenter', 'dragover'].forEach(function (evName) {
+      zone.addEventListener(evName, function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.add('dragover');
+      });
+    });
+    zone.addEventListener('dragleave', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+    });
+    zone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      zone.classList.remove('dragover');
+      var files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      var f = files[0];
+      try {
+        var dt = new DataTransfer();
+        dt.items.add(f);
+        input.files = dt.files;
+      } catch (_) {}
+      chip.textContent = 'Selected: ' + f.name;
+      parseAndApply(f);
+    });
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      if (!f) {
+        chip.textContent = '';
+        return;
+      }
+      chip.textContent = 'Selected: ' + f.name;
+      parseAndApply(f);
+    });
+  }
 
   function showViewer(kind, relPath) {
     var base = relPath && String(relPath).charAt(0) === '/' ? relPath : '/' + (relPath || '');
@@ -135,36 +918,421 @@ a { color: #a5b4fc; }
   }
 
   function upload(url, barcode, fileInput, msgEl, btn, viewerKind) {
-    msgEl.textContent = '';
-    msgEl.className = 'msg';
+    setMsg(msgEl, '', '');
     var bc = (barcode || '').trim();
-    if (!bc) { msgEl.className = 'msg err'; msgEl.textContent = 'Enter a barcode.'; return; }
+    if (!bc) {
+      setMsg(msgEl, 'err', 'Enter a barcode.');
+      showBanner('err', 'Enter a barcode before uploading.');
+      return;
+    }
     var f = fileInput.files && fileInput.files[0];
-    if (!f) { msgEl.className = 'msg err'; msgEl.textContent = 'Choose an image file.'; return; }
+    var verr = validateImageFile(f);
+    if (verr) {
+      setMsg(msgEl, 'err', verr);
+      showBanner('err', verr);
+      return;
+    }
     var fd = new FormData();
     fd.append('barcode', bc);
     fd.append('image', f, f.name);
     btn.disabled = true;
-    fetch(url, { method: 'POST', headers: headers(), body: fd })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+    clearBanner();
+    requestJson(url, { method: 'POST', headers: headers(), body: fd })
       .then(function (x) {
         btn.disabled = false;
         if (x.j && x.j.ok) {
-          msgEl.className = 'msg ok';
-          msgEl.textContent = JSON.stringify(x.j, null, 2);
+          setMsg(msgEl, 'ok', 'Saved.');
+          showBanner('ok', 'Photo saved for barcode ' + bc + '.');
           var rel = x.j.photo || x.j.icon;
           if (rel && viewerKind) showViewer(viewerKind, rel);
         } else {
-          msgEl.className = 'msg err';
-          msgEl.textContent = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+          var t = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+          setMsg(msgEl, 'err', t);
+          showBanner('err', t);
         }
       })
       .catch(function (e) {
         btn.disabled = false;
-        msgEl.className = 'msg err';
-        msgEl.textContent = e.message || String(e);
+        setMsg(msgEl, 'err', e.message || String(e));
+        showBanner('err', msgEl.textContent);
       });
   }
+
+  function setFieldErr(el, msg) {
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.add('show');
+    } else {
+      el.textContent = '';
+      el.classList.remove('show');
+    }
+  }
+
+  document.getElementById('btn-emp-add').onclick = function () {
+    var msg = document.getElementById('emp-add-msg');
+    var btn = document.getElementById('btn-emp-add');
+    var fe = document.getElementById('emp-add-field-err');
+    setMsg(msg, '', '');
+    setFieldErr(fe, '');
+    clearBanner();
+
+    var name = (document.getElementById('emp-name') && document.getElementById('emp-name').value) || '';
+    var empNo = (document.getElementById('emp-no') && document.getElementById('emp-no').value) || '';
+    var acNo = (document.getElementById('emp-ac') && document.getElementById('emp-ac').value) || '';
+    var barcode = (document.getElementById('emp-barcode-new') && document.getElementById('emp-barcode-new').value) || '';
+    var process = (document.getElementById('emp-process') && document.getElementById('emp-process').value) || '';
+    var codeOpt = (document.getElementById('emp-code-opt') && document.getElementById('emp-code-opt').value) || '';
+
+    if (!name.trim() || !empNo.trim() || !acNo.trim() || !barcode.trim() || !process) {
+      setFieldErr(fe, 'Please fill name, employee number, AC number, barcode, and process.');
+      showBanner('err', 'Fill all required fields in step 1.');
+      return;
+    }
+    var body = {
+      name: name.trim(),
+      emp_no: parseInt(empNo, 10),
+      ac_no: parseInt(acNo, 10),
+      barcode: barcode.trim(),
+      process: process
+    };
+    if (codeOpt.trim()) body.code = codeOpt.trim();
+    if (isNaN(body.emp_no) || isNaN(body.ac_no)) {
+      setFieldErr(fe, 'Employee number and AC number must be whole numbers.');
+      return;
+    }
+    btn.disabled = true;
+    requestJson('/api/employees', { method: 'POST', headers: ingestHeaders(), body: JSON.stringify(body) })
+      .then(function (x) {
+        btn.disabled = false;
+        if (x.j && x.j.ok) {
+          setMsg(msg, 'ok', 'Saved to roster. You can drop a photo in step 2.');
+          document.getElementById('emp-bc').value = barcode.trim();
+          showBanner('ok', 'Employee saved. Step 2 is ready with the same barcode.');
+        } else {
+          var err = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+          if (x.status === 401) err += ' — set CATALOG_INGEST_SECRET in .env and paste it in “Roster change secret”.';
+          setMsg(msg, 'err', err);
+          showBanner('err', err);
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        setMsg(msg, 'err', e.message || String(e));
+        showBanner('err', msg.textContent);
+      });
+  };
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function rosterFilter(q) {
+    var t = (q || '').trim().toLowerCase();
+    if (!t) return rosterData.slice();
+    return rosterData.filter(function (e) {
+      return (
+        String(e.name || '').toLowerCase().indexOf(t) >= 0 ||
+        String(e.code || '').toLowerCase().indexOf(t) >= 0 ||
+        String(e.barcode || '').toLowerCase().indexOf(t) >= 0
+      );
+    });
+  }
+
+  function renderRoster() {
+    var listEl = document.getElementById('roster-list');
+    var q = document.getElementById('roster-search') && document.getElementById('roster-search').value;
+    if (!listEl) return;
+    if (!rosterData.length) {
+      listEl.innerHTML = '<span style="font-size:13px;color:var(--tx3)">Click “Load list from server” first.</span>';
+      return;
+    }
+    var rows = rosterFilter(q);
+    if (!rows.length) {
+      listEl.innerHTML = '<span style="font-size:13px;color:var(--tx3)">No rows match your search.</span>';
+      return;
+    }
+    listEl.innerHTML = rows.map(function (e) {
+      return '<div class="roster-row" data-emp-id="' + escHtml(e.id) + '">' +
+        '<div>' +
+          '<div class="roster-name">' + escHtml(e.name) + '</div>' +
+          '<div class="roster-meta">' + escHtml(e.code) + ' · AC ' + e.ac_no + ' · ' + escHtml(e.barcode) + '</div>' +
+        '</div>' +
+        '<button type="button" class="danger rm-emp-btn" data-emp-id="' + escHtml(e.id) + '" data-emp-name="' + escHtml(e.name) + '">Remove</button>' +
+      '</div>';
+    }).join('');
+    var btns = listEl.querySelectorAll('.rm-emp-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function () {
+        removeEmployee(this.getAttribute('data-emp-id'), this.getAttribute('data-emp-name'), this);
+      });
+    }
+  }
+
+  function loadRoster() {
+    var listEl = document.getElementById('roster-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<span style="font-size:13px;color:var(--tx3)">Loading…</span>';
+    clearBanner();
+    requestJson('/api/employees', { cache: 'no-store' })
+      .then(function (d) {
+        if (!d.ok || !d.j || !Array.isArray(d.j.employees) || !d.j.employees.length) {
+          rosterData = [];
+          listEl.innerHTML = '<span style="font-size:13px;color:var(--tx3)">No employees on the server yet.</span>';
+          showBanner('info', 'No roster loaded. Check employees.xlsx path on the server.');
+          return;
+        }
+        rosterData = d.j.employees;
+        showBanner('ok', 'Loaded ' + rosterData.length + ' people. Use search to find someone fast.');
+        renderRoster();
+      })
+      .catch(function (e) {
+        listEl.innerHTML = '<span style="font-size:13px;color:var(--rd)">Could not load list.</span>';
+        showBanner('err', e.message || String(e));
+      });
+  }
+
+  var searchEl = document.getElementById('roster-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', function () {
+      if (rosterData.length) renderRoster();
+    });
+  }
+
+  function removeEmployee(id, name, btn) {
+    var detail = 'Remove ' + name + ' from the roster?\n\nThey will not show on the kiosk. Old logs stay in the system.';
+    if (!window.confirm(detail)) return;
+    var h = {};
+    var ing = (document.getElementById('ingest-sec') && document.getElementById('ingest-sec').value) || '';
+    if (ing.trim()) h['X-Ingest-Secret'] = ing.trim();
+    btn.disabled = true;
+    btn.textContent = '…';
+    clearBanner();
+    requestJson('/api/employees/' + encodeURIComponent(id), { method: 'DELETE', headers: h })
+      .then(function (x) {
+        if (x.j && x.j.ok) {
+          rosterData = rosterData.filter(function (e) { return e.id !== id; });
+          showBanner('ok', 'Removed ' + name + ' from the roster.');
+          renderRoster();
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Remove';
+          var err = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+          if (x.status === 401) err += ' — check roster secret.';
+          showBanner('err', err);
+        }
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = 'Remove';
+        showBanner('err', e.message || String(e));
+      });
+  }
+
+  function fillProcessSelectFromList(arr) {
+    var sel = document.getElementById('emp-process');
+    if (!sel || !Array.isArray(arr)) return;
+    var prev = sel.value;
+    sel.innerHTML = '';
+    if (!arr.length) {
+      var o0 = document.createElement('option');
+      o0.value = '';
+      o0.textContent = 'Add a process in “Factory work types” first';
+      o0.disabled = true;
+      sel.appendChild(o0);
+      return;
+    }
+    arr.forEach(function (name) {
+      var o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      sel.appendChild(o);
+    });
+    if (prev && arr.indexOf(prev) >= 0) sel.value = prev;
+    else sel.selectedIndex = 0;
+  }
+
+  function renderWorkTypesList() {
+    var wrap = document.getElementById('work-types-list');
+    if (!wrap) return;
+    if (!workTypesListLocal.length) {
+      wrap.innerHTML = '<div class="work-types-empty">No processes yet. Type a name and click Add.</div>';
+      return;
+    }
+    wrap.innerHTML = workTypesListLocal
+      .map(function (name, idx) {
+        return (
+          '<div class="work-type-row" data-wt-idx="' +
+          idx +
+          '">' +
+          '<span class="work-type-name">' +
+          escHtml(name) +
+          '</span>' +
+          '<button type="button" class="danger wt-remove-btn" data-wt-name="' +
+          escHtml(name) +
+          '">Remove</button>' +
+          '</div>'
+        );
+      })
+      .join('');
+    var btns = wrap.querySelectorAll('.wt-remove-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].addEventListener('click', function () {
+        removeWorkTypeFromServer(this.getAttribute('data-wt-name'));
+      });
+    }
+  }
+
+  function setWorkTypesListAndRefresh(arr) {
+    workTypesListLocal = Array.isArray(arr) ? arr.slice() : [];
+    renderWorkTypesList();
+    fillProcessSelectFromList(workTypesListLocal);
+  }
+
+  function persistWorkTypesToServer(nextList, msgEl) {
+    var btnAdd = document.getElementById('btn-add-work-type');
+    var btnLoad = document.getElementById('btn-load-work-types');
+    var rmBtns = null;
+    function setWorkTypeButtonsDisabled(disabled) {
+      setDisabledAll([btnAdd, btnLoad], disabled);
+      rmBtns = document.querySelectorAll('.wt-remove-btn');
+      for (var i = 0; i < rmBtns.length; i++) rmBtns[i].disabled = !!disabled;
+    }
+    if (workTypesPersistInFlight) return Promise.resolve();
+    if (!nextList.length) {
+      setMsg(msgEl, 'err', 'Keep at least one process name.');
+      return Promise.resolve();
+    }
+    workTypesPersistInFlight = true;
+    setWorkTypeButtonsDisabled(true);
+    setMsg(msgEl, '', '');
+    clearBanner();
+    return requestJson('/api/work-types', {
+      method: 'PUT',
+      headers: ingestHeaders(),
+      body: JSON.stringify({ workTypes: nextList }),
+    })
+      .then(function (x) {
+        workTypesPersistInFlight = false;
+        setWorkTypeButtonsDisabled(false);
+        if (x.j && x.j.ok && Array.isArray(x.j.workTypes)) {
+          setWorkTypesListAndRefresh(x.j.workTypes);
+          setMsg(msgEl, 'ok', 'Saved. Kiosks pick this up on sync.');
+          showBanner('ok', 'Work types updated.');
+        } else {
+          var err = (x.j && x.j.error) ? x.j.error : 'HTTP ' + x.status;
+          if (x.status === 401) err += ' — set roster secret above.';
+          setMsg(msgEl, 'err', err);
+          showBanner('err', err);
+          return loadWorkTypesEditor();
+        }
+      })
+      .catch(function (e) {
+        workTypesPersistInFlight = false;
+        setWorkTypeButtonsDisabled(false);
+        setMsg(msgEl, 'err', e.message || String(e));
+        showBanner('err', msgEl ? msgEl.textContent : String(e));
+      });
+  }
+
+  function addWorkTypeFromInput() {
+    var input = document.getElementById('work-type-new');
+    var msg = document.getElementById('work-types-msg');
+    if (!input || !msg) return;
+    var raw = (input.value || '').trim();
+    if (!raw) {
+      setMsg(msg, 'err', 'Enter a process name.');
+      return;
+    }
+    if (workTypesListLocal.indexOf(raw) >= 0) {
+      setMsg(msg, 'err', 'That name is already in the list.');
+      return;
+    }
+    var next = workTypesListLocal.concat([raw]);
+    persistWorkTypesToServer(next, msg).then(function () {
+      if (msg.className === 'msg ok') input.value = '';
+    });
+  }
+
+  function removeWorkTypeFromServer(name) {
+    if (!name) return;
+    if (!window.confirm('Remove “' + name + '” from the factory list?')) return;
+    var msg = document.getElementById('work-types-msg');
+    var next = workTypesListLocal.filter(function (n) {
+      return n !== name;
+    });
+    persistWorkTypesToServer(next, msg);
+  }
+
+  function applyWorkTypesFallback(reason) {
+    setWorkTypesListAndRefresh(DEFAULT_WORK_TYPES_FALLBACK.slice());
+    var hint =
+      'Process list could not be loaded from the server. Using built-in defaults on this page only. ' +
+      'Restart the factory Node process after an update, then click “Reload from server”.';
+    if (reason === 'empty') {
+      hint =
+        'Server returned an empty work-types list. Using built-in defaults. Save changes only after the server is running the new version.';
+    }
+    showBanner('info', hint);
+  }
+
+  function loadWorkTypesEditor() {
+    var msg = document.getElementById('work-types-msg');
+    setMsg(msg, '', '');
+    return requestJson('/api/work-types', { cache: 'no-store' })
+      .then(function (x) {
+        var d = x.j;
+        if (!x.ok || !d || typeof d !== 'object') {
+          applyWorkTypesFallback('network');
+          return;
+        }
+        if (!d.ok || !Array.isArray(d.workTypes)) {
+          applyWorkTypesFallback('network');
+          return;
+        }
+        if (!d.workTypes.length) {
+          applyWorkTypesFallback('empty');
+          return;
+        }
+        clearBanner();
+        setWorkTypesListAndRefresh(d.workTypes);
+      })
+      .catch(function () {
+        applyWorkTypesFallback('network');
+      });
+  }
+
+  var btnWLoad = document.getElementById('btn-load-work-types');
+  if (btnWLoad) btnWLoad.onclick = function () {
+    loadWorkTypesEditor();
+  };
+  var btnWAdd = document.getElementById('btn-add-work-type');
+  if (btnWAdd) btnWAdd.onclick = addWorkTypeFromInput;
+  var inputWt = document.getElementById('work-type-new');
+  if (inputWt) {
+    inputWt.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        addWorkTypeFromInput();
+      }
+    });
+  }
+  loadWorkTypesEditor();
+
+  var btnCatLoad = document.getElementById('btn-load-catalog');
+  if (btnCatLoad) btnCatLoad.onclick = loadCatalogEditor;
+  var btnCatAdd = document.getElementById('btn-cat-add');
+  if (btnCatAdd) btnCatAdd.onclick = addCatalogItemFromForm;
+  var inputCatSearch = document.getElementById('catalog-search');
+  if (inputCatSearch) {
+    inputCatSearch.addEventListener('input', function () {
+      renderCatalogList();
+    });
+  }
+  wireCatalogJsonDropzone();
+  loadCatalogEditor();
+
+  document.getElementById('btn-load-roster').onclick = loadRoster;
 
   document.getElementById('btn-emp').onclick = function () {
     upload(

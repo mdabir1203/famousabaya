@@ -1,0 +1,38 @@
+name: Release Desktop Launcher
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_LINK: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      ABAYA_UPDATE_CHANNEL: ${{ contains(github.ref_name, 'beta') && 'beta' || 'stable' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install launcher dependencies
+        working-directory: tools/desktop-launcher
+        run: yarn install
+
+      - name: Build and publish signed launcher
+        working-directory: tools/desktop-launcher
+        run: yarn release:gh

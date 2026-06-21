@@ -68,7 +68,30 @@ Then deploy the Worker so `GET/PUT /api/catalog/abayas` is live.
 
 6. Optional QA: from `tools/catalog-watcher`, run `yarn run validate-sample` to confirm the repo sample `docs/samples/items_export.xlsx` parses correctly (no upload).
 
-### Windows Task Scheduler (run at logon)
+### Always-on with PM2 (recommended)
+
+The repository ships an `ecosystem.config.cjs` that auto-detects
+`tools/catalog-watcher/config.json`. Setting it up on the office PC:
+
+```powershell
+# from the AbaYa Track repo root, elevated PowerShell once:
+powershell -NoProfile -ExecutionPolicy Bypass -File install\SETUP-PM2-BOOT.ps1
+pm2 status
+pm2 logs catalog-watcher
+```
+
+The watcher restarts on crash, survives PC reboot via `pm2-windows-startup`,
+and writes logs to `data\pm2-logs\catalog-watcher.{out,err}.log`. Update with:
+
+```powershell
+git pull
+yarn install
+pm2 reload ecosystem.config.cjs --update-env
+```
+
+### Legacy fallback — Windows Task Scheduler (run at logon)
+
+Use only if PM2 cannot be installed on the office PC.
 
 1. Open **Task Scheduler** → **Create Task** (not “Create Basic Task”).
 2. **General**: name e.g. `AbayaCatalogWatcher`; choose “Run whether user is logged on or not” only if you need it headless (then store password).

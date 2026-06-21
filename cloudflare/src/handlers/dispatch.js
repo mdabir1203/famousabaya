@@ -40,7 +40,25 @@ function rowToInvoice(row) {
     items,
     audioId: row.audio_id || null,
     notes: row.notes || null,
+    customerPhone: row.customer_phone || null,
   };
+}
+
+// Best-effort customer phone parse from free-text notes (mirrors the factory's
+// extractCustomerPhone in services/dispatch-server/src/store.js).
+function extractCustomerPhone(notes) {
+  if (!notes) return null;
+  const text = String(notes);
+  const patterns = [/\+\d[\d\s().-]{6,16}\d/, /\b0\d[\d\s().-]{6,12}\d\b/, /\b\d[\d\s().-]{6,14}\d\b/];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) {
+      const digits = m[0].replace(/[^\d+]/g, '');
+      const bare = digits.replace(/^\+/, '');
+      if (bare.length >= 7 && bare.length <= 15) return digits;
+    }
+  }
+  return null;
 }
 
 async function getActiveInvoices(db) {
@@ -60,20 +78,23 @@ async function getInvoiceById(db, id) {
 
 async function upsertInvoiceD1(db, inv) {
   const itemsJson = JSON.stringify(inv.items || []);
+  // Parse phone from notes if not explicitly supplied.
+  const phone = inv.customerPhone != null ? inv.customerPhone : extractCustomerPhone(inv.notes);
   await db
     .prepare(`
-      INSERT INTO dispatch_invoices (id, supplier, target_queue, status, sla_deadline, created_at, updated_at, source, items, audio_id, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO dispatch_invoices (id, supplier, target_queue, status, sla_deadline, created_at, updated_at, source, items, audio_id, notes, customer_phone)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        supplier     = excluded.supplier,
-        target_queue = excluded.target_queue,
-        status       = excluded.status,
-        sla_deadline = excluded.sla_deadline,
-        updated_at   = excluded.updated_at,
-        source       = excluded.source,
-        items        = excluded.items,
-        audio_id     = COALESCE(excluded.audio_id, dispatch_invoices.audio_id),
-        notes        = COALESCE(excluded.notes, dispatch_invoices.notes)
+        supplier      = excluded.supplier,
+        target_queue  = excluded.target_queue,
+        status        = excluded.status,
+        sla_deadline  = excluded.sla_deadline,
+        updated_at    = excluded.updated_at,
+        source        = excluded.source,
+        items         = excluded.items,
+        audio_id      = COALESCE(excluded.audio_id, dispatch_invoices.audio_id),
+        notes         = COALESCE(excluded.notes, dispatch_invoices.notes),
+        customer_phone= COALESCE(excluded.customer_phone, dispatch_invoices.customer_phone)
     `)
     .bind(
       inv.id,
@@ -86,16 +107,68 @@ async function upsertInvoiceD1(db, inv) {
       inv.source || null,
       itemsJson,
       inv.audioId || null,
-      inv.notes || null
+      inv.notes || null,
+      phone || null
     )
     .run();
 }
 
-async function updateStatusD1(db, id, status) {
-  await db
-    .prepare(`UPDATE dispatch_invoices SET status = ?, updated_at = ? WHERE id = ?`)
-    .bind(status, Date.now(), id)
-    .run();
+// Update status + (optionally) the synced items JSON and customer_phone in one go.
+async function updateStatusD1(db, id, status, { items, customerPhone } = {}) {
+  const sets = ['status = ?', 'updated_at = ?'];
+  const args = [status, Date.now()];
+  if (Array.isArray(items)) { sets.push('items = ?'); args.push(JSON.stringify(items)); }
+  if (customerPhone != null) { sets.push('customer_phone = COALESCE(customer_phone, ?)'); args.push(customerPhone); }
+  args.push(id);
+  await db.prepare(`UPDATE dispatch_invoices SET ${sets.join(', ')} WHERE id = ?`).bind(...args).run();
+}
+
+// ─── Tunnel health probe ──────────────────────────────────────────────────────
+// Called from src/index.js scheduled handler on the every-minute cron.
+// Catches the silent-cloudflared-failure mode: the local cloudflared process
+// is alive but the tunnel itself is broken — nobody notices until a missed
+// delivery. The probe fetches /health (no auth required on the factory) and
+// records one row per attempt. Lazily prunes >7 d of history in the same batch
+// so the table stays bounded without a separate cleanup job.
+
+export async function runTunnelProbe(env) {
+  const tunnelUrl = String(env.FACTORY_TUNNEL_URL || '').trim();
+  if (!tunnelUrl) return; // probe disabled until the tunnel is configured
+
+  const ts = Date.now();
+  let status = 'fail';
+  let httpCode = null;
+  let latencyMs = null;
+  let error = null;
+
+  try {
+    const start = Date.now();
+    const r = await fetch(`${tunnelUrl}/health`, { signal: AbortSignal.timeout(5_000) });
+    latencyMs = Date.now() - start;
+    httpCode = r.status;
+    if (r.ok) {
+      // Defensive: tunnel could 200 with a non-AbaYa body (rare misconfig).
+      const data = await r.json().catch(() => null);
+      if (data && data.ok === true) status = 'ok';
+      else error = 'health body not ok';
+    } else {
+      error = `http ${r.status}`;
+    }
+  } catch (e) {
+    error = String((e && e.message) || e).slice(0, 200);
+  }
+
+  const cutoff = ts - 7 * 24 * 60 * 60 * 1000;
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO tunnel_probes (ts, status, http_code, latency_ms, error) VALUES (?, ?, ?, ?, ?)`
+      ).bind(ts, status, httpCode, latencyMs, error),
+      env.DB.prepare(`DELETE FROM tunnel_probes WHERE ts < ?`).bind(cutoff),
+    ]);
+  } catch (_) {
+    // Probe must never throw out of the scheduled handler — silent on D1 errors.
+  }
 }
 
 // ─── Factory sync-trigger ─────────────────────────────────────────────────────
@@ -193,6 +266,114 @@ function parseInboundWAMessages(body) {
   return results;
 }
 
+// ─── Customer messaging (CEO-toggled, metered, billable) ────────────────────────
+// "Send from Dubai, activate at will, we charge them." The CEO flips this on from
+// the dashboard; every delivery then messages the customer, and every attempt is
+// logged in customer_messages — the billing meter. All paths are guarded so a
+// missing migration or provider error never breaks the bridge.
+
+async function getMessagingSettings(env) {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT enabled, template_mode, template_name FROM messaging_settings WHERE id = 1`
+    ).first();
+    return {
+      enabled: !!(row && row.enabled),
+      templateMode: (row && row.template_mode) || 'freeform',
+      templateName: (row && row.template_name) || null,
+    };
+  } catch (_) {
+    return { enabled: false, templateMode: 'freeform', templateName: null };
+  }
+}
+
+// Count messages sent (billing meter). `sinceMs` optional for a period count.
+async function countMessagesSent(env, sinceMs) {
+  try {
+    const q = sinceMs
+      ? env.DB.prepare(`SELECT COUNT(*) AS n FROM customer_messages WHERE status='sent' AND ts >= ?`).bind(sinceMs)
+      : env.DB.prepare(`SELECT COUNT(*) AS n FROM customer_messages WHERE status='sent'`);
+    const r = await q.first();
+    return r ? Number(r.n) : 0;
+  } catch (_) { return 0; }
+}
+
+async function logMessage(env, invoiceId, toPhone, status, error) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO customer_messages (invoice_id, to_phone, status, ts, error) VALUES (?, ?, ?, ?, ?)`
+    ).bind(invoiceId, toPhone || null, status, Date.now(), error || null).run();
+  } catch (_) { /* meter unavailable (migration 0009 not applied) — non-fatal */ }
+}
+
+// Send the WhatsApp message from the cloud (Dubai) using Worker-side creds.
+async function sendCustomerWhatsApp(env, toPhone, invoice, settings) {
+  const token = String(env.WHATSAPP_TOKEN || '').trim();
+  const phoneId = String(env.WHATSAPP_PHONE_ID || '').trim();
+  if (!token || !phoneId) throw new Error('worker WhatsApp creds not set');
+
+  const body = settings.templateMode === 'template' && settings.templateName
+    ? { messaging_product: 'whatsapp', to: toPhone, type: 'template',
+        template: { name: settings.templateName, language: { code: 'en' },
+          components: [{ type: 'body', parameters: [
+            { type: 'text', text: invoice.id },
+            { type: 'text', text: invoice.supplier || '' },
+          ] }] } }
+    : { messaging_product: 'whatsapp', to: toPhone, type: 'text',
+        text: { body: `✨ Your AbaYa order is ready!\n\nRef: ${invoice.id}\nThank you for choosing us. Your order has been completed and delivered.` } };
+
+  const r = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(8_000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error('graph api ' + r.status);
+}
+
+// Decide + send + meter. Idempotent: the unique index on customer_messages
+// (invoice_id WHERE status='sent') guarantees one notification per order.
+async function maybeNotifyCustomer(env, invoice) {
+  const settings = await getMessagingSettings(env);
+  if (!settings.enabled) { await logMessage(env, invoice.id, invoice.customerPhone, 'skipped', 'disabled'); return; }
+  const phone = invoice.customerPhone || extractCustomerPhone(invoice.notes);
+  if (!phone) { await logMessage(env, invoice.id, null, 'skipped', 'no phone'); return; }
+  // Already messaged for this invoice? (idempotent — replay/retry safe)
+  try {
+    const sent = await env.DB.prepare(
+      `SELECT 1 FROM customer_messages WHERE invoice_id = ? AND status='sent' LIMIT 1`
+    ).bind(invoice.id).first();
+    if (sent) return;
+  } catch (_) { /* table missing — proceed; logMessage will also no-op */ }
+  try {
+    await sendCustomerWhatsApp(env, phone, invoice, settings);
+    await logMessage(env, invoice.id, phone, 'sent', null);
+  } catch (e) {
+    await logMessage(env, invoice.id, phone, 'failed', String((e && e.message) || e).slice(0, 200));
+  }
+}
+
+// CEO dashboard helpers (called from index.js, CEO-JWT-gated there).
+export async function getMessagingStatus(env) {
+  const settings = await getMessagingSettings(env);
+  const sentCount = await countMessagesSent(env);
+  const monthStart = (() => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); })();
+  const periodCount = await countMessagesSent(env, monthStart);
+  return { ok: true, enabled: settings.enabled, templateMode: settings.templateMode, sentCount, periodCount };
+}
+
+export async function setMessagingEnabled(env, enabled) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO messaging_settings (id, enabled, updated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`
+    ).bind(enabled ? 1 : 0, Date.now()).run();
+    return { ok: true, enabled: !!enabled };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function handleDispatch(request, env, url) {
@@ -205,21 +386,98 @@ export async function handleDispatch(request, env, url) {
     return jsonRes({ ok: true, invoices });
   }
 
+  // ── GET /dispatch/tunnel-health ────────────────────────────────────────────
+  // Returns the last N probe rows so the CEO dashboard can render a connectivity
+  // banner. Bridge-secret-gated — same trust boundary as the rest of /dispatch.
+  if (path === '/dispatch/tunnel-health' && request.method === 'GET') {
+    if (!isBridgeAuthed(request, env)) return errRes('unauthorized', 401);
+    const requested = parseInt(url.searchParams.get('limit') || '60', 10);
+    const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 60, 1), 500);
+    let probes = [];
+    try {
+      const res = await env.DB
+        .prepare(`SELECT ts, status, http_code AS httpCode, latency_ms AS latencyMs, error
+                  FROM tunnel_probes ORDER BY ts DESC LIMIT ?`)
+        .bind(limit).all();
+      probes = res.results || [];
+    } catch (_) {
+      // Migration 0008 not applied yet → report empty history rather than 500.
+    }
+    return jsonRes({ ok: true, last: probes[0] || null, probes });
+  }
+
   // ── PATCH /dispatch/invoices/:id/status ───────────────────────────────────
   const patchMatch = path.match(/^\/dispatch\/invoices\/([^/]+)\/status$/);
   if (patchMatch && request.method === 'PATCH') {
     if (!isBridgeAuthed(request, env)) return errRes('unauthorized', 401);
     const id = decodeURIComponent(patchMatch[1]);
+
+    // Idempotency: if the factory retries with the same X-Idempotency-Key, return
+    // the current state without re-applying or re-firing notifyFactory. Migration
+    // 0007 creates the idempotency_keys table. Header is optional for backward compat
+    // with pre-0007 factory builds — those simply skip the dedup path.
+    const idemKey = (request.headers.get('X-Idempotency-Key') || '').trim();
+    if (idemKey) {
+      try {
+        const dup = await env.DB
+          .prepare(`SELECT 1 FROM idempotency_keys WHERE key = ? LIMIT 1`)
+          .bind(idemKey).first();
+        if (dup) {
+          const current = await getInvoiceById(env.DB, id);
+          return jsonRes({ ok: true, invoice: current, idempotent: true });
+        }
+      } catch (_) {
+        // Migration 0007 not applied yet → skip dedup and proceed normally.
+        // The status PATCH is naturally idempotent, so the worst case is a
+        // duplicate notifyFactory — far better than 500-ing every update.
+      }
+    }
+
     let body;
     try { body = await request.json(); } catch { return errRes('bad json', 400); }
     const status = String(body.status || '');
-    if (!['ARRIVED', 'DELIVERED'].includes(status)) return errRes('invalid status', 400);
+    // READY added for the supervisor material-check step (ARRIVED → READY → DELIVERED).
+    if (!['ARRIVED', 'READY', 'DELIVERED'].includes(status)) return errRes('invalid status', 400);
     const inv = await getInvoiceById(env.DB, id);
     if (!inv) return errRes('not found', 404);
-    await updateStatusD1(env.DB, id, status);
-    const updated = { ...inv, status, updatedAt: Date.now() };
+    // `items` (with per-abaya done flags) and `customerPhone` ride along on the
+    // bridge so the cloud copy stays current for customer messaging on delivery.
+    const extraItems = Array.isArray(body.items) ? body.items : undefined;
+    const extraPhone = body.customerPhone != null ? String(body.customerPhone) : undefined;
+    await updateStatusD1(env.DB, id, status, { items: extraItems, customerPhone: extraPhone });
+
+    // Record the key + lazily prune anything older than 24 h. Batched in one
+    // round-trip; DELETE is cheap thanks to the idx_idempotency_keys_created_at index.
+    if (idemKey) {
+      try {
+        const now = Date.now();
+        const cutoff = now - 24 * 60 * 60 * 1000;
+        await env.DB.batch([
+          env.DB.prepare(`INSERT OR IGNORE INTO idempotency_keys (key, created_at) VALUES (?, ?)`).bind(idemKey, now),
+          env.DB.prepare(`DELETE FROM idempotency_keys WHERE created_at < ?`).bind(cutoff),
+        ]);
+      } catch (_) {
+        // idempotency_keys table missing → best-effort record, never fail the request.
+      }
+    }
+
+    const updated = {
+      ...inv,
+      status,
+      updatedAt: Date.now(),
+      items: extraItems ?? inv.items,
+      customerPhone: extraPhone ?? inv.customerPhone,
+    };
     // Notify factory so leaderboard stays live even if worker is the authority
     notifyFactory(updated, env);
+
+    // Cloud-controlled, billable customer notification — only on delivery, only
+    // when the CEO has enabled it, only if we have a customer phone. Fully
+    // guarded so it can never fail the bridge PATCH.
+    if (status === 'DELIVERED') {
+      await maybeNotifyCustomer(env, updated).catch(() => {});
+    }
+
     return jsonRes({ ok: true, invoice: updated });
   }
 

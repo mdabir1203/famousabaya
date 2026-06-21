@@ -1,0 +1,12 @@
+{
+  "_comment": "CEO cloud copy. Factory LAN uses config/release-moment.json — sync momentId when you ship both.",
+  "enabled": true,
+  "momentId": "2026-05-evolution-1",
+  "eyebrow": "Just evolved",
+  "hook": "The executive lens widened.",
+  "outcome": "Spot drift sooner—same Cloud pulse, calmer read.",
+  "ctaLabel": "Jump to reports",
+  "ctaPath": "#exec-reports",
+  "secondaryCtaLabel": "",
+  "secondaryCtaPath": ""
+}

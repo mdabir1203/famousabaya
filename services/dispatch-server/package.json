@@ -5,12 +5,16 @@
   "module": "local-server/server.js",
   "type": "module",
   "scripts": {
-    "start": "bun run local-server/server.js",
-    "dev": "bun --watch run local-server/server.js",
-    "test": "bun run test/smoke.js"
+    "start": "node server.js",
+    "start:apm": "node --import ./sw-instrument.mjs server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/smoke.js"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=20.6.0"
+  },
+  "dependencies": {
+    "skywalking-backend-js": "^0.7.0"
   },
   "keywords": ["abaya-track", "dispatch", "sse", "bun", "cloudflare-worker"],
   "license": "UNLICENSED"

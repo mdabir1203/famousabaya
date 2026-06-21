@@ -1,0 +1,11 @@
+node_modules
+.yarn
+.yarnrc.yml
+.pnp.cjs
+.pnp.loader.mjs
+dist
+.wrangler
+.git
+.github
+data
+public/uploads

@@ -3,15 +3,8 @@ setlocal EnableExtensions
 :: Used by Task Scheduler: skip if factory server already listening (avoid duplicate Node).
 cd /d "%~dp0.."
 
-set ABA_PORT=3000
-if exist ".env" (
-  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
-    if /i "%%A"=="PORT" set "ABA_PORT=%%B"
-  )
-)
+call "%~dp0RUNTIME-COMMON.bat" :ReadPortFromEnv
 
-powershell -NoProfile -Command "$p=3000; try{$p=[int]([string]$env:ABA_PORT).Trim()}catch{}; if (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"
-if errorlevel 1 (
-  call "%~dp0LAUNCH-ALL.bat"
-)
+for /f %%P in ('powershell -NoProfile -Command "$p=%ABA_PORT%; if (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) { 'up' } else { 'down' }"') do set "ABA_PORT_STATE=%%P"
+if /i not "%ABA_PORT_STATE%"=="up" call "%~dp0LAUNCH-ALL.bat"
 exit /b 0
