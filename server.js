@@ -2445,6 +2445,7 @@ function validateCatalogPutRows(rows) {
     var barcode = String(r.barcode != null ? r.barcode : '').trim();
     var design = String(r.design != null ? r.design : '').trim();
     var process = String(r.process != null ? r.process : '').trim();
+    var tier = String(r.tier != null ? r.tier : '').trim();
     var iconRaw = r.icon;
     var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
     if (!barcode) {
@@ -2465,7 +2466,7 @@ function validateCatalogPutRows(rows) {
     if (seenId.has(id) || seenKey.has(uniqKey)) continue;
     seenId.add(id);
     seenKey.add(uniqKey);
-    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
+    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, tier: tier, icon: icon });
   }
   return { ok: true, norm: norm };
 }
