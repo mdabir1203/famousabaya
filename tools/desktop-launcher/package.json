@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Optional GUI to start factory server + catalog watcher (classic batch launcher remains)",
+  "author": "Mohammad Abir Abbas",
   "main": "main.js",
   "scripts": {
     "start": "node -r ./.pnp.cjs ./start-electron.cjs",
@@ -14,11 +15,12 @@
     "node": ">=18"
   },
   "dependencies": {
-    "electron": "^34.2.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron-builder": "^24.13.3"
+    "electron": "^34.2.0",
+    "electron-builder": "^24.13.3",
+    "supports-color": "^9.0.0"
   },
   "build": {
     "appId": "com.abaya.track.launcher",
