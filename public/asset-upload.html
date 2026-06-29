@@ -365,33 +365,25 @@ select#emp-process option {
 
 <div class="card">
   <h2>Abaya catalog</h2>
-  <p class="card-title">Add/remove Abayas + drag/drop bulk update</p>
-  <p class="hint">Needs roster secret. Add one item below, remove from list, or drag/drop a JSON catalog file to replace (bulk add/remove at once).</p>
-  <label for="catalog-search">Search current catalog</label>
-  <input type="search" id="catalog-search" placeholder="Find by code, barcode, or design…" autocomplete="off">
-  <button type="button" class="ghost" id="btn-load-catalog">Load catalog from server</button>
-  <div id="catalog-list" class="catalog-list" style="margin-top:10px"></div>
-  <label for="cat-code">New item code <span class="opt">(required)</span></label>
-  <input type="text" id="cat-code" placeholder="e.g. SKY-041" autocomplete="off">
-  <label for="cat-barcode">New item barcode <span class="opt">(required)</span></label>
-  <input type="text" id="cat-barcode" placeholder="e.g. AB00000041" autocomplete="off">
-  <label for="cat-design">Design <span class="opt">(optional)</span></label>
-  <input type="text" id="cat-design" placeholder="optional" autocomplete="off">
-  <label for="cat-process">Process <span class="opt">(optional)</span></label>
-  <input type="text" id="cat-process" placeholder="optional" autocomplete="off">
-  <label for="cat-tier">Tier <span class="opt">(optional)</span></label>
-  <input type="text" id="cat-tier" placeholder="Standard / Premium / Luxury / Plain Abaya" autocomplete="off">
-  <div class="row-actions">
-    <button type="button" class="primary" id="btn-cat-add">Add Abaya</button>
+  <p class="card-title">Update items by dropping your Excel file</p>
+  <p class="hint">From any laptop on the factory Wi-Fi: type the pass, then drag your <strong>item catalog Excel (<code>.xlsx</code>)</strong> onto the box below. New item codes are added straight from the file — it replaces the whole catalog with the file's items, writes to <code>items_export.xlsx</code>, and keeps a backup on the server. Tip: download a copy to this laptop first.</p>
+  <label for="catalog-pass">Catalog pass <span class="opt">(ask your supervisor)</span></label>
+  <input type="password" id="catalog-pass" autocomplete="off" placeholder="Enter the catalog pass to allow uploads">
+  <label for="catalog-xlsx-file">Item catalog Excel (.xlsx)</label>
+  <div class="dropzone" id="catalog-xlsx-dropzone" tabindex="0" role="button" aria-label="Drop item catalog Excel here or click to browse">
+    <strong>Drop item catalog Excel (.xlsx) here</strong>
+    <span>or click to choose your <code>items_export.xlsx</code> — this replaces the full catalog with the file's items</span>
   </div>
-  <label for="catalog-json-file" style="margin-top:10px">Bulk catalog JSON</label>
-  <div class="dropzone" id="catalog-json-dropzone" tabindex="0" role="button" aria-label="Drop catalog JSON here or click to browse">
-    <strong>Drop catalog JSON here</strong>
-    <span>or click to choose a .json file (replaces full catalog list)</span>
-  </div>
-  <input type="file" id="catalog-json-file" accept="application/json,.json">
-  <div id="catalog-json-file-chip" class="file-chip"></div>
+  <input type="file" id="catalog-xlsx-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+  <div id="catalog-xlsx-file-chip" class="file-chip"></div>
   <div id="catalog-msg" class="msg" role="status"></div>
+  <div class="row-actions" style="margin-top:14px">
+    <button type="button" class="ghost" id="btn-load-catalog">Load current list</button>
+    <button type="button" class="ghost" id="btn-download-catalog">Download backup (.xlsx)</button>
+  </div>
+  <label for="catalog-search" style="margin-top:10px">Search current catalog</label>
+  <input type="search" id="catalog-search" placeholder="Find by code, barcode, or design…" autocomplete="off">
+  <div id="catalog-list" class="catalog-list" style="margin-top:10px"></div>
 </div>
 
 <div class="card">
@@ -425,6 +417,7 @@ select#emp-process option {
 (function () {
   var SEC_KEY = 'abaya_asset_upload_secret';
   var INGEST_KEY = 'abaya_ingest_secret';
+  var CATALOG_PASS_KEY = 'abaya_catalog_pass';
   var MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   var rosterData = [];
   /** Same strings as server DEFAULT_FACTORY_WORK_TYPES / public/data.js — used if GET /api/work-types fails (e.g. old Node process not restarted). */
@@ -455,6 +448,11 @@ select#emp-process option {
     var ing = document.getElementById('ingest-sec');
     ing.value = localStorage.getItem(INGEST_KEY) || '';
     ing.addEventListener('change', function () { localStorage.setItem(INGEST_KEY, ing.value.trim()); });
+    var cpass = document.getElementById('catalog-pass');
+    if (cpass) {
+      cpass.value = localStorage.getItem(CATALOG_PASS_KEY) || '';
+      cpass.addEventListener('change', function () { localStorage.setItem(CATALOG_PASS_KEY, cpass.value.trim()); });
+    }
   } catch (_) {}
 
   function showBanner(kind, text) {
@@ -514,6 +512,20 @@ select#emp-process option {
     var h = { 'Content-Type': 'application/json' };
     var ing = (document.getElementById('ingest-sec') && document.getElementById('ingest-sec').value) || '';
     if (ing.trim()) h['X-Ingest-Secret'] = ing.trim();
+    return h;
+  }
+
+  /** The employee catalog pass (separate from the admin roster secret). */
+  function catalogPassValue() {
+    var el = document.getElementById('catalog-pass');
+    return el ? String(el.value || '').trim() : '';
+  }
+
+  /** Headers carrying the catalog pass. Pass an `extra` object to merge (e.g. Content-Type). */
+  function catalogPassHeader(extra) {
+    var h = extra || {};
+    var p = catalogPassValue();
+    if (p) h['X-Catalog-Pass'] = p;
     return h;
   }
 
@@ -703,26 +715,32 @@ select#emp-process option {
       return Promise.resolve();
     }
     catalogPersistInFlight = true;
-    var addBtn = document.getElementById('btn-cat-add');
     var loadBtn = document.getElementById('btn-load-catalog');
-    setDisabledAll([addBtn, loadBtn], true);
+    setDisabledAll([loadBtn], true);
     setMsg(msgEl, '', '');
     clearBanner();
     return requestJson('/api/catalog/abayas', {
       method: 'PUT',
-      headers: ingestHeaders(),
+      headers: catalogPassHeader({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ abayas: nextList }),
     })
       .then(function (x) {
         catalogPersistInFlight = false;
-        setDisabledAll([addBtn, loadBtn], false);
+        setDisabledAll([loadBtn], false);
         if (x.j && x.j.ok) {
           setCatalogAndRender(nextList);
-          setMsg(msgEl, 'ok', 'Catalog saved (' + nextList.length + ' items).');
-          showBanner('ok', 'Abaya catalog updated.');
+          var parts = ['Catalog saved (' + nextList.length + ' items).'];
+          if (x.j.persisted) parts.push('Written to items_export.xlsx.');
+          if (x.j.backup) parts.push('Previous backed up.');
+          if (x.j.cloudPushed) parts.push('Synced to cloud.');
+          var warn = '';
+          if (x.j.warning) warn += ' ' + x.j.warning;
+          if (x.j.cloudWarning) warn += ' ' + x.j.cloudWarning;
+          setMsg(msgEl, 'ok', parts.join(' ') + warn);
+          showBanner(warn ? 'info' : 'ok', parts.join(' ') + warn);
         } else {
           var t = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
-          if (x.status === 401) t += ' — set roster secret above.';
+          if (x.status === 401) t += ' — check the catalog pass above.';
           setMsg(msgEl, 'err', t);
           showBanner('err', t);
           return loadCatalogEditor();
@@ -730,7 +748,7 @@ select#emp-process option {
       })
       .catch(function (e) {
         catalogPersistInFlight = false;
-        setDisabledAll([addBtn, loadBtn], false);
+        setDisabledAll([loadBtn], false);
         setMsg(msgEl, 'err', e.message || String(e));
         showBanner('err', msgEl ? msgEl.textContent : String(e));
       });
@@ -758,62 +776,6 @@ select#emp-process option {
       });
   }
 
-  function addCatalogItemFromForm() {
-    var msg = document.getElementById('catalog-msg');
-    var codeEl = document.getElementById('cat-code');
-    var barcodeEl = document.getElementById('cat-barcode');
-    var designEl = document.getElementById('cat-design');
-    var processEl = document.getElementById('cat-process');
-    var tierEl = document.getElementById('cat-tier');
-    if (!msg || !codeEl || !barcodeEl) return;
-    setMsg(msg, '', '');
-    var code = String(codeEl.value || '').trim();
-    var barcode = String(barcodeEl.value || '').trim();
-    if (!code || !barcode) {
-      setMsg(msg, 'err', 'Code and barcode are required.');
-      return;
-    }
-    var codeTaken = catalogListLocal.some(function (a) {
-      return String(a.code || '').trim().toLowerCase() === code.toLowerCase();
-    });
-    if (codeTaken) {
-      setMsg(msg, 'err', 'Code already exists.');
-      return;
-    }
-    var barcodeTaken = catalogListLocal.some(function (a) {
-      return String(a.barcode || '').trim().toLowerCase() === barcode.toLowerCase();
-    });
-    if (barcodeTaken) {
-      setMsg(msg, 'err', 'Barcode already exists.');
-      return;
-    }
-    var maxId = 0;
-    for (var i = 0; i < catalogListLocal.length; i++) {
-      var n = Number(catalogListLocal[i] && catalogListLocal[i].id);
-      if (Number.isFinite(n) && n > maxId) maxId = n;
-    }
-    var nextRow = normalizeCatalogRow({
-      id: String(maxId + 1),
-      code: code,
-      barcode: barcode,
-      design: designEl ? designEl.value : '',
-      process: processEl ? processEl.value : '',
-      tier: tierEl ? tierEl.value : '',
-      icon: '',
-      status: 'waiting',
-    }, maxId + 1);
-    var next = catalogListLocal.concat([nextRow]);
-    persistCatalogToServer(next, msg).then(function () {
-      if (msg.className === 'msg ok') {
-        codeEl.value = '';
-        barcodeEl.value = '';
-        if (designEl) designEl.value = '';
-        if (processEl) processEl.value = '';
-        if (tierEl) tierEl.value = '';
-      }
-    });
-  }
-
   function removeCatalogItemById(id, code) {
     if (!id) return;
     if (!window.confirm('Remove Abaya "' + code + '" from catalog?')) return;
@@ -824,38 +786,74 @@ select#emp-process option {
     persistCatalogToServer(next, msg);
   }
 
-  function wireCatalogJsonDropzone() {
-    var zone = document.getElementById('catalog-json-dropzone');
-    var input = document.getElementById('catalog-json-file');
-    var chip = document.getElementById('catalog-json-file-chip');
+  function wireCatalogXlsxDropzone() {
+    var zone = document.getElementById('catalog-xlsx-dropzone');
+    var input = document.getElementById('catalog-xlsx-file');
+    var chip = document.getElementById('catalog-xlsx-file-chip');
     var msg = document.getElementById('catalog-msg');
     if (!zone || !input || !chip || !msg) return;
-    function parseAndApply(file) {
-      if (!file) return;
-      var name = String(file.name || '').toLowerCase();
-      if (!/\.json$/.test(name) && file.type !== 'application/json') {
-        setMsg(msg, 'err', 'Use a JSON file for bulk catalog replace.');
+    var uploadInFlight = false;
+
+    function isXlsx(file) {
+      var name = String((file && file.name) || '').toLowerCase();
+      var type = String((file && file.type) || '');
+      return /\.xlsx$/.test(name) ||
+        /spreadsheetml\.sheet/i.test(type) ||
+        type === 'application/octet-stream';
+    }
+
+    function uploadXlsx(file) {
+      if (!file || uploadInFlight) return;
+      if (!isXlsx(file)) {
+        setMsg(msg, 'err', 'Use a factory Excel (.xlsx) file for bulk catalog update.');
         showBanner('err', msg.textContent);
         return;
       }
-      file.text()
-        .then(function (text) {
-          var parsed = null;
-          try {
-            parsed = JSON.parse(text);
-          } catch (_) {
-            throw new Error('Invalid JSON file.');
+      if (!catalogPassValue()) {
+        setMsg(msg, 'err', 'Enter the catalog pass above before uploading.');
+        showBanner('err', msg.textContent);
+        return;
+      }
+      uploadInFlight = true;
+      var loadBtn = document.getElementById('btn-load-catalog');
+      setDisabledAll([loadBtn], true);
+      setMsg(msg, '', 'Uploading and reading ' + file.name + '…');
+      clearBanner();
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      requestJson('/api/import/catalog-xlsx', {
+        method: 'POST',
+        headers: catalogPassHeader(),
+        body: fd,
+      })
+        .then(function (x) {
+          uploadInFlight = false;
+          setDisabledAll([loadBtn], false);
+          if (x.j && x.j.ok) {
+            var count = x.j.count != null ? x.j.count : '?';
+            var parts = ['Catalog updated from Excel (' + count + ' items).'];
+            if (x.j.persisted) parts.push('Saved to disk.');
+            if (x.j.backup) parts.push('Previous backed up.');
+            if (x.j.cloudPushed) parts.push('Synced to cloud.');
+            var warn = '';
+            if (x.j.persisted === false) {
+              warn += ' Saved in memory only — set EXCEL_DATA_DIR or CATALOG_XLSX_PATH in .env to keep it after a restart.';
+            }
+            if (x.j.cloudWarning) warn += ' ' + x.j.cloudWarning;
+            setMsg(msg, 'ok', parts.join(' ') + warn);
+            showBanner(warn ? 'info' : 'ok', parts.join(' ') + warn);
+            loadCatalogEditor();
+          } else {
+            var t = (x.j && x.j.error) ? x.j.error : ('HTTP ' + x.status);
+            if (x.status === 401) t += ' — check the catalog pass above.';
+            if (x.status === 503) t += ' — set CATALOG_UPLOAD_PASS (or CATALOG_INGEST_SECRET / CF_INGEST_SECRET) in .env.';
+            setMsg(msg, 'err', t);
+            showBanner('err', t);
           }
-          var rawRows = Array.isArray(parsed) ? parsed : (parsed && parsed.abayas);
-          if (!Array.isArray(rawRows)) throw new Error('JSON must be array or { abayas: [] }.');
-          var rows = rawRows.map(function (r, idx) {
-            return normalizeCatalogRow(r, idx + 1);
-          });
-          var basicErr = validateCatalogRowsBasic(rows);
-          if (basicErr) throw new Error(basicErr);
-          return persistCatalogToServer(rows, msg);
         })
         .catch(function (e) {
+          uploadInFlight = false;
+          setDisabledAll([loadBtn], false);
           setMsg(msg, 'err', e.message || String(e));
           showBanner('err', msg.textContent);
         });
@@ -893,7 +891,7 @@ select#emp-process option {
         input.files = dt.files;
       } catch (_) {}
       chip.textContent = 'Selected: ' + f.name;
-      parseAndApply(f);
+      uploadXlsx(f);
     });
     input.addEventListener('change', function () {
       var f = input.files && input.files[0];
@@ -902,7 +900,7 @@ select#emp-process option {
         return;
       }
       chip.textContent = 'Selected: ' + f.name;
-      parseAndApply(f);
+      uploadXlsx(f);
     });
   }
 
@@ -1321,15 +1319,23 @@ select#emp-process option {
 
   var btnCatLoad = document.getElementById('btn-load-catalog');
   if (btnCatLoad) btnCatLoad.onclick = loadCatalogEditor;
-  var btnCatAdd = document.getElementById('btn-cat-add');
-  if (btnCatAdd) btnCatAdd.onclick = addCatalogItemFromForm;
+  var btnCatDownload = document.getElementById('btn-download-catalog');
+  if (btnCatDownload) btnCatDownload.onclick = function () {
+    var a = document.createElement('a');
+    a.href = '/api/catalog/export.xlsx';
+    a.download = 'items_export.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showBanner('ok', 'Downloading a backup copy of the current catalog to this laptop.');
+  };
   var inputCatSearch = document.getElementById('catalog-search');
   if (inputCatSearch) {
     inputCatSearch.addEventListener('input', function () {
       renderCatalogList();
     });
   }
-  wireCatalogJsonDropzone();
+  wireCatalogXlsxDropzone();
   loadCatalogEditor();
 
   document.getElementById('btn-load-roster').onclick = loadRoster;
