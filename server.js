@@ -1008,6 +1008,35 @@ async function refreshAbayaCatalogFromCloud() {
   }
 }
 
+/**
+ * Push the catalog to the Cloudflare Worker so the cloud — the source of truth in
+ * cloud-live mode — matches a local edit/upload. Without this, the periodic
+ * refreshAbayaCatalogFromCloud() pull (every 60s) would overwrite the local change.
+ * No-op ({pushed:false, reason:'cloud-not-configured'}) on local-only deployments.
+ */
+async function pushCatalogToCloud(abayas) {
+  if (!CF_URL || !CF_SECRET) return { pushed: false, reason: 'cloud-not-configured' };
+  const url = String(CF_URL).replace(/\/+$/, '') + '/api/catalog/abayas';
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Ingest-Secret': CF_SECRET },
+      body: JSON.stringify({ abayas: abayas }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(function () { return ''; });
+      return { pushed: false, error: 'Worker HTTP ' + res.status + (txt ? ': ' + txt.slice(0, 160) : '') };
+    }
+    const j = await res.json().catch(function () { return null; });
+    if (j && j.ok === false) return { pushed: false, error: j.error || 'Worker rejected catalog' };
+    if (j && j.version != null) catalogCloudVersion = String(j.version);
+    return { pushed: true };
+  } catch (e) {
+    return { pushed: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
 let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
@@ -1700,6 +1729,24 @@ app.get('/api/work-types', function (req, res) {
 });
 
 const CATALOG_INGEST_SECRET = process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
+// Employee-facing pass for the catalog Excel upload (so staff can update the catalog from
+// any laptop on the factory Wi-Fi without the admin roster secret). Optional — when unset,
+// the existing ingest secret still works as the pass, so nothing breaks.
+const CATALOG_UPLOAD_PASS = String(process.env.CATALOG_UPLOAD_PASS || '').trim();
+
+/** True if the request carries a valid catalog pass (X-Catalog-Pass) or the admin ingest secret. */
+function catalogPassAuthorized(req) {
+  const provided = String(req.headers['x-catalog-pass'] || req.headers['x-ingest-secret'] || '').trim();
+  if (!provided) return false;
+  if (CATALOG_UPLOAD_PASS && provided === CATALOG_UPLOAD_PASS) return true;
+  if (CATALOG_INGEST_SECRET && provided === CATALOG_INGEST_SECRET) return true;
+  return false;
+}
+
+/** True when at least one catalog credential is configured (pass or ingest secret). */
+function catalogAuthConfigured() {
+  return !!(CATALOG_UPLOAD_PASS || CATALOG_INGEST_SECRET);
+}
 
 app.put('/api/work-types', function (req, res) {
   if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
@@ -2333,6 +2380,23 @@ const CATALOG_XLSX_FALLBACK = path.join(__dirname, 'docs', 'samples', 'items_exp
 const CATALOG_XLSX_PATH = CATALOG_XLSX_PATH_RAW
   || (_excelDataDir ? path.join(_excelDataDir, 'items_export.xlsx') : '')
   || (fs.existsSync(CATALOG_XLSX_FALLBACK) ? CATALOG_XLSX_FALLBACK : '');
+// Where an uploaded catalog workbook is saved so it survives a restart. We only write
+// to a real configured location (CATALOG_XLSX_PATH / EXCEL_DATA_DIR) — never the bundled
+// repo sample (docs/samples/items_export.xlsx), which is read-only shipped data.
+const CATALOG_XLSX_WRITE_PATH = (function () {
+  if (!CATALOG_XLSX_PATH) return '';
+  const resolved = path.isAbsolute(CATALOG_XLSX_PATH)
+    ? CATALOG_XLSX_PATH
+    : path.join(__dirname, CATALOG_XLSX_PATH);
+  if (path.resolve(resolved) === path.resolve(CATALOG_XLSX_FALLBACK)) return '';
+  return resolved;
+})();
+// Server-side backups: timestamped copies of the previous workbook are kept here
+// before each overwrite (upload or single edit) so a bad change can be rolled back.
+const CATALOG_BACKUP_DIR = CATALOG_XLSX_WRITE_PATH
+  ? path.join(path.dirname(CATALOG_XLSX_WRITE_PATH), 'catalog-backups')
+  : '';
+const CATALOG_BACKUP_KEEP = Math.max(1, Number(process.env.CATALOG_BACKUP_KEEP) || 30);
 const CATALOG_XLSX_INTERVAL_MS = Math.max(Number(process.env.CATALOG_XLSX_INTERVAL_MS) || 0, 3600000) || 86400000;
 const DEFAULT_CATALOG_PROCESS = String(process.env.DEFAULT_CATALOG_PROCESS || 'Tailor (01)').trim() || 'Tailor (01)';
 
@@ -2400,6 +2464,99 @@ function parseCatalogXlsxBuffer(buf) {
   return parseCatalogWorkbook(wb);
 }
 
+/**
+ * Save an uploaded catalog workbook to the configured on-disk catalog path so the
+ * change survives a server restart. No-op ({persisted:false}) when no writable path
+ * is configured. Writes atomically (temp file + rename) and advances the xlsx mtime
+ * marker so the periodic re-read does not redundantly reparse our own write.
+ */
+function persistUploadedCatalogXlsx(buffer) {
+  if (!CATALOG_XLSX_WRITE_PATH) {
+    return { persisted: false, reason: 'no-writable-path' };
+  }
+  fs.mkdirSync(path.dirname(CATALOG_XLSX_WRITE_PATH), { recursive: true });
+  const backup = backupExistingCatalogXlsx();
+  const tmp = CATALOG_XLSX_WRITE_PATH + '.tmp-' + process.pid + '-' + Date.now();
+  fs.writeFileSync(tmp, buffer);
+  fs.renameSync(tmp, CATALOG_XLSX_WRITE_PATH);
+  try {
+    lastCatalogXlsxMtime = Math.floor(fs.statSync(CATALOG_XLSX_WRITE_PATH).mtimeMs);
+  } catch (_) { /* mtime marker is best-effort */ }
+  return { persisted: true, path: CATALOG_XLSX_WRITE_PATH, backup: backup };
+}
+
+/** Copy the current catalog workbook into the backups folder before it is overwritten. */
+function backupExistingCatalogXlsx() {
+  if (!CATALOG_XLSX_WRITE_PATH || !CATALOG_BACKUP_DIR) return null;
+  if (!fs.existsSync(CATALOG_XLSX_WRITE_PATH)) return null;
+  try {
+    fs.mkdirSync(CATALOG_BACKUP_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = path.join(CATALOG_BACKUP_DIR, 'items_export_' + stamp + '.xlsx');
+    fs.copyFileSync(CATALOG_XLSX_WRITE_PATH, dest);
+    pruneCatalogBackups();
+    return dest;
+  } catch (e) {
+    console.warn('[catalog-xlsx] Backup failed (non-fatal):', e.message);
+    return null;
+  }
+}
+
+/** Keep only the most recent CATALOG_BACKUP_KEEP backups. */
+function pruneCatalogBackups() {
+  try {
+    const files = fs.readdirSync(CATALOG_BACKUP_DIR)
+      .filter(function (f) { return /^items_export_.*\.xlsx$/.test(f); })
+      .sort();
+    while (files.length > CATALOG_BACKUP_KEEP) {
+      const old = files.shift();
+      try { fs.unlinkSync(path.join(CATALOG_BACKUP_DIR, old)); } catch (_) { /* ignore */ }
+    }
+  } catch (_) { /* best-effort rotation */ }
+}
+
+/**
+ * Build an items_export-style workbook from catalog rows. Column titles match the
+ * factory export so the file round-trips back through parseCatalogWorkbook. Item
+ * images are intentionally omitted — they are managed via the item-photo upload and
+ * re-attached from disk on load.
+ */
+function buildCatalogXlsxBuffer(rows) {
+  const XLSX = require('xlsx');
+  const headers = ['Barcode Display Name', 'Item Code', 'Item Name', 'Item Category', 'Process'];
+  const aoa = [headers];
+  for (let i = 0; i < rows.length; i++) {
+    const a = rows[i] || {};
+    aoa.push([
+      String(a.barcode == null ? '' : a.barcode),
+      String(a.code == null ? '' : a.code),
+      String(a.design == null ? '' : a.design),
+      String(a.tier == null ? '' : a.tier),
+      String(a.process == null ? '' : a.process),
+    ]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Items');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+
+/**
+ * Write the current catalog to the on-disk xlsx (factory format) so single add/remove
+ * edits update the Excel directly, backing up the previous file first. No-op when no
+ * writable path is configured. Returns { persisted, path, backup }.
+ */
+function persistCatalogRowsToXlsx(rows) {
+  if (!CATALOG_XLSX_WRITE_PATH) return { persisted: false, reason: 'no-writable-path' };
+  const backup = backupExistingCatalogXlsx();
+  const buf = buildCatalogXlsxBuffer(rows);
+  atomicWriteBufferReplaceFile(CATALOG_XLSX_WRITE_PATH, buf);
+  try {
+    lastCatalogXlsxMtime = Math.floor(fs.statSync(CATALOG_XLSX_WRITE_PATH).mtimeMs);
+  } catch (_) { /* mtime marker is best-effort */ }
+  return { persisted: true, path: CATALOG_XLSX_WRITE_PATH, backup: backup };
+}
+
 function loadCatalogFromXlsxFile() {
   if (!CATALOG_XLSX_PATH) return;
   const resolved = path.isAbsolute(CATALOG_XLSX_PATH)
@@ -2445,6 +2602,7 @@ function validateCatalogPutRows(rows) {
     var barcode = String(r.barcode != null ? r.barcode : '').trim();
     var design = String(r.design != null ? r.design : '').trim();
     var process = String(r.process != null ? r.process : '').trim();
+    var tier = String(r.tier != null ? r.tier : '').trim();
     var iconRaw = r.icon;
     var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
     if (!barcode) {
@@ -2465,21 +2623,20 @@ function validateCatalogPutRows(rows) {
     if (seenId.has(id) || seenKey.has(uniqKey)) continue;
     seenId.add(id);
     seenKey.add(uniqKey);
-    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
+    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, tier: tier, icon: icon });
   }
   return { ok: true, norm: norm };
 }
 
 /** Same contract as Cloudflare PUT /api/catalog/abayas (office watcher or curl). */
-app.put('/api/catalog/abayas', (req, res) => {
-  if (!CATALOG_INGEST_SECRET) {
+app.put('/api/catalog/abayas', async (req, res) => {
+  if (!catalogAuthConfigured()) {
     return res.status(503).json({
       ok: false,
-      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET or CF_INGEST_SECRET in .env',
+      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET / CF_INGEST_SECRET or CATALOG_UPLOAD_PASS in .env',
     });
   }
-  var secret = req.headers['x-ingest-secret'];
-  if (!secret || secret !== CATALOG_INGEST_SECRET) {
+  if (!catalogPassAuthorized(req)) {
     return res.status(401).json({ ok: false, error: 'Unauthorized ingest request' });
   }
   var rows = Array.isArray(req.body) ? req.body : req.body && req.body.abayas;
@@ -2491,23 +2648,67 @@ app.put('/api/catalog/abayas', (req, res) => {
   attachItemImagesFromDisk();
   catalogCloudVersion = String(Date.now());
   io.emit('catalog_update', { version: catalogCloudVersion });
-  res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
+
+  // Write the change straight to items_export.xlsx (factory format) so the Excel stays
+  // the source of truth and the edit survives a restart. Previous file is backed up first.
+  let persisted = false;
+  let backup = null;
+  let persistWarning = '';
+  try {
+    const p = persistCatalogRowsToXlsx(abayaCatalog);
+    persisted = !!p.persisted;
+    backup = p.backup || null;
+  } catch (e) {
+    persistWarning = 'Saved in memory but could not write the Excel file: ' + (e && e.message ? e.message : String(e));
+    console.error('[catalog] xlsx persist failed:', e);
+  }
+
+  // Mirror to the cloud Worker so a single add/remove is not reverted by the 60s pull.
+  const cloud = await pushCatalogToCloud(abayaCatalog);
+  const out = {
+    ok: true,
+    version: catalogCloudVersion,
+    count: abayaCatalog.length,
+    persisted: persisted,
+    cloudPushed: !!cloud.pushed,
+  };
+  if (backup) out.backup = path.basename(backup);
+  if (persistWarning) out.warning = persistWarning;
+  if (!cloud.pushed && cloud.reason !== 'cloud-not-configured') {
+    out.cloudWarning = 'Saved locally but cloud sync failed: ' + (cloud.error || 'unknown');
+  }
+  res.json(out);
 });
 
 /**
  * Dashboard import path: upload items_export-style xlsx and replace catalog in memory.
  * Protected by same ingest secret as /api/catalog/abayas.
  */
-app.post('/api/import/catalog-xlsx', uploadXlsxMem.single('file'), (req, res) => {
-  if (!CATALOG_INGEST_SECRET) {
+/**
+ * Run the xlsx multipart parser but translate multer/file-filter errors (wrong type,
+ * too large) into a clean JSON 400 instead of Express's default 500 HTML page, so the
+ * uploader (often a second laptop over the LAN) sees a readable message.
+ */
+function uploadCatalogXlsx(req, res, next) {
+  uploadXlsxMem.single('file')(req, res, function (err) {
+    if (err) {
+      var msg = err && err.message ? err.message : 'Upload failed';
+      if (err.code === 'LIMIT_FILE_SIZE') msg = 'File too large (max 20 MB).';
+      return res.status(400).json({ ok: false, error: msg });
+    }
+    next();
+  });
+}
+
+app.post('/api/import/catalog-xlsx', uploadCatalogXlsx, async (req, res) => {
+  if (!catalogAuthConfigured()) {
     return res.status(503).json({
       ok: false,
-      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET or CF_INGEST_SECRET in .env',
+      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET / CF_INGEST_SECRET or CATALOG_UPLOAD_PASS in .env',
     });
   }
-  var secret = String(req.headers['x-ingest-secret'] || '').trim();
-  if (!secret || secret !== CATALOG_INGEST_SECRET) {
-    return res.status(401).json({ ok: false, error: 'Unauthorized import request' });
+  if (!catalogPassAuthorized(req)) {
+    return res.status(401).json({ ok: false, error: 'Wrong or missing catalog pass.' });
   }
   if (!req.file || !req.file.buffer) {
     return res.status(400).json({ ok: false, error: 'Missing file upload (.xlsx)' });
@@ -2525,9 +2726,67 @@ app.post('/api/import/catalog-xlsx', uploadXlsxMem.single('file'), (req, res) =>
     attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
     io.emit('catalog_update', { version: catalogCloudVersion });
-    res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
+
+    // Persist the uploaded workbook so the new items survive a restart (prev file backed up).
+    let persisted = false;
+    let backup = null;
+    let persistWarning = '';
+    try {
+      const p = persistUploadedCatalogXlsx(req.file.buffer);
+      persisted = !!p.persisted;
+      backup = p.backup || null;
+      if (p.persisted) {
+        console.log('[catalog-xlsx] Saved uploaded catalog to', p.path, '(' + abayaCatalog.length + ' items)' +
+          (backup ? '; backed up previous to ' + backup : ''));
+      }
+    } catch (e) {
+      persistWarning = 'Catalog updated in memory but could not be saved to disk: ' + (e && e.message ? e.message : String(e));
+      console.error('[catalog-xlsx] Persist failed:', e);
+    }
+
+    // In cloud-live mode the Worker is the source of truth and is pulled every 60s;
+    // push the upload so it is not overwritten and reaches cloud kiosks.
+    const cloud = await pushCatalogToCloud(abayaCatalog);
+    let cloudWarning = '';
+    if (cloud.pushed) {
+      console.log('[catalog-xlsx] Pushed uploaded catalog to cloud Worker (' + abayaCatalog.length + ' items)');
+    } else if (cloud.reason !== 'cloud-not-configured') {
+      cloudWarning = 'Catalog updated locally but cloud sync failed: ' + (cloud.error || 'unknown') +
+        '. The next cloud refresh may revert it — check CF_WORKER_URL / CF_INGEST_SECRET.';
+      console.warn('[catalog-xlsx] Cloud push failed:', cloud.error);
+    }
+
+    const out = {
+      ok: true,
+      version: catalogCloudVersion,
+      count: abayaCatalog.length,
+      persisted: persisted,
+      cloudPushed: !!cloud.pushed,
+    };
+    if (backup) out.backup = path.basename(backup);
+    if (persistWarning) out.warning = persistWarning;
+    if (cloudWarning) out.cloudWarning = cloudWarning;
+    res.json(out);
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message || 'Could not parse uploaded xlsx' });
+  }
+});
+
+/**
+ * Download the current catalog as an items_export-style .xlsx. Lets the operator keep an
+ * original copy on their own laptop (a client-side backup) before replacing the catalog.
+ * Read-only, same as GET /api/catalog/abayas — no secret required.
+ */
+app.get('/api/catalog/export.xlsx', (req, res) => {
+  try {
+    const buf = buildCatalogXlsxBuffer(abayaCatalog);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="items_export_' + stamp + '.xlsx"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message || 'Could not build catalog xlsx' });
   }
 });
 
@@ -2561,6 +2820,18 @@ app.get('/api/release-moment', (req, res) => {
   } catch (_) {
     return res.json({ enabled: false });
   }
+});
+
+/** Lightweight probe for kiosk LAN checks, synthetic monitors, and SLA measurement. */
+app.get('/api/health', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    service: 'abaya-track-factory',
+    floorKioskTransport: 'http',
+    ts: Date.now(),
+    uptimeMs: Date.now() - SERVER_STARTED_AT,
+  });
 });
 
 /** Returns detected LAN IPs and server port so the setup page can build kiosk URLs. */
