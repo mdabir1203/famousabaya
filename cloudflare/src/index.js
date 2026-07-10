@@ -210,7 +210,10 @@ export default {
       }
 
       if (path === '/api/report' && request.method === 'GET') {
-        return handleReport(env, url);
+        // Await so report/D1 failures stay inside this try/catch and return JSON.
+        // Without await, rejected report promises escape to the Worker runtime, which
+        // can render an HTML error page that the dashboard then tries to parse as JSON.
+        return await handleReport(env, url);
       }
 
       if (path === '/api/settings/working-hours' && request.method === 'PUT') {
