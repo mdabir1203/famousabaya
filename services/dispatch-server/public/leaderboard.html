@@ -259,6 +259,34 @@ textarea{resize:vertical;min-height:56px}
 .notif-dot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--rd);display:none;border:2px solid var(--s1)}
 .notif-btn.has-new .notif-dot{display:block}
 
+
+/* ── Upload invoice section ───────────────────────────────────────────────── */
+.app-shell{padding:16px 18px 0;max-width:1600px;margin:0 auto}
+.upload-card{background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(106,95,193,.08));border:1px solid var(--bd);border-radius:18px;padding:18px;box-shadow:rgba(22,15,36,.28) 0 10px 36px;display:grid;grid-template-columns:minmax(260px,1.15fr) minmax(220px,.85fr);gap:16px;align-items:stretch}
+.upload-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:12px}
+.upload-kicker{font-size:11px;color:var(--pu);text-transform:uppercase;letter-spacing:.12em;font-weight:800;margin-bottom:4px}
+.upload-title{font-family:var(--fn-display);font-size:21px;font-weight:800;letter-spacing:-.45px}
+.upload-copy{font-size:13px;color:var(--tx3);line-height:1.55;margin-top:5px;max-width:58ch}
+.upload-pill{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:999px;background:var(--grb);border:1px solid rgba(194,239,78,.28);color:var(--gr);font-size:11px;font-weight:800;white-space:nowrap}
+.upload-pill-dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px rgba(194,239,78,.12)}
+.upload-dropzone{position:relative;border:1.5px dashed rgba(167,139,250,.55);border-radius:16px;background:rgba(21,15,35,.58);min-height:148px;display:flex;align-items:center;justify-content:center;text-align:center;padding:22px;transition:border-color .18s,background .18s,transform .18s}
+.upload-dropzone:hover{border-color:var(--gr);background:rgba(194,239,78,.07);transform:translateY(-1px)}
+.upload-dropzone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-icon{font-size:34px;margin-bottom:8px}
+.upload-primary{display:block;font-family:var(--fn-display);font-weight:800;font-size:17px;margin-bottom:3px}
+.upload-secondary{display:block;font-size:13px;color:var(--tx3)}
+.upload-hint{display:block;font-size:11px;color:var(--tx3);margin-top:10px}
+.upload-status-card{background:rgba(21,15,35,.5);border:1px solid var(--bd);border-radius:16px;padding:14px}
+.upload-status-title{font-size:12px;color:var(--tx3);font-weight:800;text-transform:uppercase;letter-spacing:.09em;margin-bottom:10px}
+.upload-status-list{display:flex;flex-direction:column;gap:8px}
+.upload-status-item{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--tx2);line-height:1.35}
+.upload-status-check{width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--grb);border:1px solid rgba(194,239,78,.35);color:var(--gr);font-size:12px;font-weight:900;flex-shrink:0}
+.upload-status-muted{color:var(--tx3);font-size:12px;margin-top:12px;line-height:1.55}
+.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0 10px}
+.section-heading-title{font-family:var(--fn-display);font-size:18px;font-weight:800;letter-spacing:-.3px}
+.section-heading-sub{font-size:12px;color:var(--tx3)}
+@media(max-width:780px){.upload-card{grid-template-columns:1fr}.upload-head{flex-direction:column}.app-shell{padding:12px 14px 0}}
+
 /* ── Stats bar ─────────────────────────────────────────────────────────────── */
 .stats-bar{display:flex;align-items:center;gap:12px;padding:8px 18px;background:var(--s2);border-bottom:1px solid var(--bd);overflow-x:auto;scrollbar-width:none;flex-shrink:0}
 .stats-bar::-webkit-scrollbar{display:none}
@@ -341,6 +369,39 @@ textarea{resize:vertical;min-height:56px}
   </div>
 </div>
 
+<section class="app-shell" aria-label="AbaYa Dispatch workspace">
+  <div class="upload-card" aria-labelledby="uploadInvoiceTitle">
+    <div>
+      <div class="upload-head">
+        <div>
+          <div class="upload-kicker">Dispatch intake</div>
+          <h1 class="upload-title" id="uploadInvoiceTitle">📄 Upload Invoice</h1>
+          <p class="upload-copy">Drop a supplier PDF here to start the single-page dispatch workflow. The upload action lives directly above the live leaderboard, so new invoices can appear without redirecting away from this page.</p>
+        </div>
+        <span class="upload-pill"><span class="upload-pill-dot"></span>Ready for Step 2 wiring</span>
+      </div>
+      <label class="upload-dropzone" for="invoicePdfInput">
+        <input id="invoicePdfInput" type="file" accept="application/pdf,.pdf" aria-describedby="uploadPdfHint">
+        <span>
+          <span class="upload-icon" aria-hidden="true">📎</span>
+          <span class="upload-primary">Drag PDF here</span>
+          <span class="upload-secondary">or click to browse</span>
+          <span class="upload-hint" id="uploadPdfHint">PDF invoices only. Extraction, progress, and auto-clear behavior will be added in the next blocks.</span>
+        </span>
+      </label>
+    </div>
+    <aside class="upload-status-card" aria-labelledby="uploadStatusTitle">
+      <div class="upload-status-title" id="uploadStatusTitle">Upload Status</div>
+      <div class="upload-status-list">
+        <div class="upload-status-item"><span class="upload-status-check">✓</span><span>Invoice upload area is now part of the leaderboard application.</span></div>
+        <div class="upload-status-item"><span class="upload-status-check">✓</span><span>No separate upload page or back-navigation workflow.</span></div>
+        <div class="upload-status-item"><span class="upload-status-check">✓</span><span>Next: connect PDF upload, extraction, and live refresh.</span></div>
+      </div>
+      <p class="upload-status-muted">Target success flow: invoice uploaded → abayas detected → added to leaderboard → live for everyone.</p>
+    </aside>
+  </div>
+</section>
+
 <!-- ACTION BAR -->
 <div class="action-bar">
   <button class="btn btn-primary" id="btnAddLoad">+ Add Invoice</button>
@@ -368,6 +429,12 @@ textarea{resize:vertical;min-height:56px}
 
 <!-- LOADS GRID -->
 <main class="loads-wrap" id="main-content" aria-label="Active delivery invoices">
+  <div class="section-heading">
+    <div>
+      <div class="section-heading-title">📊 Active Leaderboard</div>
+      <div class="section-heading-sub">Invoices are sorted by urgency and updated live.</div>
+    </div>
+  </div>
   <div
     class="loads-grid"
     id="loadsGrid"
