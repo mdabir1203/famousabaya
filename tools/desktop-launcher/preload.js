@@ -21,6 +21,15 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
   reconcileNow() {
     return ipcRenderer.invoke('reconcile-now');
   },
+  startDispatch() {
+    return ipcRenderer.invoke('dispatch-start');
+  },
+  stopDispatch() {
+    return ipcRenderer.invoke('dispatch-stop');
+  },
+  dispatchStatus() {
+    return ipcRenderer.invoke('dispatch-status');
+  },
   openUrl(url) {
     return ipcRenderer.invoke('open-url', url);
   },
