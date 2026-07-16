@@ -1,0 +1,47 @@
+{
+  // Root config for Cloudflare Workers Builds (Git integration deploys the
+  // "abaya-track" service from the repo root). MUST stay in sync with
+  // cloudflare/wrangler.toml, which local deploys (cloudflare/DEPLOY.ps1) use.
+  // The old kiosk-assets config ("abaya-server") moved to kiosk-pwa/wrangler.jsonc.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "abaya-track",
+  "main": "cloudflare/src/index.js",
+  "compatibility_date": "2024-11-01",
+  "account_id": "cac65f11aecab7f7dc4446390d49f4f2",
+
+  "routes": [
+    { "pattern": "dashboard.farewellabaya.com", "custom_domain": true }
+  ],
+
+  "vars": {
+    "FACTORY_TZ": "Asia/Dubai",
+    "FACTORY_TUNNEL_URL": "",
+    "DEFAULT_CATALOG_PROCESS": "Tailor (01)",
+    "CEO_CREDENTIAL_VERSION": "1"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "abaya-db",
+      "database_id": "5d61fb15-2ead-491b-80e2-fe2b2fd46d23"
+    }
+  ],
+
+  "triggers": {
+    "crons": ["0 14 * * *", "* * * * *"]
+  },
+
+  "ratelimits": [
+    { "name": "INGEST_RATE_LIMIT", "namespace_id": "18701", "simple": { "limit": 3000, "period": 60 } },
+    { "name": "CATALOG_PUT_RATE_LIMIT", "namespace_id": "18702", "simple": { "limit": 120, "period": 60 } },
+    { "name": "CEO_READ_RATE_LIMIT", "namespace_id": "18703", "simple": { "limit": 800, "period": 60 } }
+  ],
+
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+}
