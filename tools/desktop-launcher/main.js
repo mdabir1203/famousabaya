@@ -104,6 +104,7 @@ function readReleaseMomentForLauncher() {
 let mainWindow = null;
 let serverProc = null;
 let watcherProc = null;
+let dispatchProc = null;
 let allowWindowClose = false;
 /** After one LAN feed error, fall back to GitHub once per process (electron-updater). */
 let githubFallbackAfterLanError = false;
@@ -922,6 +923,7 @@ function pipeChild(proc, which) {
     sendLog(which, '\n--- process exited (' + String(code) + ') ---\n');
     if (which === 'server') serverProc = null;
     if (which === 'watcher') watcherProc = null;
+    if (which === 'dispatch') dispatchProc = null;
   });
   proc.on('error', function (err) {
     sendLog(which, '\n[spawn error] ' + String(err.message) + '\n');
@@ -1103,6 +1105,25 @@ function spawnWatcher() {
   return spawn('node', ['-r', './.pnp.cjs', 'watch-catalog.js'], opts);
 }
 
+// ── Dispatch (Bun) server — WhatsApp leaderboard / invoice upload ─────────────
+const DISPATCH_PORT = 3111;
+const DISPATCH_DIR = path.join(REPO_ROOT, 'services', 'dispatch-server');
+
+/** The per-user Bun install, else `bun` on PATH. */
+function resolveBunBin() {
+  const p = path.join(os.homedir(), '.bun', 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
+  return fs.existsSync(p) ? p : 'bun';
+}
+
+function dispatchCanStart() {
+  return fs.existsSync(path.join(DISPATCH_DIR, 'server.js'));
+}
+
+function spawnDispatchServer() {
+  // Bun runs server.js directly and auto-loads services/dispatch-server/.env — no PnP.
+  return spawn(resolveBunBin(), ['server.js'], { cwd: DISPATCH_DIR, shell: false, env: buildChildEnv() });
+}
+
 /**
  * Stop a child tree (yarn → node); Windows uses taskkill /T.
  * @param {import('child_process').ChildProcess | null} proc
@@ -1127,6 +1148,8 @@ function stopAllProcs() {
   watcherProc = null;
   killTree(serverProc);
   serverProc = null;
+  killTree(dispatchProc);
+  dispatchProc = null;
   // Ensure clean restart path: free server port even if stray process remains.
   ensurePortFreedSync(FACTORY_PORT, []);
 }
@@ -1436,4 +1459,42 @@ ipcMain.handle('stop-all', async function () {
   }
   stopAllProcs();
   return { ok: true };
+});
+
+ipcMain.handle('dispatch-start', async function () {
+  if (!dispatchCanStart()) {
+    return { ok: false, error: 'dispatch server.js not found: ' + DISPATCH_DIR };
+  }
+  if (pidAlive(dispatchProc)) return { ok: true, already: true };
+  // Respect an externally-started dispatch (e.g. START-BUN.bat) — do not spawn a rival.
+  if (listPidsListeningOnPort(DISPATCH_PORT).length) {
+    sendLog('dispatch', '[launcher] A dispatch server is already listening on ' + DISPATCH_PORT + ' — leaving it as is.\n');
+    return { ok: true, already: true, external: true };
+  }
+  try {
+    dispatchProc = spawnDispatchServer();
+    pipeChild(dispatchProc, 'dispatch');
+    sendLog('dispatch', '[launcher] Started dispatch (Bun) on port ' + DISPATCH_PORT + ' — ' + DISPATCH_DIR + '\n');
+    return { ok: true, pid: dispatchProc.pid, port: DISPATCH_PORT };
+  } catch (e) {
+    dispatchProc = null;
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+});
+
+ipcMain.handle('dispatch-stop', async function () {
+  // Only stop what the launcher itself started — never a dispatch someone ran another way.
+  if (!pidAlive(dispatchProc)) {
+    return { ok: true, already: true, note: 'not launcher-owned' };
+  }
+  killTree(dispatchProc);
+  dispatchProc = null;
+  sendLog('dispatch', '[launcher] Dispatch stopped.\n');
+  return { ok: true };
+});
+
+ipcMain.handle('dispatch-status', function () {
+  const owned = pidAlive(dispatchProc);
+  const listening = listPidsListeningOnPort(DISPATCH_PORT).length > 0;
+  return { running: owned || listening, launcherOwned: owned, external: !owned && listening, port: DISPATCH_PORT };
 });

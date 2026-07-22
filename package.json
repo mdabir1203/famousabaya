@@ -5,6 +5,7 @@
   "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
   "main": "server.js",
   "scripts": {
+    "build": "echo \"No build step: wrangler bundles the Worker during 'versions upload'.\"",
     "setup": "node install/setup.cjs",
     "launcher": "node scripts/run-launcher.cjs",
     "start": "node server.js",
