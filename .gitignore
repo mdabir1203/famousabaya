@@ -13,6 +13,13 @@ tools/desktop-launcher/out/
 tools/desktop-launcher/dist/
 *.tsbuildinfo
 
+# Desktop launcher runs on the node-modules linker; its regenerable Yarn state
+# (install-state.gz, cache) must not be tracked. Root `.yarn/*` is path-anchored
+# and does not reach this subdirectory, so ignore it explicitly.
+tools/desktop-launcher/.yarn/
+# Portable Node.js downloaded by START.bat on machines without a system Node.
+/.bin/
+
 # ─── Regenerable artifacts (binary in git ⇒ merge conflicts) ──────────────────
 # SQLite snapshots are rebuilt by shared/sqlite-snapshot.cjs — never commit the .db.
 data/sqlite-snapshots/*.db
