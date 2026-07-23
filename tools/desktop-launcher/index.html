@@ -244,7 +244,7 @@
     .brand h1 { margin: 0; font-size: 15px; letter-spacing: .02em; font-weight: 700; }
     .brand p { margin: 3px 0 0; font-size: 11px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
     .status-pill {
-      margin-left: auto;
+      margin-left: 10px;
       font-size: 10px;
       letter-spacing: .12em;
       text-transform: uppercase;
@@ -256,6 +256,34 @@
     }
     .status-pill.running { background: rgba(191,246,92,0.14); color: var(--ok); border-color: rgba(191,246,92,0.3); }
     .status-pill.partial { background: rgba(255,210,115,0.16); color: var(--warn); border-color: rgba(255,210,115,0.26); }
+
+    .mode-toggle {
+      margin-left: auto;
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.10);
+      gap: 2px;
+    }
+    .mode-seg {
+      appearance: none;
+      cursor: pointer;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 999px;
+      transition: background .15s, color .15s;
+    }
+    .mode-seg:hover { color: #fff; }
+    .mode-seg.active[data-mode='production'] { background: rgba(191,246,92,0.18); color: var(--ok); }
+    .mode-seg.active[data-mode='development'] { background: rgba(255,210,115,0.20); color: var(--warn); }
+    .mode-seg[disabled] { opacity: .5; cursor: default; }
 
     .release-spotlight {
       position: relative;
@@ -604,6 +632,11 @@
       <div class='brand'>
         <h1>AbaYa Track Control</h1>
         <p>Process Orchestrator</p>
+      </div>
+      <div id='modeToggle' class='mode-toggle' role='group' aria-label='Runtime mode'
+           title='Production: updater on, NODE_ENV=production. Development: updates disabled.'>
+        <button type='button' id='modeProd' class='mode-seg active' data-mode='production'>Production</button>
+        <button type='button' id='modeDev' class='mode-seg' data-mode='development'>Development</button>
       </div>
       <div id='statusBadge' class='status-pill'>Stopped</div>
     </header>

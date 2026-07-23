@@ -36,6 +36,12 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
   getDefaults() {
     return ipcRenderer.invoke('get-defaults');
   },
+  getMode() {
+    return ipcRenderer.invoke('get-mode');
+  },
+  setMode(mode) {
+    return ipcRenderer.invoke('set-mode', mode);
+  },
   getReleaseMoment() {
     return ipcRenderer.invoke('get-release-moment');
   },
