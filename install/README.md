@@ -11,13 +11,26 @@ It is safe to run again any time (idempotent). On the first run it:
    system-wide).
 2. Installs app dependencies (`corepack` + `yarn`).
 3. Creates `.env` from `.env.example` if missing.
-4. Registers **auto-start on login** (a per-user Startup shortcut — no admin).
-5. Starts the server (hidden, auto-restarts if it crashes) and waits until it is
-   healthy.
-6. Opens the **dashboard** and **kiosk** in your browser.
+4. Registers **auto-start on login** (per-user Startup shortcuts — no admin).
+5. Starts the **factory server** (port 3000) hidden + auto-restart, and — if Bun is
+   installed — the **dispatch server** (port 3111: leaderboard, invoice upload,
+   WhatsApp). A dispatch server already running on 3111 is left untouched.
+6. Checks the LAN firewall rule and tells you if tablets are still blocked.
+7. Opens the **dashboard** and **kiosk** in your browser.
+
+Both servers bind to all interfaces, so tablets reach them at
+`http://<this-laptop-LAN-IP>:3000` and `:3111` — no IP configuration needed.
 
 To **disable auto-start** for a run: set `ABAYA_SKIP_AUTOSTART=1` before launching,
-or delete `…\Startup\AbaYa Track Server.lnk`.
+or delete the `…\Startup\AbaYa Track Server.lnk` / `AbaYa Track Dispatch.lnk` shortcuts.
+
+## Let tablets connect (firewall — one time, needs admin)
+
+Windows Firewall can block inbound LAN connections on a fresh laptop. To allow
+tablets on the same Wi-Fi to reach ports 3000 and 3111, right-click
+**`install\OPEN-LAN-FIREWALL.ps1` → Run with PowerShell (as administrator)** once.
+`START.bat` detects when this rule is missing and reminds you. (It can't add the rule
+itself — changing the firewall requires admin.)
 
 ## Cloud data on a new laptop
 
@@ -81,8 +94,8 @@ Only `START.bat` is needed for normal use. The rest are optional, situational to
   `CHECK-PM2-STATUS.ps1`, `pm2-start.bat` + root `ecosystem.config.cjs`.
 - **Scheduled-task autostart**: `REGISTER-STARTUP-SCHEDULER.ps1` /
   `UNREGISTER-STARTUP-SCHEDULER.ps1`.
-- **Networking**: `SETUP-CLOUDFLARE-TUNNEL-FACTORY-API.ps1`, `SETUP-TAILSCALE.ps1`,
-  `ENSURE/OPEN/VERIFY-LAN-FIREWALL.*`.
+- **Networking**: `OPEN-LAN-FIREWALL.ps1` (tablets — see above),
+  `SETUP-CLOUDFLARE-TUNNEL-FACTORY-API.ps1`, `SETUP-TAILSCALE.ps1`.
 - **Runtime picker (Bun/Node)**: `PICK-RUNTIME.bat`, `RUNTIME-COMMON.bat`.
 - **Tablet diagnostics**: `CHECK-TABLET-LOG.ps1`, `DIAGNOSE-TABLET-LAN.bat`,
   `PRINT-LAN-TABLET-URL.bat`.

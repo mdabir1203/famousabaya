@@ -20,8 +20,8 @@ tools/desktop-launcher/.yarn/
 # Portable Node.js downloaded by START.bat on machines without a system Node.
 /.bin/
 # Runner files generated at install time by install/lib/bootstrap.cjs.
-install/run-server.bat
-install/silent-runner.vbs
+install/run-*.bat
+install/silent-*.vbs
 
 # ─── Regenerable artifacts (binary in git ⇒ merge conflicts) ──────────────────
 # SQLite snapshots are rebuilt by shared/sqlite-snapshot.cjs — never commit the .db.
