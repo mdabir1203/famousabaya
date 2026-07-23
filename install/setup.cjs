@@ -149,32 +149,24 @@ if (!fs.existsSync(envPath) && fs.existsSync(example)) {
 }
 
 if (process.platform === 'win32') {
-  const bat = path.join(installDir, 'LAUNCH-ALL.bat');
-  const guiBat = path.join(installDir, 'START-Launcher-GUI.bat');
+  const startBat = path.join(root, 'START.bat');
   const vbs = path.join(os.tmpdir(), 'abaya-create-shortcut.vbs');
   const esc = (p) => p.replace(/"/g, '""');
   const body = [
     'Set sh = CreateObject("WScript.Shell")',
     `Set sc = sh.CreateShortcut(sh.SpecialFolders("Desktop") & "\\AbaYa Track.lnk")`,
-    `sc.TargetPath = "${esc(bat)}"`,
-    `sc.WorkingDirectory = "${esc(installDir)}"`,
-    'sc.Description = "AbaYa Track — factory server, kiosk, dashboard"',
+    `sc.TargetPath = "${esc(startBat)}"`,
+    `sc.WorkingDirectory = "${esc(root)}"`,
+    'sc.Description = "AbaYa Track — install, auto-start, and run (server + kiosk + dashboard)"',
     'sc.Save',
-    `Set sc2 = sh.CreateShortcut(sh.SpecialFolders("Desktop") & "\\AbaYa Track Launcher.lnk")`,
-    `sc2.TargetPath = "${esc(guiBat)}"`,
-    `sc2.WorkingDirectory = "${esc(installDir)}"`,
-    'sc2.Description = "AbaYa Track — launcher control panel"',
-    'sc2.Save',
   ].join('\r\n');
   try {
     fs.writeFileSync(vbs, body, 'utf8');
     const r = spawnSync('cscript', ['//nologo', vbs], { stdio: 'inherit', shell: true });
     if (r.status === 0) {
-      console.log('\n  Desktop shortcuts created:');
-      console.log('    - AbaYa Track.lnk → LAUNCH-ALL.bat');
-      console.log('    - AbaYa Track Launcher.lnk → START-Launcher-GUI.bat');
+      console.log('\n  Desktop shortcut created: AbaYa Track.lnk → START.bat');
     } else {
-      console.warn('\n  Could not create Desktop shortcut (non-fatal). Run install\\LAUNCH-ALL.bat manually.');
+      console.warn('\n  Could not create Desktop shortcut (non-fatal). Double-click START.bat manually.');
     }
   } catch (e) {
     console.warn('\n  Shortcut:', e.message);
