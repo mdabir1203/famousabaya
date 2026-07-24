@@ -41,10 +41,17 @@ const COMMON_RESTART = {
   watch: false,
 };
 
-/** Pick yarn-pnp loader if it exists; otherwise plain node. */
+/**
+ * Pick the yarn-pnp loader when the project uses PnP; otherwise plain node.
+ *
+ * This repo is PnP (`nodeLinker: pnp`), so the root has `.pnp.cjs` and no real
+ * `node_modules`. Launching `node server.js` without `-r ./.pnp.cjs` fails with
+ * `Cannot find module 'dotenv'` and PM2 crash-loops. Note a stray
+ * `node_modules/.cache` can exist without any dependencies, so presence of the
+ * directory is NOT a reliable signal — key off `.pnp.cjs`.
+ */
 function resolveNodeArgs() {
-  // Disabled PnP loader — use npm node_modules instead (more reliable on Windows)
-  return [];
+  return fs.existsSync(path.join(ROOT, '.pnp.cjs')) ? ['-r', './.pnp.cjs'] : [];
 }
 
 function logPath(name) {

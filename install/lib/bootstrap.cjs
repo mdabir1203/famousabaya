@@ -53,8 +53,14 @@ function ensureCorepack() {
   if (r.status !== 0) log('corepack enable skipped (already enabled or unavailable).');
 }
 
+/**
+ * A bare `node_modules/.cache` directory can exist with zero dependencies
+ * installed, so directory presence alone is not proof. Require the PnP manifest
+ * or an actually-installed package.
+ */
 function depsPresent() {
-  return fs.existsSync(path.join(ROOT, '.pnp.cjs')) || fs.existsSync(path.join(ROOT, 'node_modules'));
+  if (fs.existsSync(path.join(ROOT, '.pnp.cjs'))) return true;
+  return fs.existsSync(path.join(ROOT, 'node_modules', 'express'));
 }
 
 function ensureDeps() {
@@ -195,6 +201,35 @@ function waitHealth(port, timeoutMs, healthPath) {
   });
 }
 
+/**
+ * PM2 supervisor (opt-in via ABAYA_USE_PM2=1).
+ *
+ * PM2 ships as a project dependency, so `yarn install` already put it in place —
+ * nothing to install separately. It must be driven through install/run-pm2.cjs:
+ * that wrapper points PM2_HOME at data/pm2-home and injects the Yarn PnP loader
+ * via NODE_OPTIONS, which a globally-installed pm2 cannot do (its own internals
+ * fall outside the PnP graph and fail to resolve).
+ */
+function startWithPm2() {
+  const runner = path.join(INSTALL_DIR, 'run-pm2.cjs');
+  if (!fs.existsSync(runner)) {
+    log('PM2 requested but install/run-pm2.cjs is missing — falling back to the standard runner.');
+    return false;
+  }
+  log('Starting under PM2 (supervisor mode)…');
+  const start = spawnSync(process.execPath, [runner, 'start', 'ecosystem.config.cjs', '--update-env'], {
+    stdio: 'inherit',
+    cwd: ROOT,
+    env: process.env,
+  });
+  if (start.status !== 0) {
+    log('PM2 start failed — falling back to the standard runner.');
+    return false;
+  }
+  spawnSync(process.execPath, [runner, 'save'], { stdio: 'ignore', cwd: ROOT, env: process.env });
+  return true;
+}
+
 const FIREWALL_RULE_NAME = 'AbaYa Track LAN';
 
 /** Warn (do not modify — needs admin) if the LAN firewall rule is missing. */
@@ -237,11 +272,21 @@ async function main() {
   }
 
   // ── Factory server (port 3000) ──────────────────────────────────────────────
-  const factory = writeRunner('server', ROOT, serverInvocation());
-  registerAutostart('AbaYa Track Server', factory.runnerVbs);
-  log('Starting factory server on port ' + port + '…');
-  killPriorOnPort(port);
-  startServerHidden(factory.runnerVbs);
+  // PM2 supervises the factory server (and catalog watcher) when opted in;
+  // otherwise the hidden self-restarting runner + Startup shortcut is used.
+  const usePm2 = String(process.env.ABAYA_USE_PM2 || '') === '1';
+  let startedByPm2 = false;
+  if (usePm2) {
+    killPriorOnPort(port);
+    startedByPm2 = startWithPm2();
+  }
+  if (!startedByPm2) {
+    const factory = writeRunner('server', ROOT, serverInvocation());
+    registerAutostart('AbaYa Track Server', factory.runnerVbs);
+    log('Starting factory server on port ' + port + '…');
+    killPriorOnPort(port);
+    startServerHidden(factory.runnerVbs);
+  }
   const ok = await waitHealth(port, 30000, '/api/health');
   if (!ok) {
     log('WARNING: server did not answer /api/health within 30s. Check install\\run-server.bat output.');

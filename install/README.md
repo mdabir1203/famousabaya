@@ -79,6 +79,37 @@ or an **Administrator** terminal. Without one of those the build stops with
 The portable zip (option 2 above) needs neither and can be produced with
 `install/package-portable.ps1` once `win-unpacked` exists.
 
+## PM2 supervisor (optional)
+
+PM2 is a **project dependency**, so `yarn install` (and therefore `START.bat`) already
+installs it — nothing global to set up. To have `START.bat` run the factory server and
+catalog watcher under PM2 instead of the built-in runner:
+
+```
+set ABAYA_USE_PM2=1
+START.bat
+```
+
+Always drive PM2 through the wrapper — never a globally-installed `pm2`:
+
+```
+node install\run-pm2.cjs list
+node install\run-pm2.cjs logs
+node install\run-pm2.cjs restart abaya-server
+node install\run-pm2.cjs save          # persist the process list
+```
+
+**Why the wrapper is mandatory.** This repo uses Yarn PnP. A global `pm2` cannot
+launch the server (`Cannot find module 'dotenv'`), and forcing the PnP loader onto a
+global pm2 breaks *its own* internals (`pm2-io-bpm`), because they sit outside the
+dependency graph. `install/run-pm2.cjs` solves both: it runs the project-bundled PM2,
+injects the PnP loader via `NODE_OPTIONS`, unplugs PM2 to a real on-disk path (the
+daemon cannot exec from Yarn's zip filesystem), and isolates `PM2_HOME` to
+`data/pm2-home`. Logs land in `data/pm2-logs/`.
+
+Verified: `abaya-server` + `catalog-watcher` come up `online` with 0 restarts,
+`/api/health` returns 200, and killing the process is auto-revived by PM2.
+
 ## Auto-update (OTA)
 
 The packaged app checks for updates on the configured feed. Updates only flow once a
@@ -90,8 +121,7 @@ generic feed via `ABAYA_UPDATE_MIRROR_BASE_URL`) and `publish.releaseType` is
 
 Only `START.bat` is needed for normal use. The rest are optional, situational tools:
 
-- **PM2 service** (boot-before-login, service semantics): `SETUP-PM2-BOOT.ps1`,
-  `CHECK-PM2-STATUS.ps1`, `pm2-start.bat` + root `ecosystem.config.cjs`.
+- **PM2 supervisor** — see below.
 - **Scheduled-task autostart**: `REGISTER-STARTUP-SCHEDULER.ps1` /
   `UNREGISTER-STARTUP-SCHEDULER.ps1`.
 - **Networking**: `OPEN-LAN-FIREWALL.ps1` (tablets — see above),
