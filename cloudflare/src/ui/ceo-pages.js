@@ -750,7 +750,11 @@ function abayaBarcodeForId(abayaId) {
 
 async function loadAbayaCatalog() {
   try {
-    const r = await fetchWithRetry(BASE + '/api/catalog/abayas', { cache: 'no-store' });
+    // The catalog is ~558 KB and changes rarely. The Worker already sends
+    // Cache-Control public, max-age=10, stale-while-revalidate=120, so let the
+    // browser honour it -- no-store was forcing a full re-download on every load
+    // (measured 2.5-4.0s). Freshness is unchanged: edits still appear within ~10s.
+    const r = await fetchWithRetry(BASE + '/api/catalog/abayas');
     const d = await r.json();
     if (d && d.ok && Array.isArray(d.abayas)) {
       ABAYAS = d.abayas.map(function (a) {
