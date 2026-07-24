@@ -1,4 +1,10 @@
 import { handleCatalogAbayasGet, handleCatalogAbayasPut } from './modules/catalog.js';
+import {
+  handleEmployeesGet,
+  handleEmployeesPut,
+  handleWorkTypesGet,
+  handleWorkTypesPut,
+} from './modules/roster.js';
 import { CORS, jsonRes, errRes, CEO_JSON_NO_STORE } from './http-response.js';
 import { rateLimitOr429, rateLimitClientKey } from './ratelimit.js';
 import {
@@ -117,6 +123,28 @@ export default {
       }
     }
 
+    // ── Roster API (employee list + factory work types) ───────────────────────
+    // Same contract as the catalog: open GET so a fresh install can seed itself,
+    // X-Ingest-Secret on PUT. Keeps a new laptop off demo/default data.
+    if (path === '/api/employees' || path === '/api/work-types') {
+      const isEmployees = path === '/api/employees';
+      try {
+        if (request.method === 'GET') {
+          return isEmployees ? await handleEmployeesGet(env, jsonRes) : await handleWorkTypesGet(env, jsonRes);
+        }
+        if (request.method === 'PUT') {
+          const helpers = { errRes, jsonRes, rateLimitOr429 };
+          return isEmployees
+            ? await handleEmployeesPut(request, env, helpers)
+            : await handleWorkTypesPut(request, env, helpers);
+        }
+        return errRes('Method not allowed', 405);
+      } catch (e) {
+        console.error('Roster error:', e);
+        return errRes('Roster error: ' + e.message, 500);
+      }
+    }
+
     if ((path === '/sw.js' || path === '/service-worker.js') && request.method === 'GET') {
       return new Response(getServiceWorkerCleanupScript(), {
         headers: {
@@ -168,7 +196,13 @@ export default {
       path === '/' ||
       path === '/ceo' ||
       path === '/dashboard.html' ||
-      (path.startsWith('/api/') && path !== '/api/event' && path !== '/api/catalog/abayas');
+      (path.startsWith('/api/') &&
+        path !== '/api/event' &&
+        path !== '/api/catalog/abayas' &&
+        // Roster endpoints authenticate with X-Ingest-Secret (factory server),
+        // not the CEO cookie — same exemption the catalog already has.
+        path !== '/api/employees' &&
+        path !== '/api/work-types');
 
     if (isCEORoute) {
       const token = extractCeoToken(request, url);

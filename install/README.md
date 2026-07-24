@@ -40,6 +40,22 @@ itself — changing the firewall requires admin.)
 - **History** lives in the cloud and is viewed on the CEO dashboard
   (`dashboard.farewellabaya.com`); a fresh laptop does not need to download it to
   operate.
+- **Employees + work types now sync too.** They used to be local-only, so a new
+  laptop silently ran on *demo* employees and *default* work types. Now the factory
+  server pushes the roster and work types to the Worker on every change, and a
+  machine with no local roster seeds itself from the cloud on first boot.
+  Requires the D1 migration below.
+  - **Local always wins.** Employees seed only when there is genuinely no
+    `employees.xlsx` and no `data/employees-manual.json`; work types seed only on the
+    boot that first creates `data/work-types.json`. A deliberate local choice is
+    never overwritten.
+  - If no local roster *and* no cloud roster exist, the server now logs a loud
+    warning instead of quietly running on demo employees.
+  - One-time migration (also needed before the Worker can store the roster):
+    ```
+    npx wrangler d1 execute abaya-db --remote --file cloudflare/migrations/0010_employees_work_types.sql
+    ```
+
 - **Optional** — pull full history into a local SQLite store for offline reporting:
   ```
   cd cloudflare

@@ -808,6 +808,13 @@ const DEFAULT_FACTORY_WORK_TYPES = [
 const WORK_TYPES_JSON_PATH = path.join(__dirname, 'data', 'work-types.json');
 let FACTORY_WORK_TYPES = DEFAULT_FACTORY_WORK_TYPES.slice();
 let workTypesDataVersion = 0;
+/**
+ * True only when this boot created data/work-types.json for the first time, i.e.
+ * a genuinely fresh install. Cloud seeding keys off this rather than "the list
+ * equals the defaults" — a factory may legitimately keep the default 12 types, and
+ * comparing content would let the cloud overwrite them on every restart.
+ */
+let workTypesFileWasCreatedThisBoot = false;
 
 function loadFactoryWorkTypesFromDisk() {
   try {
@@ -815,6 +822,7 @@ function loadFactoryWorkTypesFromDisk() {
     if (!fs.existsSync(WORK_TYPES_JSON_PATH)) {
       fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(DEFAULT_FACTORY_WORK_TYPES, null, 2), 'utf8');
       FACTORY_WORK_TYPES = DEFAULT_FACTORY_WORK_TYPES.slice();
+      workTypesFileWasCreatedThisBoot = true;
       console.log('[work-types] Created default file', WORK_TYPES_JSON_PATH);
       return;
     }
@@ -1034,6 +1042,59 @@ async function pushCatalogToCloud(abayas) {
     return { pushed: true };
   } catch (e) {
     return { pushed: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+/**
+ * Roster sync (employees + factory work types).
+ *
+ * These used to be local-only, so a freshly installed laptop silently fell back to
+ * built-in DEMO employees and DEFAULT work types. The local Excel/JSON stays
+ * authoritative — we push it up on every change — and a machine with no local data
+ * seeds itself from the cloud instead of running on demo rows.
+ */
+async function pushRosterToCloud(pathname, payload) {
+  if (!CF_URL || !CF_SECRET) return { pushed: false, reason: 'cloud-not-configured' };
+  const url = String(CF_URL).replace(/\/+$/, '') + pathname;
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Ingest-Secret': CF_SECRET },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(function () { return ''; });
+      return { pushed: false, error: 'Worker HTTP ' + res.status + (txt ? ': ' + txt.slice(0, 160) : '') };
+    }
+    const j = await res.json().catch(function () { return null; });
+    if (j && j.ok === false) return { pushed: false, error: j.error || 'Worker rejected roster' };
+    return { pushed: true, version: j && j.version != null ? String(j.version) : '' };
+  } catch (e) {
+    return { pushed: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+function pushEmployeesToCloud(employees) {
+  return pushRosterToCloud('/api/employees', { employees: employees });
+}
+
+function pushWorkTypesToCloud(workTypes) {
+  return pushRosterToCloud('/api/work-types', { workTypes: workTypes });
+}
+
+/** Fetch a roster collection from the Worker. Returns null when unavailable. */
+async function fetchRosterFromCloud(pathname, key) {
+  if (!CF_URL) return null;
+  const url = String(CF_URL).replace(/\/+$/, '') + pathname;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const j = await res.json().catch(function () { return null; });
+    if (!j || j.ok === false || !Array.isArray(j[key])) return null;
+    return j[key];
+  } catch (_) {
+    return null;
   }
 }
 
@@ -1767,6 +1828,12 @@ app.put('/api/work-types', function (req, res) {
     return res.status(500).json({ ok: false, error: e.message || 'Could not save work-types.json' });
   }
   emitWorkTypesChanged();
+  // Keep the cloud copy current so a newly installed laptop seeds real work types.
+  void pushWorkTypesToCloud(FACTORY_WORK_TYPES.slice()).then(function (r) {
+    if (!r.pushed && r.reason !== 'cloud-not-configured') {
+      console.warn('[work-types] cloud push failed (local save kept):', r.error);
+    }
+  });
   return res.json({ ok: true, workTypes: FACTORY_WORK_TYPES.slice(), version: workTypesDataVersion });
 });
 
@@ -2370,6 +2437,13 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     saveEmployeesToManualFile();
     emitEmployeesChanged();
   }
+  // Mirror the new roster to the cloud (both the xlsx-master and manual paths) so a
+  // freshly installed laptop can seed itself instead of using demo employees.
+  void pushEmployeesToCloud(EMPLOYEES).then(function (r) {
+    if (!r.pushed && r.reason !== 'cloud-not-configured') {
+      console.warn('[employees] cloud push failed (local save kept):', r.error);
+    }
+  });
 }
 
 // Catalog path priority:
@@ -3165,6 +3239,62 @@ function startExcelFileWatchers() {
 
 loadFactoryWorkTypesFromDisk();
 
+/**
+ * Fresh-install seeding. A new laptop has no employees.xlsx and no
+ * data/employees-manual.json, so EMPLOYEES would still be the built-in DEMO list —
+ * a silent, dangerous default for a real factory. Same for work types, which get
+ * written out as DEFAULT_FACTORY_WORK_TYPES on first boot.
+ *
+ * Local data always wins: we only pull when the local source is genuinely absent
+ * (employees) or still byte-identical to the shipped defaults (work types). Once
+ * seeded we persist locally so the next boot is offline-safe.
+ */
+async function seedRosterFromCloudIfLocalMissing() {
+  if (!CF_URL) return;
+
+  // ── Employees ──
+  const hasXlsx = !!EMPLOYEES_XLSX_PATH && fs.existsSync(
+    path.isAbsolute(EMPLOYEES_XLSX_PATH) ? EMPLOYEES_XLSX_PATH : path.join(__dirname, EMPLOYEES_XLSX_PATH)
+  );
+  const hasManual = fs.existsSync(EMPLOYEES_MANUAL_PATH);
+  if (!hasXlsx && !hasManual) {
+    const cloudEmployees = await fetchRosterFromCloud('/api/employees', 'employees');
+    if (cloudEmployees && cloudEmployees.length) {
+      EMPLOYEES = cloudEmployees;
+      rebuildACMap();
+      EMP_PERF = EMPLOYEES.map(function (e) {
+        return { id: e.id, units: 0, eff: 0, act: 0, idl: 0 };
+      });
+      saveEmployeesToManualFile();
+      console.log('[roster-seed] Seeded', EMPLOYEES.length, 'employees from the cloud (no local employees file).');
+    } else {
+      console.warn(
+        '[roster-seed] WARNING: running on built-in DEMO employees. Set EMPLOYEES_XLSX_PATH (or EXCEL_DATA_DIR) ' +
+        'to the real employees.xlsx, or push the roster to the cloud from the main factory laptop.'
+      );
+    }
+  }
+
+  // ── Work types ──
+  // Only on a genuinely fresh install (file created this boot). Never compare
+  // against the defaults: a factory may deliberately keep them, and the cloud copy
+  // must not silently replace a deliberate local choice on every restart.
+  if (workTypesFileWasCreatedThisBoot) {
+    const cloudTypes = await fetchRosterFromCloud('/api/work-types', 'workTypes');
+    if (cloudTypes && cloudTypes.length) {
+      FACTORY_WORK_TYPES = cloudTypes;
+      workTypesDataVersion++;
+      try {
+        fs.mkdirSync(path.dirname(WORK_TYPES_JSON_PATH), { recursive: true });
+        fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(FACTORY_WORK_TYPES, null, 2), 'utf8');
+      } catch (e) {
+        console.warn('[roster-seed] Could not persist work types:', e.message);
+      }
+      console.log('[roster-seed] Seeded', FACTORY_WORK_TYPES.length, 'work types from the cloud.');
+    }
+  }
+}
+
 // START SERVER
 server.listen(PORT, () => {
   ensurePublicUploadDirs();
@@ -3181,6 +3311,7 @@ server.listen(PORT, () => {
   attachEmployeeImagesFromDisk();
   attachItemImagesFromDisk();
   loadEmployeesFromManualFile();
+  void seedRosterFromCloudIfLocalMissing();
   const lanIPs = getLanIPs();
   const lanIp = lanIPs.length ? lanIPs[0].address : 'localhost';
   console.log(`Abaya Central Server running on http://localhost:${PORT}`);
