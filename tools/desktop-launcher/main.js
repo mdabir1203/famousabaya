@@ -20,6 +20,8 @@ const RELEASE_MOMENT_PATH = path.join(REPO_ROOT, 'config', 'release-moment.json'
 const UPDATE_AUDIT_LOG_PATH = path.join(LAUNCHER_DATA_DIR, 'update-events.jsonl');
 const UPDATE_META_PATH = path.join(LAUNCHER_DATA_DIR, 'pending-update.json');
 const LAUNCHER_PKG_PATH = path.join(__dirname, 'package.json');
+const APP_MODE_PATH = path.join(REPO_ROOT, 'config', 'app-mode.json');
+const DEFAULT_APP_MODE = 'production';
 const DEFAULT_UPDATE_POLICY = {
   defaultChannel: 'stable',
   betaPercent: 0,
@@ -111,6 +113,37 @@ let githubFallbackAfterLanError = false;
 const FACTORY_PORT = readPortFromDotenv(REPO_ROOT);
 let updateCheckTimer = null;
 let updatePolicy = Object.assign({}, DEFAULT_UPDATE_POLICY);
+/**
+ * App mode — 'production' (default) or 'development'. Production sets NODE_ENV
+ * on all spawned servers and enables the auto-updater; development disables
+ * updates and marks child processes as dev. Toggled from the GUI, persisted.
+ */
+let appMode = DEFAULT_APP_MODE;
+function loadAppMode() {
+  const o = readJsonFileSafe(APP_MODE_PATH);
+  const m = o && String(o.mode || '').toLowerCase();
+  return m === 'development' ? 'development' : 'production';
+}
+function saveAppMode(mode) {
+  const m = String(mode || '').toLowerCase() === 'development' ? 'development' : 'production';
+  try {
+    fs.mkdirSync(path.dirname(APP_MODE_PATH), { recursive: true });
+    fs.writeFileSync(APP_MODE_PATH, JSON.stringify({ mode: m }, null, 2));
+  } catch (_) {}
+  appMode = m;
+  return m;
+}
+function isProductionMode() {
+  return appMode === 'production';
+}
+function hasDevUpdateConfig() {
+  try {
+    return fs.existsSync(path.join(__dirname, 'dev-app-update.yml'));
+  } catch (_) {
+    return false;
+  }
+}
+appMode = loadAppMode();
 let updateFailureCount = 0;
 /** @type {{ from: string } | null} */
 let pendingUpdateApplyResult = null;
@@ -626,12 +659,18 @@ function setupAutoUpdates() {
   updatePolicy = loadUpdatePolicy();
   const channel = getDesiredUpdateChannel();
   const isPackaged = app.isPackaged;
-  if (!isPackaged) {
+  // Updates run only in production. From source (unpackaged) they additionally
+  // require a dev-app-update.yml, per electron-updater.
+  const updatesDisabled = appMode === 'development' || (!isPackaged && !hasDevUpdateConfig());
+  if (updatesDisabled) {
     const patch = {
       enabled: false,
       channel: channel,
       phase: 'disabled',
-      message: 'Updates disabled in development mode',
+      message:
+        appMode === 'development'
+          ? 'Development mode — updates disabled'
+          : 'Production (from source) — add dev-app-update.yml or use the packaged .exe to enable updates',
       updateFeedSource: 'n/a',
       updateMirrorBaseUrl: '',
       updateMirrorFeedUrl: '',
@@ -643,10 +682,17 @@ function setupAutoUpdates() {
       pendingUpdateApplyResult = null;
       patch.updateJustApplied = true;
       patch.updateAppliedFromVersion = from;
-      patch.message = 'Update applied successfully (dev build). Version ' + app.getVersion() + '.';
+      patch.message = 'Update applied successfully. Version ' + app.getVersion() + '.';
     }
     setUpdateState(patch);
     return;
+  }
+
+  // Production from source: let electron-updater read dev-app-update.yml.
+  if (!isPackaged) {
+    try {
+      autoUpdater.forceDevUpdateConfig = true;
+    } catch (_) {}
   }
 
   autoUpdater.autoDownload = true;
@@ -953,6 +999,9 @@ function buildChildEnv(extra) {
   delete env.YARN_GLOBAL_FOLDER;
   delete env.npm_config_cache;
   delete env.NPM_CONFIG_CACHE;
+  // App mode drives the runtime posture of every spawned server.
+  env.NODE_ENV = isProductionMode() ? 'production' : 'development';
+  env.ABAYA_MODE = appMode;
   return env;
 }
 
@@ -1216,6 +1265,28 @@ ipcMain.handle('get-defaults', function () {
   return {
     port: readPortFromDotenv(REPO_ROOT),
     repoRoot: REPO_ROOT,
+  };
+});
+
+ipcMain.handle('get-mode', function () {
+  return { mode: appMode, defaultMode: DEFAULT_APP_MODE, isPackaged: app.isPackaged };
+});
+
+/**
+ * Switch production/development. Persists, re-applies the updater posture live,
+ * and reports whether running servers need a restart to pick up the new
+ * NODE_ENV (they inherit the env only when (re)spawned).
+ */
+ipcMain.handle('set-mode', function (_e, mode) {
+  const previous = appMode;
+  const applied = saveAppMode(mode);
+  setupAutoUpdates();
+  const serversRunning = !!(serverProc || watcherProc || dispatchProc);
+  return {
+    mode: applied,
+    isPackaged: app.isPackaged,
+    changed: applied !== previous,
+    restartServersToApply: applied !== previous && serversRunning,
   };
 });
 
