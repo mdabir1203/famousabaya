@@ -20,8 +20,15 @@ tools/desktop-launcher/.yarn/
 # Portable Node.js downloaded by START.bat on machines without a system Node.
 /.bin/
 # Runner files generated at install time by install/lib/bootstrap.cjs.
-install/run-*.bat
-install/silent-*.vbs
+# Listed exactly (not `run-*.bat`) so the tracked install/RUN-AT-LOGON.bat is never
+# swept up on case-insensitive Windows filesystems.
+install/run-server.bat
+install/run-dispatch.bat
+install/silent-server.vbs
+install/silent-dispatch.vbs
+# PM2 runtime home + logs (created by install/run-pm2.cjs).
+data/pm2-home/
+data/pm2-logs/
 
 # ─── Regenerable artifacts (binary in git ⇒ merge conflicts) ──────────────────
 # SQLite snapshots are rebuilt by shared/sqlite-snapshot.cjs — never commit the .db.
