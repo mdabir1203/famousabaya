@@ -311,6 +311,28 @@ export async function handleReport(env, url) {
   const prevActive = Math.floor(Number(prevSummaryRow.active_time_sec) || 0);
   const prevAvg = Number(prevSummaryRow.avg_sec) || 0;
 
+  // Month-by-month breakdown — only for the yearly report (one extra query, rarely run).
+  let byMonth = [];
+  if (range.type === 'yearly') {
+    const monthRes = await env.DB.prepare(`
+      SELECT substr(day_date, 1, 7) AS ym,
+        COUNT(*) AS units,
+        COALESCE(SUM(duration_sec), 0) AS active_time_sec,
+        ROUND(AVG(duration_sec)) AS avg_sec,
+        COUNT(DISTINCT emp_id) AS workers
+      FROM sessions ${dayFilter}
+      GROUP BY ym
+      ORDER BY ym ASC
+    `).bind(...dayBinds).all();
+    byMonth = (monthRes.results || []).map((r) => ({
+      ym: r.ym,
+      units: Number(r.units) || 0,
+      active_time_sec: Math.floor(Number(r.active_time_sec) || 0),
+      avg_sec: Number(r.avg_sec) || 0,
+      workers: Number(r.workers) || 0,
+    }));
+  }
+
   return jsonRes(
     {
       ok: true,
@@ -362,6 +384,7 @@ export async function handleReport(env, url) {
       },
       by_employee: byEmployee,
       by_process: byProcess,
+      by_month: byMonth,
       invoice_maker_sessions: invMaker.results || [],
       item_totals: itemTotals,
     },
