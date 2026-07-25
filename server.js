@@ -1098,6 +1098,67 @@ async function fetchRosterFromCloud(pathname, key) {
   }
 }
 
+/**
+ * Live cloud→local pull for the roster, mirroring refreshAbayaCatalogFromCloud().
+ * Runs every 60s so a change made from another laptop / the dashboard appears here
+ * without a restart — the reason employees looked "stuck on old data" before.
+ *
+ * Version-gated (no work when unchanged) and safe: an empty cloud at v0, or an
+ * unreachable/500 Worker (e.g. migration not applied yet), leaves local data alone.
+ * A local Excel master (EMPLOYEES_XLSX_PATH) opts out — that factory manages the
+ * roster in Excel and its edits push up instead.
+ */
+let employeesCloudVersion = '0';
+let workTypesCloudVersion = '0';
+
+async function refreshEmployeesFromCloud() {
+  if (!CF_URL || EMPLOYEES_XLSX_PATH) return;
+  try {
+    const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/employees', { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return;
+    const j = await res.json().catch(function () { return null; });
+    if (!j || j.ok === false || !Array.isArray(j.employees)) return;
+    const ver = j.version != null ? String(j.version) : '0';
+    if (j.employees.length === 0 && ver === '0') return; // empty cloud — don't wipe local
+    if (ver === employeesCloudVersion) return;            // unchanged
+    const prevPerfById = Object.create(null);
+    for (let i = 0; i < EMP_PERF.length; i++) prevPerfById[EMP_PERF[i].id] = EMP_PERF[i];
+    EMPLOYEES = j.employees;
+    rebuildACMap();
+    EMP_PERF = EMPLOYEES.map(function (e) {
+      return prevPerfById[e.id] || { id: e.id, units: 0, eff: 0, act: 0, idl: 0 };
+    });
+    employeesCloudVersion = ver;
+    saveEmployeesToManualFile(); // persist so the next boot is offline-safe
+    emitEmployeesChanged();
+    console.log('[employees] Synced', EMPLOYEES.length, 'from cloud (v' + ver + ')');
+  } catch (_) { /* keep local on any error */ }
+}
+
+async function refreshWorkTypesFromCloud() {
+  if (!CF_URL) return;
+  try {
+    const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/work-types', { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return;
+    const j = await res.json().catch(function () { return null; });
+    if (!j || j.ok === false || !Array.isArray(j.workTypes)) return;
+    const ver = j.version != null ? String(j.version) : '0';
+    if (j.workTypes.length === 0 && ver === '0') return;
+    if (ver === workTypesCloudVersion) return;
+    const next = j.workTypes.map(function (s) { return String(s == null ? '' : s).trim(); }).filter(Boolean);
+    if (!next.length) return;
+    FACTORY_WORK_TYPES = next;
+    workTypesDataVersion++;
+    workTypesCloudVersion = ver;
+    try {
+      fs.mkdirSync(path.dirname(WORK_TYPES_JSON_PATH), { recursive: true });
+      fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(FACTORY_WORK_TYPES, null, 2), 'utf8');
+    } catch (_) {}
+    emitWorkTypesChanged();
+    console.log('[work-types] Synced', FACTORY_WORK_TYPES.length, 'from cloud (v' + ver + ')');
+  } catch (_) { /* keep local on any error */ }
+}
+
 let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
 let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
@@ -2866,17 +2927,48 @@ app.get('/api/catalog/export.xlsx', (req, res) => {
 
 // ─── TABLET SETUP / QR CODE ENDPOINTS ────────────────────────────────────────
 
+/**
+ * Rank an interface so the address the tablets actually use (the physical Wi-Fi
+ * LAN, e.g. 192.168.0.101) sorts first. Tailscale/overlay adapters live in the
+ * CGNAT 100.64.0.0/10 range and were being printed instead of the real LAN.
+ * Lower is better.
+ */
+function lanIpPriority(name, address) {
+  const octets = String(address).split('.').map(Number);
+  const a = octets[0];
+  const b = octets[1];
+  let rank;
+  if (a === 192 && b === 168) rank = 0;                 // typical home/office LAN
+  else if (a === 10) rank = 1;                          // private
+  else if (a === 172 && b >= 16 && b <= 31) rank = 2;   // private
+  else if (a === 100 && b >= 64 && b <= 127) rank = 8;  // CGNAT — Tailscale et al.
+  else if (a === 169 && b === 254) rank = 9;            // link-local
+  else rank = 5;
+  if (/tailscale|vethernet|virtualbox|vmware|hyper-?v|wsl|zerotier|docker|tap-|npcap|loopback/i.test(String(name))) {
+    rank += 10; // push virtual/overlay adapters below real NICs
+  }
+  return rank;
+}
+
 function getLanIPs() {
+  // Explicit override wins — set LAN_IP=192.168.0.101 in .env to pin the address.
+  const forced = String(process.env.LAN_IP || '').trim();
   const ifaces = os.networkInterfaces();
   const ips = [];
   for (const name of Object.keys(ifaces)) {
     for (const iface of ifaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        ips.push({ name, address: iface.address });
+        ips.push({ name, address: iface.address, _p: lanIpPriority(name, iface.address) });
       }
     }
   }
-  return ips;
+  ips.sort(function (x, y) { return x._p - y._p; });
+  const ordered = ips.map(function (o) { return { name: o.name, address: o.address }; });
+  if (forced) {
+    const match = ordered.find(function (o) { return o.address === forced; });
+    return [{ name: match ? match.name : 'LAN_IP', address: forced }].concat(ordered.filter(function (o) { return o.address !== forced; }));
+  }
+  return ordered;
 }
 
 /** Outcome-first release moment for LAN dashboard / kiosk (see config/release-moment.json). */
@@ -3328,6 +3420,13 @@ server.listen(PORT, () => {
   console.log(`  CEO queue file:   ${persistence.ceoQueueFile} (writable=${persistence.ceoQueueDirWritable})`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
+  // Roster (employees + work types) follows the same live cadence as the catalog,
+  // so an update made on another laptop / the dashboard shows here within ~60s.
+  refreshEmployeesFromCloud();
+  refreshWorkTypesFromCloud();
+  const ROSTER_PULL_MS = Math.max(5000, Number(process.env.ROSTER_PULL_INTERVAL_MS) || 60000);
+  setInterval(refreshEmployeesFromCloud, ROSTER_PULL_MS);
+  setInterval(refreshWorkTypesFromCloud, ROSTER_PULL_MS);
   setInterval(persistOfflineDashboardReport, 60000);
   setImmediate(persistOfflineDashboardReport);
   if (SQLITE_SNAPSHOT_ENABLED) {
