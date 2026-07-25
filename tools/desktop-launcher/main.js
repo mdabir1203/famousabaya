@@ -1006,30 +1006,49 @@ function buildChildEnv(extra) {
 }
 
 /** Resolve `pm2` binary on PATH; returns null when not installed. */
-function resolvePm2Binary() {
-  const exe = process.platform === 'win32' ? 'pm2.cmd' : 'pm2';
-  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const d of dirs) {
-    const full = path.join(d, exe);
-    try {
-      if (fs.existsSync(full)) return full;
-    } catch (_) { /* ignore */ }
-  }
+/**
+ * PM2 is driven through the project wrapper install/run-pm2.cjs — NEVER a global
+ * `pm2`. A global pm2 cannot run this Yarn-PnP repo, and on Windows
+ * `execFileSync('pm2.cmd', …)` throws EINVAL (Node refuses to execFile a .cmd).
+ * The wrapper runs the bundled PM2 with the PnP loader and an isolated PM2_HOME.
+ * Returns the wrapper path only when it and an installed dep graph both exist.
+ */
+function resolvePm2Wrapper() {
+  const wrapper = path.join(REPO_ROOT, 'install', 'run-pm2.cjs');
+  try {
+    if (fs.existsSync(wrapper) && factoryDepsInstalled()) return wrapper;
+  } catch (_) { /* ignore */ }
   return null;
 }
 
-/** Run `pm2 jlist` and parse it. Returns [] when pm2 is unavailable or empty. */
-function pm2ListSync() {
-  const bin = resolvePm2Binary();
-  if (!bin) return null;
+/** Spawn the wrapper via Electron-as-node so no external `node` is required. */
+function execPm2Wrapper(args, opts) {
+  const wrapper = resolvePm2Wrapper();
+  if (!wrapper) return { ok: false, error: 'pm2 wrapper unavailable (install/run-pm2.cjs or deps missing)' };
   try {
-    const out = execFileSync(bin, ['jlist'], {
+    const out = execFileSync(process.execPath, [wrapper, ...args], Object.assign({
+      cwd: REPO_ROOT,
       windowsHide: true,
       encoding: 'utf8',
-      timeout: 4000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const parsed = JSON.parse(out || '[]');
+      timeout: 30000,
+      env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1', PM2_RUNNER_PIPE: '1' }),
+    }, opts || {}));
+    return { ok: true, output: String(out || '').trim() };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+/** Run `pm2 jlist` through the wrapper and parse it. null when pm2 is unavailable. */
+function pm2ListSync() {
+  if (!resolvePm2Wrapper()) return null;
+  const r = execPm2Wrapper(['jlist'], { timeout: 8000 });
+  if (!r.ok) return null;
+  try {
+    // The wrapper may print a PnP experimental-loader notice before the JSON.
+    const s = r.output;
+    const start = s.indexOf('[');
+    const parsed = JSON.parse(start >= 0 ? s.slice(start) : s || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch (_) {
     return null;
@@ -1062,19 +1081,7 @@ function pm2HasOnlineServer() {
 }
 
 function runPm2Command(args) {
-  const bin = resolvePm2Binary();
-  if (!bin) return { ok: false, error: 'pm2 not installed' };
-  try {
-    const out = execFileSync(bin, args, {
-      cwd: REPO_ROOT,
-      windowsHide: true,
-      encoding: 'utf8',
-      timeout: 30000,
-    });
-    return { ok: true, output: String(out || '').trim() };
-  } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
+  return execPm2Wrapper(args);
 }
 
 /** GET an HTTP URL on localhost and return parsed JSON (best-effort). */
@@ -1140,18 +1147,53 @@ function postLocalJson(port, urlPath, headers, timeoutMs) {
   });
 }
 
+/**
+ * Node args for a PnP-or-node_modules project. Only inject the PnP loader when
+ * `.pnp.cjs` actually exists, and reference it by ABSOLUTE path — a relative
+ * `-r ./.pnp.cjs` crashes with `Cannot find module './.pnp.cjs'` whenever the
+ * child's effective CWD differs or the loader was preloaded via NODE_OPTIONS.
+ * When there is no PnP manifest, plain `node` uses node_modules.
+ * @param {string} scriptDir directory whose `.pnp.cjs` governs this script
+ * @param {string} script    entry filename
+ */
+function nodeRunArgs(scriptDir, script) {
+  const pnp = path.join(scriptDir, '.pnp.cjs');
+  return fs.existsSync(pnp) ? ['-r', pnp, script] : [script];
+}
+
+/** True when the repo has an installed dependency graph (PnP or real node_modules). */
+function factoryDepsInstalled() {
+  if (fs.existsSync(path.join(REPO_ROOT, '.pnp.cjs'))) return true;
+  return fs.existsSync(path.join(REPO_ROOT, 'node_modules', 'express'));
+}
+
 function spawnFactoryServer() {
-  const opts = { cwd: REPO_ROOT, shell: true, env: buildChildEnv() };
-  if (useBun()) return spawn('bun', ['server.js'], opts);
-  // Launch directly through Node+PnP instead of `yarn node` to avoid cache-locator drift.
-  return spawn('node', ['-r', './.pnp.cjs', 'server.js'], opts);
+  const opts = { cwd: REPO_ROOT, shell: false, env: buildChildEnv() };
+  if (useBun()) return spawn(resolveNodeLikeBin('bun'), ['server.js'], opts);
+  return spawn(process.execPath, nodeRunArgs(REPO_ROOT, 'server.js'), childNodeOpts(opts));
 }
 
 function spawnWatcher() {
   const watcherDir = path.join(REPO_ROOT, 'tools', 'catalog-watcher');
-  const opts = { cwd: watcherDir, shell: true, env: buildChildEnv() };
-  if (useBun()) return spawn('bun', ['watch-catalog.js'], opts);
-  return spawn('node', ['-r', './.pnp.cjs', 'watch-catalog.js'], opts);
+  const opts = { cwd: watcherDir, shell: false, env: buildChildEnv() };
+  if (useBun()) return spawn(resolveNodeLikeBin('bun'), ['watch-catalog.js'], opts);
+  return spawn(process.execPath, nodeRunArgs(watcherDir, 'watch-catalog.js'), childNodeOpts(opts));
+}
+
+/** Resolve bun (per-user install else PATH). */
+function resolveNodeLikeBin(name) {
+  if (name === 'bun') return resolveBunBin();
+  return name;
+}
+
+/**
+ * Run child Node scripts through Electron's own binary via ELECTRON_RUN_AS_NODE=1
+ * (process.execPath is electron.exe in a packaged app, and system `node` may not be
+ * on PATH). This makes the factory server independent of any external Node install.
+ */
+function childNodeOpts(opts) {
+  const env = Object.assign({}, opts.env, { ELECTRON_RUN_AS_NODE: '1' });
+  return Object.assign({}, opts, { env: env });
 }
 
 // ── Dispatch (Bun) server — WhatsApp leaderboard / invoice upload ─────────────
@@ -1468,6 +1510,14 @@ ipcMain.handle('start-all', async function () {
     return { ok: false, error: 'server.js not found (expected repo root): ' + REPO_ROOT };
   }
 
+  // Dependencies must be installed before anything can start. Fail with a clear,
+  // actionable message instead of a cryptic MODULE_NOT_FOUND crash in the child.
+  if (!useBun() && !factoryDepsInstalled()) {
+    const msg = 'Dependencies are not installed. Run START.bat (or `corepack yarn install`) in ' + REPO_ROOT + ' first.';
+    sendLog('server', '[launcher] ' + msg + '\n');
+    return { ok: false, error: msg };
+  }
+
   // PM2 wins. If `abaya-server` is already online under PM2, do not spawn a duplicate
   // (would just steal the port and fight pm2 over restarts).
   if (pm2HasOnlineServer()) {
@@ -1475,8 +1525,8 @@ ipcMain.handle('start-all', async function () {
     return { ok: true, managedByPm2: true };
   }
 
-  // If pm2 is installed but the apps are stopped, prefer `pm2 start` so reboot persistence is intact.
-  if (resolvePm2Binary()) {
+  // If pm2 is usable (project wrapper + deps), prefer it so reboot persistence is intact.
+  if (resolvePm2Wrapper()) {
     const r = runPm2Command(['start', 'ecosystem.config.cjs', '--update-env']);
     sendLog('server', '[launcher] pm2 start ecosystem.config.cjs → ' + (r.ok ? 'ok' : r.error) + '\n');
     if (r.ok) {
