@@ -1810,7 +1810,7 @@ function catalogAuthConfigured() {
 }
 
 app.put('/api/work-types', function (req, res) {
-  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+  if (!catalogPassAuthorized(req)) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   var body = req.body;
@@ -1869,7 +1869,7 @@ function recomputeEmpPerfFromLogs() {
 
 /** Add a single employee (supervisor use). Protected by ingest secret. Persists to employees.xlsx or employees-manual.json. */
 app.post('/api/employees', function (req, res) {
-  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+  if (!catalogPassAuthorized(req)) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   var b = req.body;
@@ -1933,7 +1933,7 @@ app.post('/api/employees', function (req, res) {
 
 /** Update an existing employee. Protected by ingest secret. Persists master file when configured. */
 app.put('/api/employees/:id', function (req, res) {
-  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+  if (!catalogPassAuthorized(req)) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   var targetId = req.params.id;
@@ -2014,7 +2014,7 @@ app.put('/api/employees/:id', function (req, res) {
 
 /** Remove an employee from the roster. Blocked if they have an active session. */
 app.delete('/api/employees/:id', function (req, res) {
-  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
+  if (!catalogPassAuthorized(req)) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   const id = req.params.id;

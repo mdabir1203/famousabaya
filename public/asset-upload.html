@@ -284,14 +284,14 @@ select#emp-process option {
   <p class="hint">Paste secrets once — they are remembered on this browser. Ask a supervisor if you are not sure.</p>
   <label for="sec">Photo upload secret (only if your factory PC has one) — header <code>X-Asset-Upload-Secret</code></label>
   <input type="password" id="sec" autocomplete="off" placeholder="Leave blank if not set in .env">
-  <label for="ingest-sec">Roster change secret — header <code>X-Ingest-Secret</code> <span class="opt">(same as CATALOG_INGEST_SECRET)</span></label>
-  <input type="password" id="ingest-sec" autocomplete="off" placeholder="Needed for roster, work types, and some saves">
+  <label for="ingest-sec">Roster change secret — header <code>X-Ingest-Secret</code> <span class="opt">(admin ingest secret; or use the catalog pass below)</span></label>
+  <input type="password" id="ingest-sec" autocomplete="off" placeholder="Admin secret — or leave blank and use the catalog pass below">
 </div>
 
 <div class="card">
   <h2>Factory work types</h2>
   <p class="card-title">Kiosk buttons and “default process” list</p>
-  <p class="hint">Order matches kiosk roles (first row = first button). You need the roster secret above to add or remove. You cannot remove a name still used by an employee or an open kiosk session.</p>
+  <p class="hint">Order matches kiosk roles (first row = first button). Enter the roster secret above <b>or</b> the catalog pass below to add or remove. You cannot remove a name still used by an employee or an open kiosk session.</p>
   <div id="work-types-list" class="work-types-list" aria-label="Process names"></div>
   <label for="work-type-new">Add a process name</label>
   <input type="text" id="work-type-new" placeholder="Type name, then Add" autocomplete="off" spellcheck="false">
@@ -354,7 +354,7 @@ select#emp-process option {
 <div class="card">
   <h2><span class="step-num">3</span> Remove from roster</h2>
   <p class="card-title">Current list</p>
-  <p class="hint">Needs roster secret above. Past work stays in history. You cannot remove someone who still has an open session on the kiosk.</p>
+  <p class="hint">Needs the roster secret above <b>or</b> the catalog pass below. Past work stays in history. You cannot remove someone who still has an open session on the kiosk.</p>
   <div class="roster-toolbar">
     <label for="roster-search">Search by name, code, or barcode</label>
     <input type="search" id="roster-search" placeholder="Type to filter…" autocomplete="off">
@@ -512,6 +512,10 @@ select#emp-process option {
     var h = { 'Content-Type': 'application/json' };
     var ing = (document.getElementById('ingest-sec') && document.getElementById('ingest-sec').value) || '';
     if (ing.trim()) h['X-Ingest-Secret'] = ing.trim();
+    // Roster changes now also accept the catalog pass, so a single pass covers
+    // uploads and roster edits — send it too when present.
+    var p = catalogPassValue();
+    if (p) h['X-Catalog-Pass'] = p;
     return h;
   }
 
@@ -1103,6 +1107,8 @@ select#emp-process option {
     var h = {};
     var ing = (document.getElementById('ingest-sec') && document.getElementById('ingest-sec').value) || '';
     if (ing.trim()) h['X-Ingest-Secret'] = ing.trim();
+    var pass = catalogPassValue();
+    if (pass) h['X-Catalog-Pass'] = pass;
     btn.disabled = true;
     btn.textContent = '…';
     clearBanner();
