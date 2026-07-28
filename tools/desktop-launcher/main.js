@@ -10,8 +10,27 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
 
-/** Repo root (parent of tools/) */
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
+/** Resolve the runtime root for both source runs and packaged installs. */
+function resolveRepoRoot() {
+  const candidates = [
+    process.env.ABAYA_REPO_ROOT,
+    process.env.ABAYA_APP_ROOT,
+    __dirname,
+    app && typeof app.getAppPath === 'function' ? app.getAppPath() : '',
+    path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..'),
+    process.cwd(),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (fs.existsSync(path.join(resolved, 'server.js')) && fs.existsSync(path.join(resolved, 'install')) && fs.existsSync(path.join(resolved, 'package.json'))) {
+      return resolved;
+    }
+  }
+  return path.resolve(__dirname, '..', '..');
+}
+
+const REPO_ROOT = resolveRepoRoot();
 const LAUNCHER_DATA_DIR = path.join(REPO_ROOT, 'data', 'desktop-launcher');
 const LAUNCHER_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'cache');
 const LAUNCHER_GPU_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'gpu-cache');
@@ -980,6 +999,26 @@ function ensureServerJs() {
   return fs.existsSync(path.join(REPO_ROOT, 'server.js'));
 }
 
+function ensureRuntimeSeedFiles() {
+  const envPath = path.join(REPO_ROOT, '.env');
+  const envExamplePath = path.join(REPO_ROOT, '.env.example');
+  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+    try {
+      fs.copyFileSync(envExamplePath, envPath);
+      sendLog('server', '[launcher] Created .env from .env.example for first-run setup.\n');
+    } catch (_) {}
+  }
+
+  const watcherConfigPath = path.join(REPO_ROOT, 'tools', 'catalog-watcher', 'config.json');
+  const watcherExamplePath = path.join(REPO_ROOT, 'tools', 'catalog-watcher', 'config.example.json');
+  if (!fs.existsSync(watcherConfigPath) && fs.existsSync(watcherExamplePath)) {
+    try {
+      fs.copyFileSync(watcherExamplePath, watcherConfigPath);
+      sendLog('watcher', '[launcher] Created tools/catalog-watcher/config.json from the example template.\n');
+    } catch (_) {}
+  }
+}
+
 function watcherCanStart() {
   const cw = path.join(REPO_ROOT, 'tools', 'catalog-watcher');
   const cfg = path.join(cw, 'config.json');
@@ -1280,10 +1319,26 @@ function createWindow() {
   });
 }
 
+function shouldAutoStartSilently() {
+  const flag = String(process.env.ABAYA_SILENT_BOOT || '').toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes';
+}
+
 app.whenReady().then(function () {
   pendingUpdateApplyResult = readAndConsumePendingUpdateSuccess();
   createWindow();
   setupAutoUpdates();
+  ensureRuntimeSeedFiles();
+  if (shouldAutoStartSilently()) {
+    setTimeout(function () {
+      startAllServers().catch(function (err) {
+        sendLog('server', '[launcher] auto-start failed: ' + String(err && err.message ? err.message : err) + '\n');
+      });
+      startDispatchRuntime().catch(function (err) {
+        sendLog('dispatch', '[launcher] auto-dispatch failed: ' + String(err && err.message ? err.message : err) + '\n');
+      });
+    }, 800);
+  }
 });
 
 app.on('window-all-closed', function () {
@@ -1505,7 +1560,7 @@ ipcMain.handle('export-diagnostics', async function () {
   }
 });
 
-ipcMain.handle('start-all', async function () {
+async function startAllServers() {
   if (!ensureServerJs()) {
     return { ok: false, error: 'server.js not found (expected repo root): ' + REPO_ROOT };
   }
@@ -1570,6 +1625,10 @@ ipcMain.handle('start-all', async function () {
   }
 
   return { ok: true };
+}
+
+ipcMain.handle('start-all', async function () {
+  return startAllServers();
 });
 
 ipcMain.handle('stop-all', async function () {
@@ -1582,7 +1641,7 @@ ipcMain.handle('stop-all', async function () {
   return { ok: true };
 });
 
-ipcMain.handle('dispatch-start', async function () {
+async function startDispatchRuntime() {
   if (!dispatchCanStart()) {
     return { ok: false, error: 'dispatch server.js not found: ' + DISPATCH_DIR };
   }
@@ -1601,6 +1660,10 @@ ipcMain.handle('dispatch-start', async function () {
     dispatchProc = null;
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
+}
+
+ipcMain.handle('dispatch-start', async function () {
+  return startDispatchRuntime();
 });
 
 ipcMain.handle('dispatch-stop', async function () {

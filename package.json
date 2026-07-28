@@ -11,6 +11,8 @@
     "start": "node server.js",
     "icons:build": "node scripts/render-app-icons.cjs",
     "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
+    "package:installer:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-installer.ps1",
+    "package:portable:win": "powershell -NoProfile -ExecutionPolicy Bypass -File install/package-portable.ps1",
     "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:system": "node scripts/test-system.mjs",

@@ -2,7 +2,7 @@
   "name": "abaya-desktop-launcher",
   "version": "1.0.0",
   "private": true,
-  "description": "Optional GUI to start factory server + catalog watcher (classic batch launcher remains)",
+  "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
   "author": "Mohammad Abir Abbas",
   "main": "main.js",
   "scripts": {
@@ -28,13 +28,47 @@
     "directories": {
       "output": "../../dist/desktop-launcher"
     },
+    "icon": "assets/app-icon",
     "files": [
       "index.html",
       "main.js",
       "preload.js",
       "renderer.js",
       "start-electron.cjs",
-      "package.json"
+      "package.json",
+      "../../package.json",
+      "../../yarn.lock",
+      "../../.yarnrc.yml",
+      "../../.pnp.cjs",
+      "../../.env.example",
+      "../../tools/catalog-watcher/config.example.json",
+      "../../.yarn/**/*",
+      "../../install/**/*",
+      "../../server.js",
+      "../../scripts/**/*",
+      "../../shared/**/*",
+      "../../services/**/*",
+      "../../cloudflare/**/*",
+      "../../config/**/*",
+      "../../docs/**/*",
+      "../../lib/**/*",
+      "../../public/**/*",
+      "../../tools/**/*",
+      "../../gk/**/*",
+      "../../objects/**/*",
+      "../../data/**/*",
+      "../../node_modules/**/*",
+      "../../tools/catalog-watcher/node_modules/**/*",
+      "../../*.md",
+      "../../*.txt",
+      "../../*.json",
+      "../../*.cjs",
+      "../../*.mjs",
+      "../../*.js",
+      "../../*.bat",
+      "../../*.ps1",
+      "../../*.sql",
+      "../../*.xlsx"
     ],
     "publish": [
       {
@@ -56,12 +90,18 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}",
+      "icon": "assets/app-icon.ico",
+      "signingHashAlgorithm": "sha256"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "installerIcon": "assets/app-icon.ico",
+      "uninstallerIcon": "assets/app-icon.ico",
+      "installerSidebar": "assets/app-icon.ico",
+      "artifactName": "AbaYa-Track-Launcher-Setup-${version}.exe"
     }
   }
 }
