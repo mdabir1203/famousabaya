@@ -24,7 +24,7 @@
     "appId": "com.abaya.track.launcher",
     "productName": "AbaYa Track Launcher",
     "directories": {
-      "output": "../../dist/desktop-launcher"
+      "output": "../../install"
     },
     "files": [
       "index.html",
@@ -32,7 +32,38 @@
       "preload.js",
       "renderer.js",
       "start-electron.cjs",
-      "package.json"
+      "package.json",
+      "README.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../../install",
+        "to": "install",
+        "filter": ["*.bat", "*.ps1", "*.cjs"]
+      },
+      {
+        "from": "../../server.js",
+        "to": "server.js"
+      },
+      {
+        "from": "../../package.json",
+        "to": "package.json"
+      },
+      {
+        "from": "../../public",
+        "to": "public",
+        "filter": ["**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"]
+      },
+      {
+        "from": "../../shared",
+        "to": "shared",
+        "filter": ["**/*.{js,cjs,mjs}"]
+      },
+      {
+        "from": "../../tools/catalog-watcher",
+        "to": "tools/catalog-watcher",
+        "filter": ["*.js", "*.json", "package.json"]
+      }
     ],
     "publish": [
       {
@@ -54,12 +85,15 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AbaYa Track Launcher"
     }
   }
 }
