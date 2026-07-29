@@ -24,7 +24,7 @@
     "appId": "com.abaya.track.launcher",
     "productName": "AbaYa Track Launcher",
     "directories": {
-      "output": "../../dist/desktop-launcher"
+      "output": "../../install"
     },
     "files": [
       "index.html",
@@ -85,12 +85,15 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AbaYa Track Launcher"
     }
   }
 }
