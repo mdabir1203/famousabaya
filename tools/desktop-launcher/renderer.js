@@ -564,6 +564,43 @@ function showCloseConfirm() {
   await applyReleaseMomentSpotlight(defs.port);
   applyUpdateStatus(await window.abayaLauncher.updateStatus());
 
+  // ── Runtime mode toggle (Production default / Development) ───────────────────
+  const modeProd = document.getElementById('modeProd');
+  const modeDev = document.getElementById('modeDev');
+  function paintMode(mode) {
+    const isProd = mode !== 'development';
+    if (modeProd) modeProd.classList.toggle('active', isProd);
+    if (modeDev) modeDev.classList.toggle('active', !isProd);
+  }
+  async function refreshMode() {
+    if (!window.abayaLauncher.getMode) return;
+    try {
+      const m = await window.abayaLauncher.getMode();
+      paintMode(m.mode);
+    } catch (_) {}
+  }
+  async function chooseMode(mode) {
+    if (!window.abayaLauncher.setMode) return;
+    paintMode(mode); // optimistic
+    try {
+      const r = await window.abayaLauncher.setMode(mode);
+      paintMode(r.mode);
+      append(
+        'server',
+        r.restartServersToApply
+          ? '\n[mode] switched to ' + r.mode + ' — Stop then Start to apply NODE_ENV to running servers.\n'
+          : '\n[mode] runtime mode: ' + r.mode + '\n'
+      );
+    } catch (_) {
+      await refreshMode();
+    }
+  }
+  if (modeProd && modeDev) {
+    modeProd.onclick = function () { chooseMode('production'); };
+    modeDev.onclick = function () { chooseMode('development'); };
+    await refreshMode();
+  }
+
   btnStart.onclick = async function () {
     btnStart.disabled = true;
     append('server', '\n[start] boot sequence initiated...\n');

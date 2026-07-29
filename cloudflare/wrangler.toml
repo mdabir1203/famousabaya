@@ -4,6 +4,13 @@ compatibility_date = "2024-11-01"
 # Omit nodejs_compat unless required — lowers startup/CPU overhead for Workers that use Web APIs only.
 account_id = "cac65f11aecab7f7dc4446390d49f4f2"
 
+# Run the Worker next to the D1 primary (Singapore) instead of next to the user
+# (Dubai). /api/report makes 4-5 SEQUENTIAL D1 round trips to execute ~4ms of SQL,
+# so each hop cost ~100ms of pure latency. Smart Placement collapses those to ~5ms
+# each, leaving a single user round trip. Keep in sync with the root wrangler.jsonc.
+[placement]
+mode = "smart"
+
 # â”€â”€â”€ Custom domain â€” CEO dashboard lives at https://dashboard.farewellabaya.com
 # Cloudflare manages DNS and TLS automatically. No manual DNS record needed.
 [[routes]]

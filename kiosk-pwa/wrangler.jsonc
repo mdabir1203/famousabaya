@@ -1,0 +1,17 @@
+{
+  // Static kiosk PWA assets worker ("abaya-server"). Moved here from the repo
+  // root so the root config can describe the abaya-track Worker for the Git
+  // integration. Deploy manually with:
+  //   npx wrangler deploy -c kiosk-pwa/wrangler.jsonc
+  "name": "abaya-server",
+  "compatibility_date": "2026-06-19",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "."
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}

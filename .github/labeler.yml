@@ -1,0 +1,24 @@
+# Add labels based on modified files
+
+backend:
+  - changed-files:
+      - any-glob-to-any-file: 'backend/**'
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: 'frontend/**'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: 'docs/**'
+      - any-glob-to-any-file: '**.md'
+
+tools:
+  - changed-files:
+      - any-glob-to-any-file: 'tools/**'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: 'package.json'
+      - any-glob-to-any-file: 'yarn.lock'
+      - any-glob-to-any-file: '**/package.json'

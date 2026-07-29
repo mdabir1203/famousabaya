@@ -21,11 +21,26 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
   reconcileNow() {
     return ipcRenderer.invoke('reconcile-now');
   },
+  startDispatch() {
+    return ipcRenderer.invoke('dispatch-start');
+  },
+  stopDispatch() {
+    return ipcRenderer.invoke('dispatch-stop');
+  },
+  dispatchStatus() {
+    return ipcRenderer.invoke('dispatch-status');
+  },
   openUrl(url) {
     return ipcRenderer.invoke('open-url', url);
   },
   getDefaults() {
     return ipcRenderer.invoke('get-defaults');
+  },
+  getMode() {
+    return ipcRenderer.invoke('get-mode');
+  },
+  setMode(mode) {
+    return ipcRenderer.invoke('set-mode', mode);
   },
   getReleaseMoment() {
     return ipcRenderer.invoke('get-release-moment');
