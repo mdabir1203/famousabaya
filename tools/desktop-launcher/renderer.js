@@ -618,40 +618,6 @@ function showCloseConfirm() {
     btnStop.disabled = false;
   };
 
-  // ── Dispatch (Bun) server controls ──────────────────────────────────────────
-  var btnDispatchStart = document.getElementById('btnDispatchStart');
-  var btnDispatchStop = document.getElementById('btnDispatchStop');
-  var dispatchPill = document.getElementById('dispatchPill');
-
-  async function refreshDispatchStatus() {
-    if (!dispatchPill || !window.abayaLauncher.dispatchStatus) return;
-    try {
-      var s = await window.abayaLauncher.dispatchStatus();
-      var label = s.running ? (s.external ? 'running (external) :' + s.port : 'running :' + s.port) : 'stopped';
-      dispatchPill.textContent = 'Dispatch (Bun): ' + label;
-      if (btnDispatchStart) btnDispatchStart.disabled = !!s.running;
-      if (btnDispatchStop) btnDispatchStop.disabled = !s.launcherOwned;
-    } catch (_) {}
-  }
-
-  if (btnDispatchStart) btnDispatchStart.onclick = async function () {
-    btnDispatchStart.disabled = true;
-    append('server', '\n[dispatch] starting Bun dispatch server...\n');
-    var r = await window.abayaLauncher.startDispatch();
-    if (r && !r.ok) append('server', '[dispatch] ' + (r.error || 'failed') + '\n');
-    else if (r && r.already) append('server', '[dispatch] already running' + (r.external ? ' (external)' : '') + '\n');
-    await refreshDispatchStatus();
-  };
-
-  if (btnDispatchStop) btnDispatchStop.onclick = async function () {
-    btnDispatchStop.disabled = true;
-    await window.abayaLauncher.stopDispatch();
-    await refreshDispatchStatus();
-  };
-
-  refreshDispatchStatus();
-  setInterval(refreshDispatchStatus, 5000);
-
   if (btnWinMin) {
     btnWinMin.onclick = function () {
       window.abayaLauncher.windowMinimize();
