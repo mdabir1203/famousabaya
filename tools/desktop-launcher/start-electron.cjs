@@ -1,89 +1,44 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
-
 /**
- * Electron runs a separate embedded Node for the main process. It does not inherit
- * the parent CLI `-r ./.pnp.cjs`, so Yarn PnP deps (e.g. electron-updater) must be
- * registered via NODE_OPTIONS or resolution fails with MODULE_NOT_FOUND.
+ * Dev launcher for the Electron GUI (run from source). Production clients use the
+ * packaged NSIS .exe (`yarn dist:win`) instead of this path.
+ *
+ * With nodeLinker: node-modules, `require('electron')` resolves the bundled
+ * electron binary from node_modules directly — no Yarn PnP, no NODE_OPTIONS
+ * injection, and no unplugged-binary "repair" dance (all removed).
  */
-function envWithPnpForElectronChild(baseEnv) {
-  const env = Object.assign({}, baseEnv || process.env);
-  const pnpCjs = path.resolve(__dirname, '.pnp.cjs');
-  if (!fs.existsSync(pnpCjs)) return env;
-  const pnpFlag = '--require ' + JSON.stringify(pnpCjs);
-  const prior = String(env.NODE_OPTIONS || '').trim();
-  env.NODE_OPTIONS = prior ? pnpFlag + ' ' + prior : pnpFlag;
-  return env;
+const fs = require('fs');
+const { spawn } = require('child_process');
+
+let electronBin;
+try {
+  electronBin = require('electron');
+} catch (_) {
+  console.error('[launcher:gui] Electron not installed. Run `yarn install` in tools/desktop-launcher first.');
+  process.exit(1);
+}
+if (!electronBin || !fs.existsSync(electronBin)) {
+  console.error('[launcher:gui] Electron binary missing. Run `yarn install` in tools/desktop-launcher.');
+  process.exit(1);
 }
 
-function resolveElectronPath() {
+// WSL has no display server for the GPU sandbox; disable it there only.
+let isWsl = false;
+if (process.platform === 'linux') {
   try {
-    return require('electron');
-  } catch (_) {
-    return '';
-  }
-}
-
-function looksWrongForHost(electronBin) {
-  if (!electronBin) return true;
-  if (process.platform === 'win32') {
-    return !/electron\.exe$/i.test(String(electronBin));
-  }
-  return false;
-}
-
-function clearElectronUnpluggedIfPresent() {
-  const unpluggedDir = path.join(__dirname, '.yarn', 'unplugged');
-  try {
-    const names = fs.readdirSync(unpluggedDir);
-    names.forEach(function (name) {
-      if (/^electron-npm-/i.test(name)) {
-        fs.rmSync(path.join(unpluggedDir, name), { recursive: true, force: true });
-      }
-    });
+    isWsl = !!process.env.WSL_DISTRO_NAME || /microsoft|wsl/i.test(fs.readFileSync('/proc/sys/kernel/osrelease', 'utf8'));
   } catch (_) {}
 }
+const extraArgs = isWsl ? ['--no-sandbox', '--disable-gpu-sandbox'] : [];
 
-function ensureElectronBinary() {
-  let electronBin = resolveElectronPath();
-  if (electronBin && fs.existsSync(electronBin) && !looksWrongForHost(electronBin)) return electronBin;
-
-  console.log('[launcher:gui] electron binary missing/mismatched for this host; repairing launcher deps...');
-  clearElectronUnpluggedIfPresent();
-  const r = spawnSync('yarn', ['install'], {
-    cwd: __dirname,
-    shell: true,
-    stdio: 'inherit',
-    env: process.env,
-  });
-  if ((r && typeof r.status === 'number' && r.status !== 0) || r.error) {
-    throw new Error('yarn install failed in tools/desktop-launcher');
-  }
-
-  electronBin = resolveElectronPath();
-  if (!electronBin || !fs.existsSync(electronBin)) {
-    throw new Error('electron binary still missing after install');
-  }
-  return electronBin;
-}
-
-const electronBin = ensureElectronBinary();
-const electronArgs = ['.'].concat(process.argv.slice(2));
-const child = spawn(electronBin, electronArgs, {
+const child = spawn(electronBin, ['.', ...extraArgs, ...process.argv.slice(2)], {
   cwd: __dirname,
   stdio: 'inherit',
   shell: false,
-  env: envWithPnpForElectronChild(process.env),
 });
-
-child.on('exit', function (code) {
-  process.exit(code == null ? 1 : code);
-});
-
-child.on('error', function (err) {
+child.on('exit', (code) => process.exit(code == null ? 1 : code));
+child.on('error', (err) => {
   console.error('[launcher:gui] failed to start electron:', err && err.message ? err.message : String(err));
   process.exit(1);
 });

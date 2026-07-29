@@ -10,8 +10,27 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
 
-/** Repo root (parent of tools/) */
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
+/** Resolve the runtime root for both source runs and packaged installs. */
+function resolveRepoRoot() {
+  const candidates = [
+    process.env.ABAYA_REPO_ROOT,
+    process.env.ABAYA_APP_ROOT,
+    __dirname,
+    app && typeof app.getAppPath === 'function' ? app.getAppPath() : '',
+    path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..'),
+    process.cwd(),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (fs.existsSync(path.join(resolved, 'server.js')) && fs.existsSync(path.join(resolved, 'install')) && fs.existsSync(path.join(resolved, 'package.json'))) {
+      return resolved;
+    }
+  }
+  return path.resolve(__dirname, '..', '..');
+}
+
+const REPO_ROOT = resolveRepoRoot();
 const LAUNCHER_DATA_DIR = path.join(REPO_ROOT, 'data', 'desktop-launcher');
 const LAUNCHER_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'cache');
 const LAUNCHER_GPU_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'gpu-cache');
@@ -20,6 +39,8 @@ const RELEASE_MOMENT_PATH = path.join(REPO_ROOT, 'config', 'release-moment.json'
 const UPDATE_AUDIT_LOG_PATH = path.join(LAUNCHER_DATA_DIR, 'update-events.jsonl');
 const UPDATE_META_PATH = path.join(LAUNCHER_DATA_DIR, 'pending-update.json');
 const LAUNCHER_PKG_PATH = path.join(__dirname, 'package.json');
+const APP_MODE_PATH = path.join(REPO_ROOT, 'config', 'app-mode.json');
+const DEFAULT_APP_MODE = 'production';
 const DEFAULT_UPDATE_POLICY = {
   defaultChannel: 'stable',
   betaPercent: 0,
@@ -104,12 +125,44 @@ function readReleaseMomentForLauncher() {
 let mainWindow = null;
 let serverProc = null;
 let watcherProc = null;
+let dispatchProc = null;
 let allowWindowClose = false;
 /** After one LAN feed error, fall back to GitHub once per process (electron-updater). */
 let githubFallbackAfterLanError = false;
 const FACTORY_PORT = readPortFromDotenv(REPO_ROOT);
 let updateCheckTimer = null;
 let updatePolicy = Object.assign({}, DEFAULT_UPDATE_POLICY);
+/**
+ * App mode — 'production' (default) or 'development'. Production sets NODE_ENV
+ * on all spawned servers and enables the auto-updater; development disables
+ * updates and marks child processes as dev. Toggled from the GUI, persisted.
+ */
+let appMode = DEFAULT_APP_MODE;
+function loadAppMode() {
+  const o = readJsonFileSafe(APP_MODE_PATH);
+  const m = o && String(o.mode || '').toLowerCase();
+  return m === 'development' ? 'development' : 'production';
+}
+function saveAppMode(mode) {
+  const m = String(mode || '').toLowerCase() === 'development' ? 'development' : 'production';
+  try {
+    fs.mkdirSync(path.dirname(APP_MODE_PATH), { recursive: true });
+    fs.writeFileSync(APP_MODE_PATH, JSON.stringify({ mode: m }, null, 2));
+  } catch (_) {}
+  appMode = m;
+  return m;
+}
+function isProductionMode() {
+  return appMode === 'production';
+}
+function hasDevUpdateConfig() {
+  try {
+    return fs.existsSync(path.join(__dirname, 'dev-app-update.yml'));
+  } catch (_) {
+    return false;
+  }
+}
+appMode = loadAppMode();
 let updateFailureCount = 0;
 /** @type {{ from: string } | null} */
 let pendingUpdateApplyResult = null;
@@ -625,12 +678,18 @@ function setupAutoUpdates() {
   updatePolicy = loadUpdatePolicy();
   const channel = getDesiredUpdateChannel();
   const isPackaged = app.isPackaged;
-  if (!isPackaged) {
+  // Updates run only in production. From source (unpackaged) they additionally
+  // require a dev-app-update.yml, per electron-updater.
+  const updatesDisabled = appMode === 'development' || (!isPackaged && !hasDevUpdateConfig());
+  if (updatesDisabled) {
     const patch = {
       enabled: false,
       channel: channel,
       phase: 'disabled',
-      message: 'Updates disabled in development mode',
+      message:
+        appMode === 'development'
+          ? 'Development mode — updates disabled'
+          : 'Production (from source) — add dev-app-update.yml or use the packaged .exe to enable updates',
       updateFeedSource: 'n/a',
       updateMirrorBaseUrl: '',
       updateMirrorFeedUrl: '',
@@ -642,10 +701,17 @@ function setupAutoUpdates() {
       pendingUpdateApplyResult = null;
       patch.updateJustApplied = true;
       patch.updateAppliedFromVersion = from;
-      patch.message = 'Update applied successfully (dev build). Version ' + app.getVersion() + '.';
+      patch.message = 'Update applied successfully. Version ' + app.getVersion() + '.';
     }
     setUpdateState(patch);
     return;
+  }
+
+  // Production from source: let electron-updater read dev-app-update.yml.
+  if (!isPackaged) {
+    try {
+      autoUpdater.forceDevUpdateConfig = true;
+    } catch (_) {}
   }
 
   autoUpdater.autoDownload = true;
@@ -922,6 +988,7 @@ function pipeChild(proc, which) {
     sendLog(which, '\n--- process exited (' + String(code) + ') ---\n');
     if (which === 'server') serverProc = null;
     if (which === 'watcher') watcherProc = null;
+    if (which === 'dispatch') dispatchProc = null;
   });
   proc.on('error', function (err) {
     sendLog(which, '\n[spawn error] ' + String(err.message) + '\n');
@@ -930,6 +997,26 @@ function pipeChild(proc, which) {
 
 function ensureServerJs() {
   return fs.existsSync(path.join(REPO_ROOT, 'server.js'));
+}
+
+function ensureRuntimeSeedFiles() {
+  const envPath = path.join(REPO_ROOT, '.env');
+  const envExamplePath = path.join(REPO_ROOT, '.env.example');
+  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
+    try {
+      fs.copyFileSync(envExamplePath, envPath);
+      sendLog('server', '[launcher] Created .env from .env.example for first-run setup.\n');
+    } catch (_) {}
+  }
+
+  const watcherConfigPath = path.join(REPO_ROOT, 'tools', 'catalog-watcher', 'config.json');
+  const watcherExamplePath = path.join(REPO_ROOT, 'tools', 'catalog-watcher', 'config.example.json');
+  if (!fs.existsSync(watcherConfigPath) && fs.existsSync(watcherExamplePath)) {
+    try {
+      fs.copyFileSync(watcherExamplePath, watcherConfigPath);
+      sendLog('watcher', '[launcher] Created tools/catalog-watcher/config.json from the example template.\n');
+    } catch (_) {}
+  }
 }
 
 function watcherCanStart() {
@@ -951,34 +1038,56 @@ function buildChildEnv(extra) {
   delete env.YARN_GLOBAL_FOLDER;
   delete env.npm_config_cache;
   delete env.NPM_CONFIG_CACHE;
+  // App mode drives the runtime posture of every spawned server.
+  env.NODE_ENV = isProductionMode() ? 'production' : 'development';
+  env.ABAYA_MODE = appMode;
   return env;
 }
 
 /** Resolve `pm2` binary on PATH; returns null when not installed. */
-function resolvePm2Binary() {
-  const exe = process.platform === 'win32' ? 'pm2.cmd' : 'pm2';
-  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  for (const d of dirs) {
-    const full = path.join(d, exe);
-    try {
-      if (fs.existsSync(full)) return full;
-    } catch (_) { /* ignore */ }
-  }
+/**
+ * PM2 is driven through the project wrapper install/run-pm2.cjs — NEVER a global
+ * `pm2`. A global pm2 cannot run this Yarn-PnP repo, and on Windows
+ * `execFileSync('pm2.cmd', …)` throws EINVAL (Node refuses to execFile a .cmd).
+ * The wrapper runs the bundled PM2 with the PnP loader and an isolated PM2_HOME.
+ * Returns the wrapper path only when it and an installed dep graph both exist.
+ */
+function resolvePm2Wrapper() {
+  const wrapper = path.join(REPO_ROOT, 'install', 'run-pm2.cjs');
+  try {
+    if (fs.existsSync(wrapper) && factoryDepsInstalled()) return wrapper;
+  } catch (_) { /* ignore */ }
   return null;
 }
 
-/** Run `pm2 jlist` and parse it. Returns [] when pm2 is unavailable or empty. */
-function pm2ListSync() {
-  const bin = resolvePm2Binary();
-  if (!bin) return null;
+/** Spawn the wrapper via Electron-as-node so no external `node` is required. */
+function execPm2Wrapper(args, opts) {
+  const wrapper = resolvePm2Wrapper();
+  if (!wrapper) return { ok: false, error: 'pm2 wrapper unavailable (install/run-pm2.cjs or deps missing)' };
   try {
-    const out = execFileSync(bin, ['jlist'], {
+    const out = execFileSync(process.execPath, [wrapper, ...args], Object.assign({
+      cwd: REPO_ROOT,
       windowsHide: true,
       encoding: 'utf8',
-      timeout: 4000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const parsed = JSON.parse(out || '[]');
+      timeout: 30000,
+      env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1', PM2_RUNNER_PIPE: '1' }),
+    }, opts || {}));
+    return { ok: true, output: String(out || '').trim() };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
+/** Run `pm2 jlist` through the wrapper and parse it. null when pm2 is unavailable. */
+function pm2ListSync() {
+  if (!resolvePm2Wrapper()) return null;
+  const r = execPm2Wrapper(['jlist'], { timeout: 8000 });
+  if (!r.ok) return null;
+  try {
+    // The wrapper may print a PnP experimental-loader notice before the JSON.
+    const s = r.output;
+    const start = s.indexOf('[');
+    const parsed = JSON.parse(start >= 0 ? s.slice(start) : s || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch (_) {
     return null;
@@ -1011,19 +1120,7 @@ function pm2HasOnlineServer() {
 }
 
 function runPm2Command(args) {
-  const bin = resolvePm2Binary();
-  if (!bin) return { ok: false, error: 'pm2 not installed' };
-  try {
-    const out = execFileSync(bin, args, {
-      cwd: REPO_ROOT,
-      windowsHide: true,
-      encoding: 'utf8',
-      timeout: 30000,
-    });
-    return { ok: true, output: String(out || '').trim() };
-  } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
+  return execPm2Wrapper(args);
 }
 
 /** GET an HTTP URL on localhost and return parsed JSON (best-effort). */
@@ -1089,18 +1186,72 @@ function postLocalJson(port, urlPath, headers, timeoutMs) {
   });
 }
 
+/**
+ * Node args for a PnP-or-node_modules project. Only inject the PnP loader when
+ * `.pnp.cjs` actually exists, and reference it by ABSOLUTE path — a relative
+ * `-r ./.pnp.cjs` crashes with `Cannot find module './.pnp.cjs'` whenever the
+ * child's effective CWD differs or the loader was preloaded via NODE_OPTIONS.
+ * When there is no PnP manifest, plain `node` uses node_modules.
+ * @param {string} scriptDir directory whose `.pnp.cjs` governs this script
+ * @param {string} script    entry filename
+ */
+function nodeRunArgs(scriptDir, script) {
+  const pnp = path.join(scriptDir, '.pnp.cjs');
+  return fs.existsSync(pnp) ? ['-r', pnp, script] : [script];
+}
+
+/** True when the repo has an installed dependency graph (PnP or real node_modules). */
+function factoryDepsInstalled() {
+  if (fs.existsSync(path.join(REPO_ROOT, '.pnp.cjs'))) return true;
+  return fs.existsSync(path.join(REPO_ROOT, 'node_modules', 'express'));
+}
+
 function spawnFactoryServer() {
-  const opts = { cwd: REPO_ROOT, shell: true, env: buildChildEnv() };
-  if (useBun()) return spawn('bun', ['server.js'], opts);
-  // Launch directly through Node+PnP instead of `yarn node` to avoid cache-locator drift.
-  return spawn('node', ['-r', './.pnp.cjs', 'server.js'], opts);
+  const opts = { cwd: REPO_ROOT, shell: false, env: buildChildEnv() };
+  if (useBun()) return spawn(resolveNodeLikeBin('bun'), ['server.js'], opts);
+  return spawn(process.execPath, nodeRunArgs(REPO_ROOT, 'server.js'), childNodeOpts(opts));
 }
 
 function spawnWatcher() {
   const watcherDir = path.join(REPO_ROOT, 'tools', 'catalog-watcher');
-  const opts = { cwd: watcherDir, shell: true, env: buildChildEnv() };
-  if (useBun()) return spawn('bun', ['watch-catalog.js'], opts);
-  return spawn('node', ['-r', './.pnp.cjs', 'watch-catalog.js'], opts);
+  const opts = { cwd: watcherDir, shell: false, env: buildChildEnv() };
+  if (useBun()) return spawn(resolveNodeLikeBin('bun'), ['watch-catalog.js'], opts);
+  return spawn(process.execPath, nodeRunArgs(watcherDir, 'watch-catalog.js'), childNodeOpts(opts));
+}
+
+/** Resolve bun (per-user install else PATH). */
+function resolveNodeLikeBin(name) {
+  if (name === 'bun') return resolveBunBin();
+  return name;
+}
+
+/**
+ * Run child Node scripts through Electron's own binary via ELECTRON_RUN_AS_NODE=1
+ * (process.execPath is electron.exe in a packaged app, and system `node` may not be
+ * on PATH). This makes the factory server independent of any external Node install.
+ */
+function childNodeOpts(opts) {
+  const env = Object.assign({}, opts.env, { ELECTRON_RUN_AS_NODE: '1' });
+  return Object.assign({}, opts, { env: env });
+}
+
+// ── Dispatch (Bun) server — WhatsApp leaderboard / invoice upload ─────────────
+const DISPATCH_PORT = 3111;
+const DISPATCH_DIR = path.join(REPO_ROOT, 'services', 'dispatch-server');
+
+/** The per-user Bun install, else `bun` on PATH. */
+function resolveBunBin() {
+  const p = path.join(os.homedir(), '.bun', 'bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
+  return fs.existsSync(p) ? p : 'bun';
+}
+
+function dispatchCanStart() {
+  return fs.existsSync(path.join(DISPATCH_DIR, 'server.js'));
+}
+
+function spawnDispatchServer() {
+  // Bun runs server.js directly and auto-loads services/dispatch-server/.env — no PnP.
+  return spawn(resolveBunBin(), ['server.js'], { cwd: DISPATCH_DIR, shell: false, env: buildChildEnv() });
 }
 
 /**
@@ -1127,6 +1278,8 @@ function stopAllProcs() {
   watcherProc = null;
   killTree(serverProc);
   serverProc = null;
+  killTree(dispatchProc);
+  dispatchProc = null;
   // Ensure clean restart path: free server port even if stray process remains.
   ensurePortFreedSync(FACTORY_PORT, []);
 }
@@ -1166,10 +1319,26 @@ function createWindow() {
   });
 }
 
+function shouldAutoStartSilently() {
+  const flag = String(process.env.ABAYA_SILENT_BOOT || '').toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes';
+}
+
 app.whenReady().then(function () {
   pendingUpdateApplyResult = readAndConsumePendingUpdateSuccess();
   createWindow();
   setupAutoUpdates();
+  ensureRuntimeSeedFiles();
+  if (shouldAutoStartSilently()) {
+    setTimeout(function () {
+      startAllServers().catch(function (err) {
+        sendLog('server', '[launcher] auto-start failed: ' + String(err && err.message ? err.message : err) + '\n');
+      });
+      startDispatchRuntime().catch(function (err) {
+        sendLog('dispatch', '[launcher] auto-dispatch failed: ' + String(err && err.message ? err.message : err) + '\n');
+      });
+    }, 800);
+  }
 });
 
 app.on('window-all-closed', function () {
@@ -1193,6 +1362,28 @@ ipcMain.handle('get-defaults', function () {
   return {
     port: readPortFromDotenv(REPO_ROOT),
     repoRoot: REPO_ROOT,
+  };
+});
+
+ipcMain.handle('get-mode', function () {
+  return { mode: appMode, defaultMode: DEFAULT_APP_MODE, isPackaged: app.isPackaged };
+});
+
+/**
+ * Switch production/development. Persists, re-applies the updater posture live,
+ * and reports whether running servers need a restart to pick up the new
+ * NODE_ENV (they inherit the env only when (re)spawned).
+ */
+ipcMain.handle('set-mode', function (_e, mode) {
+  const previous = appMode;
+  const applied = saveAppMode(mode);
+  setupAutoUpdates();
+  const serversRunning = !!(serverProc || watcherProc || dispatchProc);
+  return {
+    mode: applied,
+    isPackaged: app.isPackaged,
+    changed: applied !== previous,
+    restartServersToApply: applied !== previous && serversRunning,
   };
 });
 
@@ -1369,9 +1560,17 @@ ipcMain.handle('export-diagnostics', async function () {
   }
 });
 
-ipcMain.handle('start-all', async function () {
+async function startAllServers() {
   if (!ensureServerJs()) {
     return { ok: false, error: 'server.js not found (expected repo root): ' + REPO_ROOT };
+  }
+
+  // Dependencies must be installed before anything can start. Fail with a clear,
+  // actionable message instead of a cryptic MODULE_NOT_FOUND crash in the child.
+  if (!useBun() && !factoryDepsInstalled()) {
+    const msg = 'Dependencies are not installed. Run START.bat (or `corepack yarn install`) in ' + REPO_ROOT + ' first.';
+    sendLog('server', '[launcher] ' + msg + '\n');
+    return { ok: false, error: msg };
   }
 
   // PM2 wins. If `abaya-server` is already online under PM2, do not spawn a duplicate
@@ -1381,8 +1580,8 @@ ipcMain.handle('start-all', async function () {
     return { ok: true, managedByPm2: true };
   }
 
-  // If pm2 is installed but the apps are stopped, prefer `pm2 start` so reboot persistence is intact.
-  if (resolvePm2Binary()) {
+  // If pm2 is usable (project wrapper + deps), prefer it so reboot persistence is intact.
+  if (resolvePm2Wrapper()) {
     const r = runPm2Command(['start', 'ecosystem.config.cjs', '--update-env']);
     sendLog('server', '[launcher] pm2 start ecosystem.config.cjs → ' + (r.ok ? 'ok' : r.error) + '\n');
     if (r.ok) {
@@ -1426,6 +1625,10 @@ ipcMain.handle('start-all', async function () {
   }
 
   return { ok: true };
+}
+
+ipcMain.handle('start-all', async function () {
+  return startAllServers();
 });
 
 ipcMain.handle('stop-all', async function () {
@@ -1436,4 +1639,46 @@ ipcMain.handle('stop-all', async function () {
   }
   stopAllProcs();
   return { ok: true };
+});
+
+async function startDispatchRuntime() {
+  if (!dispatchCanStart()) {
+    return { ok: false, error: 'dispatch server.js not found: ' + DISPATCH_DIR };
+  }
+  if (pidAlive(dispatchProc)) return { ok: true, already: true };
+  // Respect an externally-started dispatch (e.g. START-BUN.bat) — do not spawn a rival.
+  if (listPidsListeningOnPort(DISPATCH_PORT).length) {
+    sendLog('dispatch', '[launcher] A dispatch server is already listening on ' + DISPATCH_PORT + ' — leaving it as is.\n');
+    return { ok: true, already: true, external: true };
+  }
+  try {
+    dispatchProc = spawnDispatchServer();
+    pipeChild(dispatchProc, 'dispatch');
+    sendLog('dispatch', '[launcher] Started dispatch (Bun) on port ' + DISPATCH_PORT + ' — ' + DISPATCH_DIR + '\n');
+    return { ok: true, pid: dispatchProc.pid, port: DISPATCH_PORT };
+  } catch (e) {
+    dispatchProc = null;
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+ipcMain.handle('dispatch-start', async function () {
+  return startDispatchRuntime();
+});
+
+ipcMain.handle('dispatch-stop', async function () {
+  // Only stop what the launcher itself started — never a dispatch someone ran another way.
+  if (!pidAlive(dispatchProc)) {
+    return { ok: true, already: true, note: 'not launcher-owned' };
+  }
+  killTree(dispatchProc);
+  dispatchProc = null;
+  sendLog('dispatch', '[launcher] Dispatch stopped.\n');
+  return { ok: true };
+});
+
+ipcMain.handle('dispatch-status', function () {
+  const owned = pidAlive(dispatchProc);
+  const listening = listPidsListeningOnPort(DISPATCH_PORT).length > 0;
+  return { running: owned || listening, launcherOwned: owned, external: !owned && listening, port: DISPATCH_PORT };
 });
