@@ -1,14 +1,28 @@
 [![Labeler](https://github.com/mdabir1203/famousabaya/actions/workflows/label.yml/badge.svg?event=release)](https://github.com/mdabir1203/famousabaya/actions/workflows/label.yml)
 [![SLSA generic generator](https://github.com/mdabir1203/famousabaya/actions/workflows/generator-generic-ossf-slsa3-publish.yml/badge.svg?event=release)](https://github.com/mdabir1203/famousabaya/actions/workflows/generator-generic-ossf-slsa3-publish.yml)
 
-## Single EXE installer workflow
+# AbaYa Track - Factory Production Tracking System
 
-For a Windows client deployment, use the packaged launcher installer:
+Complete production tracking solution with factory server, CEO dashboard, and kiosk PWA.
 
-```bash
-yarn package:installer:win
-```
+## Quick Start
 
-This runs the Windows installer build script and produces a bundled NSIS installer under dist/desktop-launcher/ when built on a Windows host. The packaged app includes the full repo runtime (server, install scripts, config, docs, and the launcher itself), so the first launch can start the server without a separate manual dependency install.
+### For Factory Deployment
+See [INSTALLATION_GUIDE.md](./INSTALLATION_GUIDE.md) for complete installation instructions.
 
-If you are building from Linux or a machine without the Windows signing/symlink prerequisites, the script falls back to a portable zip build in dist/desktop-launcher/.
+### For CEO Dashboard Access
+Having trouble accessing https://dashboard.farewellabaya.com? See [CEO Dashboard Troubleshooting](./docs/CEO_DASHBOARD_TROUBLESHOOTING.md).
+
+## Components
+
+- **Factory Server** (`server.js`): Local Node.js server for production tracking
+- **CEO Dashboard**: Cloudflare Worker at https://dashboard.farewellabaya.com
+- **Kiosk PWA**: Tablet interface for workers
+- **Desktop Launcher**: Windows EXE installer for easy deployment
+
+## Documentation
+
+- [Installation Guide](./INSTALLATION_GUIDE.md) - Deploy on Windows laptop/tablet
+- [CEO Dashboard Troubleshooting](./docs/CEO_DASHBOARD_TROUBLESHOOTING.md) - Fix access issues
+- [Remote Access Setup](./docs/REMOTE_ACCESS.md) - Tailscale, tunnels, HTTPS
+- [System Design](./docs/SYSTEM_DESIGN.md) - Architecture overview

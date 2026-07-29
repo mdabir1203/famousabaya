@@ -243,12 +243,9 @@ Write-Info "Setting CEO_TOKEN..."
 $CEO_TOKEN | & node $WRANGLER_RUNNER secret put CEO_TOKEN
 Write-Ok "CEO_TOKEN set"
 
-$jwtChoice = Read-Host "  CEO_JWT_SECRET: [Enter]=generate new (invalidates CEO browser sessions) | keep=skip (use when secret already in Cloudflare)"
+$jwtChoice = Read-Host "  CEO_JWT_SECRET: [Enter]=use fixed 'abaya2026' (stable across deploys) | keep=skip (use when secret already in Cloudflare)"
 if ([string]::IsNullOrWhiteSpace($jwtChoice) -or $jwtChoice.Trim().ToLowerInvariant() -ne 'keep') {
-    $jwtRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-    $jwtBytes = New-Object byte[] 32
-    $jwtRng.GetBytes($jwtBytes)
-    $CEO_JWT_SECRET = [Convert]::ToBase64String($jwtBytes)
+    $CEO_JWT_SECRET = "abaya2026"
     Write-Info "Setting CEO_JWT_SECRET (server-only, not printed)..."
     $CEO_JWT_SECRET | & node $WRANGLER_RUNNER secret put CEO_JWT_SECRET
     Write-Ok "CEO_JWT_SECRET set"

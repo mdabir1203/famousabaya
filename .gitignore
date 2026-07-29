@@ -1,44 +1,191 @@
-# Dependencies
-node_modules/
+```
+# Environment variables
+.env*
+*.env*
 
-# Environment
-.env
-.env.local
-.env.*
+# PowerShell profiles and secrets
+SET_CEO_SECRET.ps1
 
-# Editors
-.vscode/
-
-# Logs and temp files
+# Logs
 *.log
+
+# Temporary files
 *.tmp
 *.swp
 
-# Python
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+venv/
+env/
+ENV/
+.venv/
+env.bak/
+venv.bak/
 
-# Build artifacts
-dist/
+# Build outputs
 build/
+dist/
+*.egg
 *.egg-info/
+.installed.cfg
+*.so
 
-# System
-.DS_Store
-Thumbs.db
-
-# Coverage
+# Coverage reports
 .coverage
 coverage/
 htmlcov/
 
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
 # Testing
 .pytest_cache/
 .mypy_cache/
+.nyc_output/
+coverage/
 
-# Virtual environments
-.venv/
-venv/
+# Distribution / packaging
+.Python
+eggs/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# Translations
+*.mo
+*.pot
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask
+instance/
+.webassets-cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.venv
 env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.7z
+*.rar
+*.gz
+*.bz2
+*.xz
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.app
+*.bin
+*.jar
+*.war
+*.class
+*.pyc
+*.pyo
+*.pyd
+*.sln
+*.csproj
+*.user
+*.userosscache
+*.suo
+*.pch
+*.ncb
+*.vcxproj.filters
+
+# Configuration
+config/
+secrets/
+credentials/
+
+# Backup files
+*~
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.swp
+*.swo
+
+# Cache directories
+.cache/
+.cargo/
+.target/
+.node-gyp/
+.npm/
+.yarn/
+.bazel/
+.build/
+.output/
+.temp/
+.tmp/
+
+# Documentation builds
+docs/_build/
+```
