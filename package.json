@@ -10,6 +10,7 @@
     "start": "node server.js",
     "icons:build": "node scripts/render-app-icons.cjs",
     "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
+    "build:installer": "cd tools/desktop-launcher && yarn install && yarn run dist:win",
     "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:system": "node scripts/test-system.mjs",
