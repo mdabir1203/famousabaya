@@ -26,7 +26,7 @@
     "appId": "com.abaya.track.launcher",
     "productName": "AbaYa Track Launcher",
     "directories": {
-      "output": "../../dist/desktop-launcher"
+      "output": "../../install"
     },
     "icon": "assets/app-icon",
     "files": [
@@ -36,39 +36,37 @@
       "renderer.js",
       "start-electron.cjs",
       "package.json",
-      "../../package.json",
-      "../../yarn.lock",
-      "../../.yarnrc.yml",
-      "../../.pnp.cjs",
-      "../../.env.example",
-      "../../tools/catalog-watcher/config.example.json",
-      "../../.yarn/**/*",
-      "../../install/**/*",
-      "../../server.js",
-      "../../scripts/**/*",
-      "../../shared/**/*",
-      "../../services/**/*",
-      "../../cloudflare/**/*",
-      "../../config/**/*",
-      "../../docs/**/*",
-      "../../lib/**/*",
-      "../../public/**/*",
-      "../../tools/**/*",
-      "../../gk/**/*",
-      "../../objects/**/*",
-      "../../data/**/*",
-      "../../node_modules/**/*",
-      "../../tools/catalog-watcher/node_modules/**/*",
-      "../../*.md",
-      "../../*.txt",
-      "../../*.json",
-      "../../*.cjs",
-      "../../*.mjs",
-      "../../*.js",
-      "../../*.bat",
-      "../../*.ps1",
-      "../../*.sql",
-      "../../*.xlsx"
+      "README.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../../install",
+        "to": "install",
+        "filter": ["*.bat", "*.ps1", "*.cjs"]
+      },
+      {
+        "from": "../../server.js",
+        "to": "server.js"
+      },
+      {
+        "from": "../../package.json",
+        "to": "package.json"
+      },
+      {
+        "from": "../../public",
+        "to": "public",
+        "filter": ["**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"]
+      },
+      {
+        "from": "../../shared",
+        "to": "shared",
+        "filter": ["**/*.{js,cjs,mjs}"]
+      },
+      {
+        "from": "../../tools/catalog-watcher",
+        "to": "tools/catalog-watcher",
+        "filter": ["*.js", "*.json", "package.json"]
+      }
     ],
     "publish": [
       {
@@ -90,20 +88,15 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}",
-      "icon": "assets/app-icon.ico",
-      "signingHashAlgorithms": [
-        "sha256"
-      ]
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "installerIcon": "assets/app-icon.ico",
-      "uninstallerIcon": "assets/app-icon.ico",
-      "installerSidebar": "assets/app-icon.ico",
-      "artifactName": "AbaYa-Track-Launcher-Setup-${version}.exe"
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AbaYa Track Launcher"
     }
   }
 }
