@@ -92,7 +92,9 @@
       ],
       "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}",
       "icon": "assets/app-icon.ico",
-      "signingHashAlgorithm": "sha256"
+      "signingHashAlgorithms": [
+        "sha256"
+      ]
     },
     "nsis": {
       "oneClick": false,
