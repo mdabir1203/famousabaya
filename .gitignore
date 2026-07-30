@@ -42,3 +42,14 @@ htmlcov/
 .venv/
 venv/
 env/
+# All-in-one build staging (production factory deps)
+tools/desktop-launcher/.factory-deps/
+tools/desktop-launcher/factory-bundle/
+
+# electron-builder output lands in install/ (directories.output = ../../install)
+install/*.exe
+install/*.blockmap
+install/builder-debug.yml
+install/latest.yml
+install/win-unpacked/
+install/*.zip

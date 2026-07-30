@@ -3,7 +3,24 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const crypto = require('crypto');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+// Load .env from a stable, update-safe location when provided (ABAYA_ENV_FILE),
+// else the local .env. In the packaged all-in-one the launcher points this at the
+// per-user data folder so cloud credentials survive reinstalls and transfer.
+require('dotenv').config({ path: process.env.ABAYA_ENV_FILE || path.join(__dirname, '.env') });
+
+// Single writable-data root. ABAYA_DATA_DIR (set by the launcher for the packaged
+// app) relocates ALL runtime data — snapshots, offline reports, CEO queue, roster
+// files — outside the install dir so updates/reinstalls never wipe it and the whole
+// folder is copyable to a new laptop. Each subsystem's own env var still wins.
+const DATA_DIR = (function () {
+  const d = String(process.env.ABAYA_DATA_DIR || '').trim();
+  if (d) return path.isAbsolute(d) ? d : path.join(__dirname, d);
+  return path.join(__dirname, 'data');
+})();
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
+if (!process.env.SQLITE_SNAPSHOT_DIR) process.env.SQLITE_SNAPSHOT_DIR = path.join(DATA_DIR, 'sqlite-snapshots');
+if (!process.env.OFFLINE_REPORT_DIR) process.env.OFFLINE_REPORT_DIR = path.join(DATA_DIR, 'offline-dashboard-reports');
+if (!process.env.CEO_INGEST_QUEUE_DIR) process.env.CEO_INGEST_QUEUE_DIR = DATA_DIR;
 const express = require('express');
 const multer = require('multer');
 const http = require('http');
@@ -71,7 +88,7 @@ const LAN_UPDATE_MIRROR_ROOT = (() => {
   const raw = String(process.env.ABAYA_LAN_UPDATE_MIRROR_DIR || '').trim();
   if (raw && path.isAbsolute(raw)) return raw;
   if (raw) return path.resolve(__dirname, raw);
-  return path.join(__dirname, 'data', 'lan-update-mirror');
+  return path.join(DATA_DIR, 'lan-update-mirror');
 })();
 
 function ensureLanUpdateMirrorDirs() {
@@ -274,7 +291,7 @@ if (REQUIRE_CLOUD_SYNC && (!CF_URL || !CF_SECRET)) {
 /** Durable NDJSON queue when factory has no internet — replayed when CF is reachable again. */
 const CEO_QUEUE_DIR = String(process.env.CEO_INGEST_QUEUE_DIR || '').trim()
   ? path.resolve(process.env.CEO_INGEST_QUEUE_DIR)
-  : path.join(__dirname, 'data');
+  : DATA_DIR;
 const CEO_QUEUE_FILE = (() => {
   const env = String(process.env.CEO_INGEST_QUEUE_FILE || '').trim();
   if (env) return path.isAbsolute(env) ? env : path.join(__dirname, env);
@@ -805,7 +822,7 @@ const DEFAULT_FACTORY_WORK_TYPES = [
   'Packaging',
   'Checker',
 ];
-const WORK_TYPES_JSON_PATH = path.join(__dirname, 'data', 'work-types.json');
+const WORK_TYPES_JSON_PATH = path.join(DATA_DIR, 'work-types.json');
 let FACTORY_WORK_TYPES = DEFAULT_FACTORY_WORK_TYPES.slice();
 let workTypesDataVersion = 0;
 /**
@@ -2221,7 +2238,7 @@ const EMP_COLOR_PALETTE = [
 
 // ─── MANUAL EMPLOYEE FILE (Dashboard add/delete, no-xlsx setups only) ────────
 // When EMPLOYEES_XLSX_PATH is set, xlsx is always the master and these are skipped.
-const EMPLOYEES_MANUAL_PATH = path.join(__dirname, 'data', 'employees-manual.json');
+const EMPLOYEES_MANUAL_PATH = path.join(DATA_DIR, 'employees-manual.json');
 
 function loadEmployeesFromManualFile() {
   if (EMPLOYEES_XLSX_PATH) return;
