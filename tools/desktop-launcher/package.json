@@ -115,7 +115,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "AbaYa-Track-Launcher-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
