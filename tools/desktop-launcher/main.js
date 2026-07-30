@@ -38,7 +38,25 @@ function resolveRepoRoot() {
 }
 
 const REPO_ROOT = resolveRepoRoot();
-const LAUNCHER_DATA_DIR = path.join(REPO_ROOT, 'data', 'desktop-launcher');
+
+// Stable, update-safe, transferable data root. In the packaged all-in-one this is
+// %APPDATA%\AbaYa Track (outside the install dir), so reinstalls/updates never wipe
+// it and the whole folder — factory data + .env (cloud credentials) — copies to a
+// new laptop, which then re-syncs the latest from the cloud automatically.
+// In dev it stays inside the repo so nothing pollutes the user profile.
+const STABLE_DATA_ROOT = (app && app.isPackaged)
+  ? path.join(app.getPath('appData'), 'AbaYa Track')
+  : path.join(REPO_ROOT, 'data');
+const FACTORY_DATA_DIR = (app && app.isPackaged)
+  ? path.join(STABLE_DATA_ROOT, 'factory-data')
+  : path.join(REPO_ROOT, 'data');
+const FACTORY_ENV_FILE = (app && app.isPackaged)
+  ? path.join(STABLE_DATA_ROOT, '.env')
+  : path.join(REPO_ROOT, '.env');
+
+const LAUNCHER_DATA_DIR = (app && app.isPackaged)
+  ? path.join(STABLE_DATA_ROOT, 'launcher')
+  : path.join(REPO_ROOT, 'data', 'desktop-launcher');
 const LAUNCHER_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'cache');
 const LAUNCHER_GPU_CACHE_DIR = path.join(LAUNCHER_DATA_DIR, 'gpu-cache');
 const UPDATE_POLICY_PATH = path.join(REPO_ROOT, 'config', 'update-policy.json');
@@ -65,6 +83,13 @@ function ensureLauncherRuntimeDirs() {
     fs.mkdirSync(LAUNCHER_DATA_DIR, { recursive: true });
     fs.mkdirSync(LAUNCHER_CACHE_DIR, { recursive: true });
     fs.mkdirSync(LAUNCHER_GPU_CACHE_DIR, { recursive: true });
+    fs.mkdirSync(FACTORY_DATA_DIR, { recursive: true });
+    // First run of the packaged app: seed the stable .env from the bundled example
+    // so the factory server has a config file to edit (and cloud creds persist).
+    if (app && app.isPackaged && !fs.existsSync(FACTORY_ENV_FILE)) {
+      const example = path.join(REPO_ROOT, '.env.example');
+      if (fs.existsSync(example)) fs.copyFileSync(example, FACTORY_ENV_FILE);
+    }
   } catch (_) {}
 }
 
@@ -1052,6 +1077,10 @@ function buildChildEnv(extra) {
   // App mode drives the runtime posture of every spawned server.
   env.NODE_ENV = isProductionMode() ? 'production' : 'development';
   env.ABAYA_MODE = appMode;
+  // Point the factory server at the stable, update-safe data root + .env so its
+  // snapshots, roster files, and cloud credentials live outside the install dir.
+  env.ABAYA_DATA_DIR = FACTORY_DATA_DIR;
+  env.ABAYA_ENV_FILE = FACTORY_ENV_FILE;
   return env;
 }
 
