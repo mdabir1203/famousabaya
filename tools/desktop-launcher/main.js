@@ -69,6 +69,10 @@ app.setPath('cache', LAUNCHER_CACHE_DIR);
 app.commandLine.appendSwitch('disk-cache-dir', LAUNCHER_CACHE_DIR);
 app.commandLine.appendSwitch('gpu-disk-cache-dir', LAUNCHER_GPU_CACHE_DIR);
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+// The launcher is a static 2D control panel — GPU compositing buys nothing here.
+// Disabling hardware acceleration removes the whole GPU helper process (~50–100 MB
+// RAM) with no visible impact on this UI. Must be called before app is ready.
+app.disableHardwareAcceleration();
 
 /**
  * Read .env values into a plain map (same convention as LAUNCH-ALL.bat).
@@ -1300,6 +1304,14 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Memory + security: sandbox the renderer (preload only uses contextBridge +
+      // ipcRenderer, which are sandbox-safe), skip the spellcheck dictionary, and
+      // disable renderer features this control panel never uses.
+      sandbox: true,
+      spellcheck: false,
+      webgl: false,
+      enableWebSQL: false,
+      backgroundThrottling: true,
     },
   });
   mainWindow.loadFile(path.join(__dirname, 'index.html'));

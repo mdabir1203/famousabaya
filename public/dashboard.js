@@ -15,6 +15,20 @@ let fallbackPollTimer = null;
 let fallbackConsecutiveErrors = 0;
 let fallbackMode = false;
 
+// Employee lookup by id. Report/log rendering did EMPLOYEES.find() per row (O(n×m)
+// scans that got slow with a big roster + many rows). This memoizes an id→emp Map
+// and rebuilds it only when the EMPLOYEES array reference actually changes.
+let _empByIdCache = null;
+let _empByIdSrc = null;
+function empById(id) {
+  var src = typeof EMPLOYEES !== 'undefined' ? EMPLOYEES : [];
+  if (_empByIdSrc !== src) {
+    _empByIdSrc = src;
+    _empByIdCache = new Map((src || []).map(function (e) { return [e.id, e]; }));
+  }
+  return _empByIdCache.get(id);
+}
+
 /**
  * Cached shift-window config (synced from server via /api/client-config).
  * UI elapsed timers, hourly chart, and per-item totals all clamp to these windows so the
@@ -802,7 +816,7 @@ function renderLiveSessions() {
 
   el.innerHTML = ids.map(id => {
     const sess = active[id];
-    const emp = EMPLOYEES.find(e => e.id === id);
+    const emp = empById(id);
     const ab = ABAYAS.find(a => a.id === sess.abaya_id);
     if (!emp) return '';
     const startedMs = Number(sess.started_at) || Date.now();
@@ -1002,7 +1016,7 @@ function initDashboardHoverImagePreview() {
 }
 
 function logRowProcess(l) {
-  const emp = EMPLOYEES.find(e => e.id === l.emp_id);
+  const emp = empById(l.emp_id);
   return l.process || (emp ? emp.process : '') || '';
 }
 
@@ -1066,7 +1080,7 @@ function renderRecentInvoiceLogsNode() {
   el.innerHTML = rows
     .map(function (l) {
       const t = formatDateTimeTz(l.end, { timeZone: whTimezone() });
-      const emp = EMPLOYEES.find(e => e.id === l.emp_id);
+      const emp = empById(l.emp_id);
       const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
       const nums = escapeHtml(String(l.invoice_serial || '')).replace(/,/g, ', ');
       const cnt =
@@ -1105,9 +1119,7 @@ function renderRecentCheckerLogsNode() {
   const body = rows
     .map(function (l) {
       const t = formatDateTimeTz(l.end, { timeZone: whTimezone() });
-      const emp = EMPLOYEES.find(function (e) {
-        return e.id === l.emp_id;
-      });
+      const emp = empById(l.emp_id);
       const ab = ABAYAS.find(function (a) {
         return a.id === l.abaya_id;
       });
@@ -1231,7 +1243,7 @@ function renderPareto() {
     '<div style="font-size:12px;color:var(--tx2)">of output from top ' + topN + ' worker' + (topN > 1 ? 's' : '') + '</div>' +
   '</div>' +
   perf.slice(0, 5).map((p, i) => {
-    const emp = EMPLOYEES.find(e => e.id === p.id);
+    const emp = empById(p.id);
     if (!emp) return '';
     const pctEmp = totalUnits > 0 ? Math.round((p.units / totalUnits) * 100) : 0;
     const avHtml = employeeAvatarHtml(emp);
@@ -1246,7 +1258,7 @@ function renderPareto() {
 
 // ─── PROCESS EFF ─────────────────────────────────────────────────────────────
 function canonicalLogProcess(l) {
-  var lp = l.process || (EMPLOYEES.find(function (e) { return e.id === l.emp_id; }) || {}).process || '';
+  var lp = l.process || (empById(l.emp_id) || {}).process || '';
   if (lp === 'Cutting') return 'Tailor (01)';
   if (lp === 'Cutting master') return 'Tailor (01)';
   if (lp === 'Stitching') return 'Tailor (02)';
@@ -1676,9 +1688,7 @@ function computeLocalAnalytics(logs) {
     const avg = Math.round(o.totalSec / o.units);
     const p = o.process;
     if (!fastestMap[p] || avg < fastestMap[p].avg_sec) {
-      const emp = EMPLOYEES.find(function (e) {
-        return e.id === o.emp_id;
-      });
+      const emp = empById(o.emp_id);
       fastestMap[p] = {
         emp_name: emp ? emp.name : o.emp_id,
         emp_process: p,
@@ -1699,9 +1709,7 @@ function computeLocalAnalytics(logs) {
     .map(function (id) {
       const o = byEmp[id];
       if (o.units < 2) return null;
-      const emp = EMPLOYEES.find(function (e) {
-        return e.id === id;
-      });
+      const emp = empById(id);
       return {
         emp_id: id,
         emp_name: emp ? emp.name : id,
@@ -1977,7 +1985,7 @@ function exportReport() {
   text += '\uD83D\uDCCB *Recent Sessions*\n';
 
   logs.slice(-10).reverse().forEach(l => {
-    const emp = EMPLOYEES.find(e => e.id === l.emp_id);
+    const emp = empById(l.emp_id);
     const ab = ABAYAS.find(a => a.id === l.abaya_id);
     const t = new Date(l.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const logProcess = l.process || (emp ? emp.process : '?');
