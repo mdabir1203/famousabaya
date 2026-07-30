@@ -28,6 +28,15 @@
     }
   ],
 
+  // Desktop launcher OTA feed — serves GET /updates/<channel>/<file> from R2.
+  // Keep in sync with cloudflare/wrangler.toml.
+  "r2_buckets": [
+    {
+      "binding": "UPDATES",
+      "bucket_name": "abaya-updates"
+    }
+  ],
+
   "triggers": {
     "crons": ["0 14 * * *", "* * * * *"]
   },
