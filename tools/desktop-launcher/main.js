@@ -12,6 +12,13 @@ const { spawn, execSync, execFileSync } = require('child_process');
 
 /** Resolve the runtime root for both source runs and packaged installs. */
 function resolveRepoRoot() {
+  // All-in-one packaged build: the factory server is bundled into resources/ via
+  // extraResources (server.js, public, shared, install, package.json, node_modules).
+  // Prefer resources/ so the installed exe runs the whole system with no repo.
+  if (app && app.isPackaged) {
+    const res = process.resourcesPath;
+    if (res && fs.existsSync(path.join(res, 'server.js'))) return res;
+  }
   const candidates = [
     process.env.ABAYA_REPO_ROOT,
     process.env.ABAYA_APP_ROOT,

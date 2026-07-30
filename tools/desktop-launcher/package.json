@@ -42,7 +42,11 @@
       {
         "from": "../../install",
         "to": "install",
-        "filter": ["*.bat", "*.ps1", "*.cjs"]
+        "filter": [
+          "*.bat",
+          "*.ps1",
+          "*.cjs"
+        ]
       },
       {
         "from": "../../server.js",
@@ -55,17 +59,36 @@
       {
         "from": "../../public",
         "to": "public",
-        "filter": ["**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"]
+        "filter": [
+          "**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"
+        ]
       },
       {
         "from": "../../shared",
         "to": "shared",
-        "filter": ["**/*.{js,cjs,mjs}"]
+        "filter": [
+          "**/*.{js,cjs,mjs}"
+        ]
+      },
+      {
+        "from": "../../config",
+        "to": "config",
+        "filter": [
+          "**/*.json"
+        ]
       },
       {
         "from": "../../tools/catalog-watcher",
         "to": "tools/catalog-watcher",
-        "filter": ["*.js", "*.json", "package.json"]
+        "filter": [
+          "*.js",
+          "*.json",
+          "package.json"
+        ]
+      },
+      {
+        "from": ".factory-deps/node_modules",
+        "to": "node_modules"
       }
     ],
     "publish": [

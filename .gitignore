@@ -42,3 +42,6 @@ htmlcov/
 .venv/
 venv/
 env/
+# All-in-one build staging (production factory deps)
+tools/desktop-launcher/.factory-deps/
+tools/desktop-launcher/factory-bundle/

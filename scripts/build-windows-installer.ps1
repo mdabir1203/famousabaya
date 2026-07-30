@@ -6,6 +6,11 @@ $releaseDir = Join-Path $root 'dist/release-client'
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
 
+# Bundle the factory server's production node_modules so the installer is all-in-one
+# (server runs from resources/ with no repo, no separate Node). Must run before dist:win.
+Write-Host '[installer] Bundling factory production dependencies...'
+node (Join-Path $root 'scripts/bundle-factory.mjs')
+
 Push-Location $launcherDir
 try {
   Write-Host '[installer] Installing launcher dependencies...'
