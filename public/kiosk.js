@@ -114,6 +114,12 @@ function refreshKioskSnapshotFromServer() {
       }
     })
     .catch(() => {});
+  // Re-sync the roster on every (re)connect. The live 'employees_update' push and
+  // the 30s /api/client-config version poll both miss changes made while this
+  // tablet was disconnected (screen lock, Wi-Fi drop, backgrounding — routine on
+  // Android kiosks left open all day); without this an add/removal only "seemed"
+  // seamless and could otherwise sit stale for up to 30s after reconnecting.
+  loadEmployeesFromServer();
 }
 
 // ─── SOCKET CONNECTION STATUS ─────────────────────────────────────────────────
