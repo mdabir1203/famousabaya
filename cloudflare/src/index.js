@@ -44,6 +44,35 @@ export default {
       return jsonRes({ ok: true, service: 'abaya-track-worker' });
     }
 
+    // ── Desktop launcher OTA feed ─────────────────────────────────────────────
+    // GET /updates/<channel>/<file> streams the release artifacts from R2 so
+    // electron-updater can auto-update client laptops over the internet — no
+    // public repo, no embedded token. Deliberately unauthenticated (installers
+    // are not secrets) and read-only: only GET/HEAD, only stable|beta channels,
+    // and no path traversal (single filename segment).
+    if (path.startsWith('/updates/')) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return errRes('Method not allowed', 405);
+      }
+      if (!env.UPDATES) return errRes('Update feed not configured', 503);
+      const seg = path.slice('/updates/'.length).split('/').filter(Boolean);
+      if (seg.length !== 2) return errRes('Not found', 404);
+      const [channel, file] = seg;
+      if (channel !== 'stable' && channel !== 'beta') return errRes('Not found', 404);
+      if (!/^[A-Za-z0-9._-]+$/.test(file)) return errRes('Not found', 404);
+      const obj = await env.UPDATES.get(channel + '/' + file);
+      if (!obj) return errRes('Not found', 404);
+      const headers = new Headers(CORS);
+      obj.writeHttpMetadata(headers);
+      headers.set('etag', obj.httpEtag);
+      // latest.yml must stay fresh (update checks); binaries are immutable per version.
+      headers.set(
+        'Cache-Control',
+        file.endsWith('.yml') ? 'public, max-age=60' : 'public, max-age=31536000, immutable'
+      );
+      return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
+    }
+
     // ── CEO cookie session (no prior auth required) ────────────────────────────
     if (path === '/api/ceo/session' && request.method === 'POST') {
       try {

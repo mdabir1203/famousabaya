@@ -100,7 +100,7 @@
         "provider": "github",
         "owner": "mdabir1203",
         "repo": "famousabaya",
-        "releaseType": "draft"
+        "releaseType": "release"
       }
     ],
     "extraMetadata": {

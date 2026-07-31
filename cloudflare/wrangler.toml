@@ -73,6 +73,15 @@ database_id   = "5d61fb15-2ead-491b-80e2-fe2b2fd46d23"
 # binding     = "EXPORTS"
 # bucket_name = "abaya-exports"
 
+# ─── R2 Bucket — desktop launcher OTA update feed ────────────────────────────
+# Serves GET /updates/<channel>/<file> (latest.yml, the .exe, the .blockmap) so
+# electron-updater can auto-update client laptops over the internet without the
+# repo being public and without embedding a GitHub token.
+# Publish with: node scripts/publish-r2-update.mjs --channel stable
+[[r2_buckets]]
+binding     = "UPDATES"
+bucket_name = "abaya-updates"
+
 # â”€â”€â”€ Cron â€” auto EOD summary at 6pm Dubai time every day â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Multiple crons share the `scheduled` handler in src/index.js, which branches
 # on `event.cron`:
