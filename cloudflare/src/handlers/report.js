@@ -28,8 +28,12 @@ export async function handleReport(env, url) {
   const type = url.searchParams.get('type') || 'daily';
   const factoryToday = factoryTodayString(env);
   const localToday = safeYmdOrFallback(url.searchParams.get('local_today'), factoryToday);
+  // Explicit date pick ("browse history" for daily/weekly/monthly/yearly). Defaults
+  // to today when absent, so every existing caller is unaffected.
+  const requestedDate = safeYmdOrFallback(url.searchParams.get('date'), localToday);
+  const isExplicitDatePick = requestedDate !== localToday;
   const workingCfg = await getWorkingHoursConfig(env);
-  let range = reportRangeForType(type, localToday);
+  let range = reportRangeForType(type, requestedDate, factoryToday);
   let dayBinds = [range.startYmd, range.endYmd];
   let prevDayBinds = [range.prevStart, range.prevEnd];
   let dailyFallbackApplied = false;
@@ -90,9 +94,13 @@ export async function handleReport(env, url) {
     prevDayBinds
   );
   const firstSummaryRow = (summary && summary.results && summary.results[0]) || {};
-  if (range.type === 'daily' && (Number(firstSummaryRow.total_units) || 0) === 0) {
+  // Only auto-fallback to the previous day when the user is looking at "today" and
+  // it happens to have no data yet (e.g. early morning, before the first clock-in).
+  // A deliberately picked historical date with zero activity is a real, correct
+  // answer and must never be silently swapped for a different day.
+  if (!isExplicitDatePick && range.type === 'daily' && (Number(firstSummaryRow.total_units) || 0) === 0) {
     const fallbackDay = range.prevStart;
-    range = reportRangeForType(type, fallbackDay);
+    range = reportRangeForType(type, fallbackDay, factoryToday);
     dayBinds = [range.startYmd, range.endYmd];
     prevDayBinds = [range.prevStart, range.prevEnd];
     dailyFallbackApplied = true;
@@ -349,6 +357,8 @@ export async function handleReport(env, url) {
         previous_start_date: range.prevStart,
         previous_end_date: range.prevEnd,
         days: range.days,
+        requested_date: requestedDate,
+        is_explicit_date_pick: isExplicitDatePick,
       },
       summary: {
         ...summaryRow,

@@ -44,13 +44,51 @@ export function yearStartYmd(ymd) {
   return ymdFromUtcDate(d);
 }
 
-export function reportRangeForType(type, factoryToday) {
+// Period ends via the standard calendar-math trick: start of the NEXT period,
+// minus one day. Same technique for all three units — no unit-specific edge
+// cases (leap years, 30- vs 31-day months, ISO week rollover) to get wrong.
+export function weekEndYmd(ymd) {
+  return addUtcDays(weekStartMondayYmd(ymd), 6);
+}
+
+export function monthEndYmd(ymd) {
+  const nextMonthStart = monthStartYmd(addUtcDays(monthStartYmd(ymd), 31));
+  return addUtcDays(nextMonthStart, -1);
+}
+
+export function yearEndYmd(ymd) {
+  const d = parseYmdUtc(ymd);
+  d.setUTCMonth(11, 31);
+  return ymdFromUtcDate(d);
+}
+
+/**
+ * Resolve the [start, end] window for a report type anchored at `anchorYmd`
+ * (the date the user picked — defaults to today when they haven't picked one).
+ *
+ * `todayYmd` (defaults to `anchorYmd` for full backward compatibility) caps the
+ * window so it never reaches into the future: a period still in progress ends
+ * at today; a period that has already fully elapsed (any past date the user
+ * explicitly picks) shows its complete range, not just "start through the
+ * picked day" — that's what makes a picked date actually useful for browsing
+ * history rather than only ever repeating "today's" truncated window.
+ */
+export function reportRangeForType(type, anchorYmd, todayYmd) {
   const t = type === 'daily' || type === 'weekly' || type === 'monthly' || type === 'yearly' ? type : 'daily';
-  let startYmd = factoryToday;
-  if (t === 'weekly') startYmd = weekStartMondayYmd(factoryToday);
-  if (t === 'monthly') startYmd = monthStartYmd(factoryToday);
-  if (t === 'yearly') startYmd = yearStartYmd(factoryToday);
-  const endYmd = factoryToday;
+  const today = todayYmd || anchorYmd;
+  let startYmd = anchorYmd;
+  let naturalEndYmd = anchorYmd;
+  if (t === 'weekly') {
+    startYmd = weekStartMondayYmd(anchorYmd);
+    naturalEndYmd = weekEndYmd(anchorYmd);
+  } else if (t === 'monthly') {
+    startYmd = monthStartYmd(anchorYmd);
+    naturalEndYmd = monthEndYmd(anchorYmd);
+  } else if (t === 'yearly') {
+    startYmd = yearStartYmd(anchorYmd);
+    naturalEndYmd = yearEndYmd(anchorYmd);
+  }
+  const endYmd = naturalEndYmd < today ? naturalEndYmd : today;
   const days = dayDiffInclusive(startYmd, endYmd);
   const prevEnd = addUtcDays(startYmd, -1);
   const prevStart = addUtcDays(prevEnd, -(days - 1));
@@ -62,8 +100,8 @@ export function safeYmdOrFallback(value, fallbackYmd) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallbackYmd;
 }
 
-export function sessionsFilterForPeriod(period, anchorYmd) {
-  const range = reportRangeForType(period, anchorYmd);
+export function sessionsFilterForPeriod(period, anchorYmd, todayYmd) {
+  const range = reportRangeForType(period, anchorYmd, todayYmd);
   return {
     where: 'WHERE day_date >= ? AND day_date <= ?',
     binds: [range.startYmd, range.endYmd],

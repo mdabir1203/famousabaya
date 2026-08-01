@@ -287,6 +287,12 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   <div class="modal-box">
     <div style="font-size:19px;font-weight:700;margin-bottom:4px" id="modal-title">Report</div>
     <div style="font-size:12px;color:var(--tx2);margin-bottom:16px" id="modal-ts"></div>
+    <div id="report-date-row" style="display:none;align-items:center;gap:8px;margin-bottom:14px">
+      <label for="report-date-picker" style="font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em">Pick a date</label>
+      <input type="date" id="report-date-picker" onchange="onReportDatePicked(this.value)"
+        style="background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--tx1);padding:6px 8px;font-family:var(--fn);font-size:12px">
+      <button type="button" class="rep-btn" style="padding:6px 10px;font-size:11px" onclick="onReportDatePicked('')">Today</button>
+    </div>
     <div id="modal-body"></div>
     <div style="display:flex;gap:10px;margin-top:16px">
       <button class="btn-export" onclick="exportWA()">&#128241; Send via WhatsApp</button>
@@ -423,6 +429,9 @@ let STATE = {
 };
 let ABAYAS = [];
 let activeReportType = 'daily';
+// '' means "today" (the default, unpicked state); a YYYY-MM-DD string is an
+// explicit historical pick, browsing that day/week/month/year instead.
+let activeReportDate = '';
 let lastReportData = null;
 let lastModalAnalytics = null;
 let lastModalTrace = null;
@@ -1041,6 +1050,8 @@ function renderAll() {
 async function openAnalytics() {
   lastModalTrace = null;
   lastReportData = null;
+  const dateRow = document.getElementById('report-date-row');
+  if (dateRow) dateRow.style.display = 'none';
   const sel = document.getElementById('analytics-period');
   const period = sel && sel.value ? sel.value : 'daily';
   document.getElementById('modal-title').textContent = 'Process analytics';
@@ -1156,6 +1167,8 @@ async function openAnalytics() {
 }
 
 async function runGarmentTrace() {
+  const dateRow = document.getElementById('report-date-row');
+  if (dateRow) dateRow.style.display = 'none';
   const inp = document.getElementById('trace-q');
   const q = inp && inp.value ? inp.value.trim() : '';
   if (!q) {
@@ -1236,8 +1249,9 @@ async function runGarmentTrace() {
 }
 
 // ─── REPORT MODAL ─────────────────────────────────────────────────────────────
-async function openReport(type) {
+async function openReport(type, pickedDate) {
   activeReportType = type;
+  if (pickedDate !== undefined) activeReportDate = pickedDate || '';
   lastModalAnalytics = null;
   lastModalTrace = null;
   document.getElementById('modal-title').textContent = type.charAt(0).toUpperCase()+type.slice(1)+' Report';
@@ -1245,9 +1259,15 @@ async function openReport(type) {
   document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
   document.getElementById('modal').classList.add('open');
 
+  const dateRow = document.getElementById('report-date-row');
+  const datePicker = document.getElementById('report-date-picker');
+  if (dateRow) dateRow.style.display = 'flex';
+  if (datePicker) datePicker.value = activeReportDate;
+
   try {
+    const dateParam = activeReportDate ? '&date=' + encodeURIComponent(activeReportDate) : '';
     const r = await fetchWithRetry(
-      BASE + '/api/report?type=' + encodeURIComponent(type) + '&local_today=' + encodeURIComponent(localYmdNow()) + '&ts=' + Date.now(),
+      BASE + '/api/report?type=' + encodeURIComponent(type) + '&local_today=' + encodeURIComponent(localYmdNow()) + dateParam + '&ts=' + Date.now(),
       { cache: 'no-store' }
     );
     const data = await r.json();
@@ -1417,6 +1437,11 @@ async function openReport(type) {
   } catch(e) {
     document.getElementById('modal-body').innerHTML = '<div style="color:var(--rd);text-align:center;padding:20px">Failed to load report: '+e.message+'</div>';
   }
+}
+
+/** Re-run the currently open report anchored at a picked date ('' = back to today). */
+function onReportDatePicked(value) {
+  openReport(activeReportType, value || '');
 }
 
 function card(label, val, color) {
