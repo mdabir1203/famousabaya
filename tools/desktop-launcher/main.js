@@ -103,6 +103,12 @@ function readPortFromDotenv(repoRoot) {
   return 3000;
 }
 
+function readHostFromDotenv(repoRoot) {
+  const env = readDotenvMap(repoRoot);
+  const host = String(env.HOST || env.host || '').trim();
+  return host || '0.0.0.0';
+}
+
 function readIngestSecretFromDotenv(repoRoot) {
   const env = readDotenvMap(repoRoot);
   return String(env.CF_INGEST_SECRET || env.cf_ingest_secret || '').trim();
@@ -130,6 +136,7 @@ let allowWindowClose = false;
 /** After one LAN feed error, fall back to GitHub once per process (electron-updater). */
 let githubFallbackAfterLanError = false;
 const FACTORY_PORT = readPortFromDotenv(REPO_ROOT);
+const FACTORY_HOST = readHostFromDotenv(REPO_ROOT);
 let updateCheckTimer = null;
 let updatePolicy = Object.assign({}, DEFAULT_UPDATE_POLICY);
 /**
@@ -1041,6 +1048,9 @@ function buildChildEnv(extra) {
   // App mode drives the runtime posture of every spawned server.
   env.NODE_ENV = isProductionMode() ? 'production' : 'development';
   env.ABAYA_MODE = appMode;
+  env.ABAYA_REPO_ROOT = REPO_ROOT;
+  if (!env.PORT) env.PORT = String(FACTORY_PORT);
+  if (!env.HOST) env.HOST = FACTORY_HOST;
   return env;
 }
 
@@ -1124,6 +1134,34 @@ function runPm2Command(args) {
 }
 
 /** GET an HTTP URL on localhost and return parsed JSON (best-effort). */
+function waitForFactoryServerHealth(timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 30000);
+  return new Promise((resolve) => {
+    const tick = () => {
+      const req = http.get(
+        {
+          host: '127.0.0.1',
+          port: FACTORY_PORT,
+          path: '/api/health',
+          timeout: 2000,
+        },
+        (res) => {
+          res.resume();
+          if (res.statusCode === 200) return resolve(true);
+          retry();
+        }
+      );
+      req.on('error', retry);
+      req.on('timeout', () => req.destroy());
+    };
+    const retry = () => {
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 700);
+    };
+    tick();
+  });
+}
+
 function fetchLocalJson(port, urlPath, headers, timeoutMs) {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -1604,6 +1642,12 @@ async function startAllServers() {
   } catch (e) {
     serverProc = null;
     return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+
+  const healthy = await waitForFactoryServerHealth(30000);
+  if (!healthy) {
+    sendLog('server', '[launcher] Factory server did not answer /api/health after 30s.\n');
+    return { ok: false, error: 'Factory server did not become healthy on port ' + FACTORY_PORT };
   }
 
   if (watcherCanStart()) {

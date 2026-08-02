@@ -23,9 +23,6 @@ const reconcileCloudflare = require('./shared/reconcile-cloudflare.cjs');
 const resendAlerts = require('./shared/alerting/resend-alerts.cjs');
 const chokidar = require('chokidar');
 
-/** Default 3000; override with PORT in .env */
-const PORT = process.env.PORT || 3000;
-
 function parseEnvPositiveIntOrNull(name) {
   const raw = String(process.env[name] || '').trim();
   if (!raw) return null;
@@ -33,6 +30,17 @@ function parseEnvPositiveIntOrNull(name) {
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.floor(n);
 }
+
+function resolveServerBindHost() {
+  const raw = String(process.env.HOST || '').trim();
+  if (!raw) return '0.0.0.0';
+  if (raw === 'localhost') return '127.0.0.1';
+  return raw;
+}
+
+/** Default 3000; override with PORT in .env */
+const PORT = parseEnvPositiveIntOrNull('PORT') || 3000;
+const HOST = resolveServerBindHost();
 
 function readAppPackageVersion() {
   try {
@@ -3002,7 +3010,7 @@ app.get('/api/health', (req, res) => {
 
 /** Returns detected LAN IPs and server port so the setup page can build kiosk URLs. */
 app.get('/api/server-info', (req, res) => {
-  res.json({ ok: true, ips: getLanIPs(), port: PORT });
+  res.json({ ok: true, ips: getLanIPs(), port: PORT, host: HOST });
 });
 
 /** Version snapshot for browsers (auto-refresh catalog/employees, detect server restart). */
@@ -3388,7 +3396,7 @@ async function seedRosterFromCloudIfLocalMissing() {
 }
 
 // START SERVER
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   ensurePublicUploadDirs();
   ensureCeoQueueDir();
   recoverCeoIngestQueue();
@@ -3406,10 +3414,11 @@ server.listen(PORT, () => {
   void seedRosterFromCloudIfLocalMissing();
   const lanIPs = getLanIPs();
   const lanIp = lanIPs.length ? lanIPs[0].address : 'localhost';
-  console.log(`Abaya Central Server running on http://localhost:${PORT}`);
-  console.log(`  Kiosk:     http://localhost:${PORT}/kiosk.html`);
-  console.log(`  Dashboard: http://localhost:${PORT}/dashboard.html`);
-  console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
+  console.log(`Abaya Central Server running on http://${HOST === '0.0.0.0' ? '0.0.0.0' : HOST}:${PORT}`);
+  console.log(`  Local:     http://127.0.0.1:${PORT}/kiosk.html`);
+  console.log(`  Kiosk:     http://127.0.0.1:${PORT}/kiosk.html`);
+  console.log(`  Dashboard: http://127.0.0.1:${PORT}/dashboard.html`);
+  console.log(`  QR Setup:  http://127.0.0.1:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
   console.log(`  Media:     http://localhost:${PORT}/asset-upload   (employee + item images)`);
   console.log(`  Socket.IO: pingInterval=${SOCKET_PING_INTERVAL_MS}ms pingTimeout=${SOCKET_PING_TIMEOUT_MS}ms cookie=false allowEIO3=true`);
   const persistence = getPersistenceHealth();
