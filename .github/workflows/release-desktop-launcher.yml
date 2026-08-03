@@ -104,21 +104,43 @@ jobs:
             echo "release_exists=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build and publish signed launcher
-        if: steps.check-release.outputs.release_exists == 'false'
-        working-directory: tools/desktop-launcher
-        run: yarn release:gh
-
-      - name: Create or update GitHub release with problem/fix notes
+      - name: Create or update GitHub release stub
         if: steps.check-release.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.release-version.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "Release $tag" --notes-file release-notes.md
+            gh release edit "$tag" --title "Release $tag" --notes-file release-notes.md --draft=false
           else
             gh release create "$tag" --title "Release $tag" --notes-file release-notes.md
+          fi
+
+      - name: Build and publish signed launcher
+        if: steps.check-release.outputs.release_exists == 'false'
+        working-directory: tools/desktop-launcher
+        run: yarn release:gh
+
+      - name: Build portable ZIP release artifact
+        if: steps.check-release.outputs.release_exists == 'false'
+        shell: pwsh
+        run: |
+          $env:Path += ";$env:ProgramFiles\PowerShell\7"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1
+
+      - name: Upload portable ZIP to release
+        if: steps.check-release.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ steps.release-version.outputs.tag }}"
+          zip_path="dist/AbaYa-Track-v${{ steps.release-version.outputs.version }}.zip"
+          if [ -f "$zip_path" ]; then
+            gh release upload "$tag" "$zip_path" --clobber
+          else
+            echo "Portable ZIP artifact not found at $zip_path"
+            exit 1
           fi
 
       - name: Release already exists
