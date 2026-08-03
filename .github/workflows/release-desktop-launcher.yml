@@ -16,8 +16,6 @@ jobs:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CSC_LINK: ${{ secrets.WINDOWS_CERT_BASE64 }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
       ABAYA_UPDATE_CHANNEL: ${{ contains(github.ref_name, 'beta') && 'beta' || 'stable' }}
     steps:
       - name: Checkout
@@ -35,14 +33,39 @@ jobs:
         working-directory: tools/desktop-launcher
         run: yarn install
 
+      - name: Generate self-signed Windows certificate
+        shell: pwsh
+        run: |
+          $certDir = Join-Path $env:GITHUB_WORKSPACE 'dist/cert'
+          New-Item -ItemType Directory -Path $certDir -Force | Out-Null
+          $certPath = Join-Path $certDir 'AbaYaTrackSelfSigned.pfx'
+          $password = 'AbaYa-Track-Self-Signed-2026!'
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          $cert = New-SelfSignedCertificate -CertStoreLocation Cert:\CurrentUser\My -Type CodeSigningCert -Subject "CN=AbaYa Track Self Signed" -KeyUsage DigitalSignature -FriendlyName "AbaYa Track Self Signed" -KeyExportPolicy Exportable -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider"
+          Export-PfxCertificate -Cert $cert -FilePath $certPath -Password $securePassword | Out-Null
+          echo "CSC_LINK=$certPath" >> $env:GITHUB_ENV
+          echo "CSC_KEY_PASSWORD=$password" >> $env:GITHUB_ENV
+          echo "WIN_CSC_LINK=$certPath" >> $env:GITHUB_ENV
+
+      - name: Resolve release version
+        id: release-version
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            tag="$GITHUB_REF_NAME"
+          else
+            version=$(node -p "require('./tools/desktop-launcher/package.json').version")
+            tag="v$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Skip release if version already exists
         id: check-release
         shell: bash
         run: |
-          version=$(node -p "require('./tools/desktop-launcher/package.json').version")
-          tag="v$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          tag="${{ steps.release-version.outputs.tag }}"
           echo "Checking for existing GitHub release tag $tag..."
           release=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$tag")
           if echo "$release" | grep -q '"message": "Not Found"'; then
@@ -58,4 +81,4 @@ jobs:
 
       - name: Release already exists
         if: steps.check-release.outputs.release_exists == 'true'
-        run: echo "Release for version ${{ steps.check-release.outputs.version }} already exists. Skipping publish."
+        run: echo "Release for version ${{ steps.release-version.outputs.version }} already exists. Skipping publish."
