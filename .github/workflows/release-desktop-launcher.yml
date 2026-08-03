@@ -2,6 +2,8 @@ name: Release Desktop Launcher
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -33,6 +35,27 @@ jobs:
         working-directory: tools/desktop-launcher
         run: yarn install
 
+      - name: Skip release if version already exists
+        id: check-release
+        shell: bash
+        run: |
+          version=$(node -p "require('./tools/desktop-launcher/package.json').version")
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Checking for existing GitHub release tag $tag..."
+          release=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$tag")
+          if echo "$release" | grep -q '"message": "Not Found"'; then
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and publish signed launcher
+        if: steps.check-release.outputs.release_exists == 'false'
         working-directory: tools/desktop-launcher
         run: yarn release:gh
+
+      - name: Release already exists
+        if: steps.check-release.outputs.release_exists == 'true'
+        run: echo "Release for version ${{ steps.check-release.outputs.version }} already exists. Skipping publish."
