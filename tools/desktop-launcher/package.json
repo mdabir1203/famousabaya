@@ -68,7 +68,12 @@
       "../../*.bat",
       "../../*.ps1",
       "../../*.sql",
-      "../../*.xlsx"
+      "../../*.xlsx",
+      "../../ecosystem.config.cjs",
+      "../../wrangler.jsonc",
+      "../../docker/**/*",
+      "../../product-explainer/**/*",
+      "../../kiosk-pwa/**/*"
     ],
     "publish": [
       {

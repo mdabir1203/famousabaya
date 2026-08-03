@@ -1,4 +1,4 @@
-name: Release Desktop Launcher
+name: QA/QC and Release
 
 on:
   push:
@@ -6,16 +6,40 @@ on:
       - main
     tags:
       - "v*"
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  qa-qc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "yarn"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run QA/QC pipeline
+        run: yarn qa:qc:ci
+
   build-and-publish:
+    needs: qa-qc
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
       ABAYA_UPDATE_CHANNEL: ${{ contains(github.ref_name, 'beta') && 'beta' || 'stable' }}
     steps:
       - name: Checkout
@@ -61,6 +85,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes
+        shell: bash
+        run: |
+          node scripts/generate-release-notes.mjs --tag "${{ steps.release-version.outputs.tag }}" --version "${{ steps.release-version.outputs.version }}" --output release-notes.md
+          echo "Release notes generated."
+
       - name: Skip release if version already exists
         id: check-release
         shell: bash
@@ -78,6 +108,18 @@ jobs:
         if: steps.check-release.outputs.release_exists == 'false'
         working-directory: tools/desktop-launcher
         run: yarn release:gh
+
+      - name: Create or update GitHub release with problem/fix notes
+        if: steps.check-release.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.release-version.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "Release $tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" --title "Release $tag" --notes-file release-notes.md
+          fi
 
       - name: Release already exists
         if: steps.check-release.outputs.release_exists == 'true'
