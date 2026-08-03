@@ -28,7 +28,7 @@ jobs:
       - name: Enable Corepack and activate Yarn 4.13.0
         run: |
           corepack enable
-          corepack prepare yarn@4.13.0 --activate
+          corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -55,7 +55,7 @@ jobs:
       - name: Enable Corepack and activate Yarn 4.13.0
         run: |
           corepack enable
-          corepack prepare yarn@4.13.0 --
+          corepack prepare yarn@1.22.22 --
 
 
       - name: Verify yarn version 37	        
