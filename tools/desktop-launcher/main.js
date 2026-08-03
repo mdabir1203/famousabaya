@@ -15,6 +15,8 @@ function resolveRepoRoot() {
   const candidates = [
     process.env.ABAYA_REPO_ROOT,
     process.env.ABAYA_APP_ROOT,
+    process.resourcesPath ? path.join(process.resourcesPath, 'app') : '',
+    process.resourcesPath ? path.join(process.resourcesPath, 'app', 'resources') : '',
     __dirname,
     app && typeof app.getAppPath === 'function' ? app.getAppPath() : '',
     path.resolve(__dirname, '..', '..'),
@@ -335,7 +337,8 @@ function applyGithubUpdaterFeedFromPackage() {
       repo: String(pub.repo),
     };
     if (typeof pub.releaseType === 'string') opts.releaseType = pub.releaseType;
-    if (typeof pub.token === 'string' && pub.token) opts.token = pub.token;
+    const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || pub.token || '').trim();
+    if (token) opts.token = token;
     autoUpdater.setFeedURL(opts);
     return true;
   } catch (e) {

@@ -25,8 +25,10 @@ jobs:
           node-version: "lts/*"
           cache: "yarn"
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Enable Corepack and activate Yarn 4.13.0
+        run: |
+          corepack enable
+          corepack prepare yarn@4.13.0 --activate
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -50,8 +52,10 @@ jobs:
         with:
           node-version: "lts/*"
 
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Enable Corepack and activate Yarn 4.13.0
+        run: |
+          corepack enable
+          corepack prepare yarn@4.13.0 --activate
 
       - name: Install launcher dependencies
         working-directory: tools/desktop-launcher
@@ -142,6 +146,16 @@ jobs:
             echo "Portable ZIP artifact not found at $zip_path"
             exit 1
           fi
+
+      - name: Verify GitHub release exists
+        if: steps.check-release.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ steps.release-version.outputs.tag }}"
+          echo "Verifying GitHub release $tag exists..."
+          gh release view "$tag"
 
       - name: Release already exists
         if: steps.check-release.outputs.release_exists == 'true'
