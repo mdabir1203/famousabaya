@@ -19,6 +19,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Must run before setup-node: with `cache: "yarn"`, setup-node shells out
+      # to `yarn` for the cache key, and the runner's global Yarn 1.x refuses to
+      # run here because package.json pins packageManager: yarn@4.13.0.
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Setup Node LTS
         uses: actions/setup-node@v4
         with:
@@ -28,7 +34,7 @@ jobs:
       - name: Enable Corepack and activate Yarn 4.13.0
         run: |
           corepack enable
-          corepack prepare yarn@1.22.22 --activate
+          corepack prepare yarn@4.13.0 --activate
 
       - name: Install dependencies
         run: yarn install --immutable
@@ -55,12 +61,7 @@ jobs:
       - name: Enable Corepack and activate Yarn 4.13.0
         run: |
           corepack enable
-          corepack prepare yarn@1.22.22 --
-
-
-      - name: Verify yarn version 37	        
-        run: yarn --version    
-          
+          corepack prepare yarn@4.13.0 --activate
 
       - name: Install launcher dependencies
         working-directory: tools/desktop-launcher
@@ -135,7 +136,7 @@ jobs:
         shell: pwsh
         run: |
           $env:Path += ";$env:ProgramFiles\PowerShell\7"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version "${{ steps.release-version.outputs.version }}"
 
       - name: Upload portable ZIP to release
         if: steps.check-release.outputs.release_exists == 'false'

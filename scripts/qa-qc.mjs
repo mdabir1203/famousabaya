@@ -72,9 +72,18 @@ function createCheck(name, command, args, options = {}) {
 }
 
 async function runSystemSmokeCheck() {
+  // Fixed throwaway secret so the export-auth checks are deterministic: without
+  // any FLOOR_EXPORT_SECRET the server correctly answers 503 "export disabled",
+  // which fails the 401 bad-secret check on machines/CI runners with no .env.
+  const env = {
+    ...process.env,
+    PORT: '3111',
+    TEST_FACTORY_URL: 'http://127.0.0.1:3111',
+    FLOOR_EXPORT_SECRET: process.env.FLOOR_EXPORT_SECRET || 'qa-qc-smoke-secret',
+  };
   const server = spawn('node', ['server.js'], {
     cwd: root,
-    env: { ...process.env, PORT: '3111', TEST_FACTORY_URL: 'http://127.0.0.1:3111' },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -111,9 +120,7 @@ async function runSystemSmokeCheck() {
   if (!ready) {
     smokeResult = { status: 1, stdout: output, stderr: '', error: 'smoke test timed out waiting for server startup' };
   } else {
-    smokeResult = runCommand('node', ['scripts/test-system.mjs'], {
-      env: { ...process.env, PORT: '3111', TEST_FACTORY_URL: 'http://127.0.0.1:3111' },
-    });
+    smokeResult = runCommand('node', ['scripts/test-system.mjs'], { env });
   }
 
   server.kill('SIGTERM');

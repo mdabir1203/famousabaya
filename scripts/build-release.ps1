@@ -1,13 +1,18 @@
 # Build a portable ZIP for another PC (no node_modules). Run on Windows PowerShell from repo root:
 #   npm run package:release
 # Output: dist/AbaYa-Track-v<version>.zip
+# -Version overrides the version from the root package.json (CI passes the release version).
+
+param(
+  [string]$Version = ""
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
 $pkg = Get-Content (Join-Path $root "package.json") | ConvertFrom-Json
-$ver = $pkg.version
+$ver = if ($Version) { $Version } else { $pkg.version }
 $name = "AbaYa-Track-v$ver"
 $staging = Join-Path $env:TEMP $name
 $distDir = Join-Path $root "dist"
