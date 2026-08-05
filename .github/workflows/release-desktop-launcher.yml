@@ -118,6 +118,7 @@ jobs:
         if: steps.check-release.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           tag="${{ steps.release-version.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
