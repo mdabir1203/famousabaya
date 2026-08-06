@@ -26,7 +26,8 @@ When the factory **Node server** (`server.js`) is running on the LAN, it can ser
 - Override directory with env **`ABAYA_LAN_UPDATE_MIRROR_DIR`** (absolute path recommended for non-default disks).
 - HTTP paths (same origin as the app, e.g. `http://192.168.1.10:3000`):
   - `GET /updates/stable/latest.yml` (+ `.exe`, `.exe.blockmap`, … in that folder)
-  - `GET /updates/beta/latest.yml` (+ artifacts)
+  - `GET /updates/beta/beta.yml` and `GET /updates/beta/latest.yml` (+ artifacts)
+- Metadata naming follows electron-updater (`<channel>.yml`): the **stable** ring fetches `latest.yml`, the **beta** ring fetches `beta.yml`. `scripts/publish-lan-update-mirror.mjs` always places both names in the mirror — the launcher probes and the health endpoint key on `latest.yml`.
 - Health check: `GET /api/updates/mirror-health` (JSON: per-channel `latest.yml` presence and file list).
 
 ### Publish workflow (after `electron-builder` produced artifacts)
@@ -44,7 +45,7 @@ Or directly:
 node scripts/publish-lan-update-mirror.mjs --channel stable --from dist/desktop-launcher
 ```
 
-Requirements in the `--from` directory: `latest.yml`, at least one `.exe`, and matching `.exe.blockmap` when present.
+Requirements in the `--from` directory: `latest.yml` or `beta.yml` (whichever electron-builder produced), at least one `.exe`, and matching `.exe.blockmap` when present.
 
 ### Launcher configuration (client PCs)
 
@@ -55,7 +56,7 @@ Set **`ABAYA_UPDATE_MIRROR_BASE_URL`** to the factory server origin **only** (no
 
 Behavior (packaged app only):
 
-1. On startup, launcher probes `GET {base}/updates/{channel}/latest.yml` for the resolved channel (`stable` or `beta`).
+1. On startup, launcher probes the exact metadata file the updater will fetch — `GET {base}/updates/{channel}/latest.yml` for the stable ring, `GET {base}/updates/{channel}/beta.yml` for the beta ring.
 2. If the probe succeeds → `electron-updater` uses **generic** feed at `{base}/updates/{channel}/`.
 3. If the probe fails or the variable is unset → feed is **GitHub** from `tools/desktop-launcher/package.json` `build.publish` (including `releaseType` when set, e.g. `draft`).
 4. If the first update error happens while on **LAN** feed, launcher switches once to **GitHub** and retries check (`updater-fallback-github-after-lan-error` in audit log).
@@ -94,6 +95,7 @@ Optional rollout control:
 - **Trust row:** Last checked, next check, retry countdown, last error, and release-notes hint (see Control Center UI).
 - **Release notes:** Opens GitHub release tag URL derived from `tools/desktop-launcher/package.json` `build.publish` when not provided by the updater metadata.
 - **Post-update banner:** After a successful install and restart, a short confirmation shows previous vs current version until dismissed.
+- **Install & Restart** applies the update immediately (the window close-confirmation is bypassed for the install quit) — no extra dialogs.
 - **Diagnostics:** Button **Export diagnostics** saves a JSON file (save dialog) with update state, policy snapshot, PM2/port summary, runtime versions, and tail of the update audit log. Use for support tickets.
 
 ## Operator Checklist: Publish
@@ -104,7 +106,7 @@ Optional rollout control:
 4. Verify GitHub Release assets exist:
    - installer (`.exe`)
    - blockmap
-   - `latest.yml`
+   - `latest.yml` (stable tags) or `beta.yml` (beta tags)
 5. Install current previous version on test laptop and verify update prompt/download/install path.
 
 ## Staged Rollout Strategy (Pareto)

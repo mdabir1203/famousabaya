@@ -74,7 +74,7 @@ app.use(
 );
 app.use(express.json());
 
-/** LAN mirror for Electron desktop launcher updates (publish `latest.yml` + artifacts per channel). */
+/** LAN mirror for Electron desktop launcher updates (`latest.yml` for stable, `beta.yml` + `latest.yml` for beta, plus NSIS artifacts per channel). */
 const LAN_UPDATE_MIRROR_ROOT = (() => {
   const raw = String(process.env.ABAYA_LAN_UPDATE_MIRROR_DIR || '').trim();
   if (raw && path.isAbsolute(raw)) return raw;
