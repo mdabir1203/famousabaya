@@ -124,6 +124,29 @@ test('getNextCheckDelayMs jitter stays within ±jitterPercent', () => {
   assert.ok(hi <= Math.ceil(base * 1.2));
 });
 
+test('every relative require of launcher entry points is packaged (build.files)', () => {
+  // Regression guard for the 1.2.4 packaging incident: main.js required
+  // ./update-policy.cjs, which was missing from build.files, so the packaged
+  // app.asar could not start. qa-qc runs before publish, so this blocks a
+  // release that would ship an unpackaged module.
+  const launcherDir = path.join(REPO_ROOT, 'tools', 'desktop-launcher');
+  const pkg = JSON.parse(fs.readFileSync(path.join(launcherDir, 'package.json'), 'utf8'));
+  const filesList = pkg.build && Array.isArray(pkg.build.files) ? pkg.build.files : [];
+  const entryPoints = ['main.js', 'preload.js', 'start-electron.cjs'];
+  const missing = [];
+  for (const entry of entryPoints) {
+    const src = fs.readFileSync(path.join(launcherDir, entry), 'utf8');
+    const requireRe = /require\(\s*['"](\.\/[^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = requireRe.exec(src)) !== null) {
+      const rel = m[1].replace(/^\.\//, '');
+      const covered = filesList.some((f) => f === rel || f === './' + rel);
+      if (!covered) missing.push(entry + ' requires ' + m[1]);
+    }
+  }
+  assert.deepEqual(missing, [], 'Not covered by build.files: ' + missing.join(', '));
+});
+
 function makeFixtureBuildDir(t, ymlName) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'abaya-update-fixture-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
