@@ -18,10 +18,21 @@ const {
   normalizeImportedFloorSessions,
 } = require('./shared/floor-session-transfer.cjs');
 const offlineReportStore = require('./shared/offline-report-store.cjs');
+const {
+  collectLanIPv4,
+  connectionRefusedHints,
+  buildKioskUrl,
+  buildLanCheckUrl,
+} = require('./shared/lan-url.cjs');
 const sqliteSnapshot = require('./shared/sqlite-snapshot.cjs');
 const reconcileCloudflare = require('./shared/reconcile-cloudflare.cjs');
 const resendAlerts = require('./shared/alerting/resend-alerts.cjs');
 const chokidar = require('chokidar');
+
+/** Default 3000; override with PORT in .env */
+const PORT = process.env.PORT || 3000;
+/** Bind all interfaces by default so tablets on LAN can connect (not only localhost). */
+const LISTEN_HOST = String(process.env.LISTEN_HOST || '0.0.0.0').trim() || '0.0.0.0';
 
 function parseEnvPositiveIntOrNull(name) {
   const raw = String(process.env[name] || '').trim();
@@ -30,17 +41,6 @@ function parseEnvPositiveIntOrNull(name) {
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.floor(n);
 }
-
-function resolveServerBindHost() {
-  const raw = String(process.env.HOST || '').trim();
-  if (!raw) return '0.0.0.0';
-  if (raw === 'localhost') return '127.0.0.1';
-  return raw;
-}
-
-/** Default 3000; override with PORT in .env */
-const PORT = parseEnvPositiveIntOrNull('PORT') || 3000;
-const HOST = resolveServerBindHost();
 
 function readAppPackageVersion() {
   try {
@@ -52,10 +52,83 @@ function readAppPackageVersion() {
 }
 
 const SERVER_STARTED_AT = Date.now();
+const SERVER_BOOT_ID = crypto.randomBytes(6).toString('hex');
 const APP_PACKAGE_VERSION = readAppPackageVersion();
+
+const DEBUG_LAN_LOG_FILE = path.join(__dirname, 'debug-590497.log');
+
+/** Debug session 590497 — LAN timeout diagnostics (removed after verification). */
+function debugLanLog(location, message, data, hypothesisId) {
+  const entry = {
+    sessionId: '590497',
+    location,
+    message,
+    data: data || {},
+    timestamp: Date.now(),
+    hypothesisId: hypothesisId || '',
+  };
+  // #region agent log
+  try {
+    fs.appendFileSync(DEBUG_LAN_LOG_FILE, JSON.stringify(entry) + '\n', 'utf8');
+  } catch (_) {}
+  fetch('http://127.0.0.1:7334/ingest/ec0dc368-e56e-4507-89de-39c8d0c8ba23', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '590497' },
+    body: JSON.stringify(entry),
+  }).catch(function () {});
+  // #endregion
+}
 
 const app = express();
 app.use(cors());
+
+/** Accept /api/state and /api/state/ (some clients add a trailing slash). */
+app.use(function normalizeTrailingSlash(req, res, next) {
+  const p = req.path;
+  if (p.length > 1 && p.endsWith('/')) {
+    const q = req.url.indexOf('?');
+    const qs = q >= 0 ? req.url.slice(q) : '';
+    return res.redirect(308, p.slice(0, -1) + qs);
+  }
+  next();
+});
+
+/** Bust tablet browser cache for kiosk JS when server restarts (new SERVER_BOOT_ID per process). */
+function getKioskAssetVersion() {
+  return SERVER_BOOT_ID || String(SERVER_STARTED_AT);
+}
+
+function injectVersionQueryOnLocalScripts(html, version) {
+  const v = String(version || getKioskAssetVersion());
+  return String(html || '').replace(
+    /src="(\/(?!socket\.io)[^"?]+\.js)(\?[^"]*)?"/g,
+    function (_m, src) {
+      return 'src="' + src + '?v=' + v + '"';
+    }
+  );
+}
+
+function sendVersionedPublicHtml(relativeName, res) {
+  const filePath = path.join(__dirname, 'public', relativeName);
+  res.setHeader('Cache-Control', 'private, no-cache');
+  let html;
+  try {
+    html = fs.readFileSync(filePath, 'utf8');
+  } catch (_) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  const version = getKioskAssetVersion();
+  res.type('html').send(injectVersionQueryOnLocalScripts(html, version));
+}
+
+app.get('/kiosk.html', function (req, res) {
+  sendVersionedPublicHtml('kiosk.html', res);
+});
+
+app.get('/lan-check.html', function (req, res) {
+  sendVersionedPublicHtml('lan-check.html', res);
+});
+
 app.use(
   express.static(path.join(__dirname, 'public'), {
     setHeaders(res, filePath) {
@@ -74,7 +147,7 @@ app.use(
 );
 app.use(express.json());
 
-/** LAN mirror for Electron desktop launcher updates (`latest.yml` for stable, `beta.yml` + `latest.yml` for beta, plus NSIS artifacts per channel). */
+/** LAN mirror for Electron desktop launcher updates (publish `latest.yml` + artifacts per channel). */
 const LAN_UPDATE_MIRROR_ROOT = (() => {
   const raw = String(process.env.ABAYA_LAN_UPDATE_MIRROR_DIR || '').trim();
   if (raw && path.isAbsolute(raw)) return raw;
@@ -248,12 +321,17 @@ function attachItemImagesFromDisk() {
 }
 
 const server = http.createServer(app);
+/** Long-lived LAN dashboard tabs — avoid premature TCP close (ERR_CONNECTION_ABORTED). */
+server.keepAliveTimeout = Number(process.env.HTTP_KEEPALIVE_TIMEOUT_MS) > 0
+  ? Number(process.env.HTTP_KEEPALIVE_TIMEOUT_MS)
+  : 120000;
+server.headersTimeout = server.keepAliveTimeout + 10000;
 const SOCKET_PING_INTERVAL_MS = Number(process.env.SOCKET_PING_INTERVAL_MS) > 0
   ? Number(process.env.SOCKET_PING_INTERVAL_MS)
-  : 15000;
+  : 25000;
 const SOCKET_PING_TIMEOUT_MS = Number(process.env.SOCKET_PING_TIMEOUT_MS) > 0
   ? Number(process.env.SOCKET_PING_TIMEOUT_MS)
-  : 20000;
+  : 60000;
 
 const io = new Server(server, {
   cors: { origin: '*' },
@@ -792,6 +870,8 @@ let lastEmployeesXlsxMtime = 0;
 let lastCatalogXlsxMtime = 0;
 /** True after cold start restored dashboard logs/perf from disk (24h window). */
 let offlineReportRestored = false;
+/** Flag to prevent file watcher from interfering with active writes. */
+let employeesXlsxWriteInProgress = false;
 
 function emitEmployeesChanged() {
   employeesDataVersion += 1;
@@ -816,13 +896,6 @@ const DEFAULT_FACTORY_WORK_TYPES = [
 const WORK_TYPES_JSON_PATH = path.join(__dirname, 'data', 'work-types.json');
 let FACTORY_WORK_TYPES = DEFAULT_FACTORY_WORK_TYPES.slice();
 let workTypesDataVersion = 0;
-/**
- * True only when this boot created data/work-types.json for the first time, i.e.
- * a genuinely fresh install. Cloud seeding keys off this rather than "the list
- * equals the defaults" — a factory may legitimately keep the default 12 types, and
- * comparing content would let the cloud overwrite them on every restart.
- */
-let workTypesFileWasCreatedThisBoot = false;
 
 function loadFactoryWorkTypesFromDisk() {
   try {
@@ -830,7 +903,6 @@ function loadFactoryWorkTypesFromDisk() {
     if (!fs.existsSync(WORK_TYPES_JSON_PATH)) {
       fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(DEFAULT_FACTORY_WORK_TYPES, null, 2), 'utf8');
       FACTORY_WORK_TYPES = DEFAULT_FACTORY_WORK_TYPES.slice();
-      workTypesFileWasCreatedThisBoot = true;
       console.log('[work-types] Created default file', WORK_TYPES_JSON_PATH);
       return;
     }
@@ -955,6 +1027,7 @@ function getClientSyncPayload() {
     ok: true,
     appVersion: APP_PACKAGE_VERSION,
     serverStartedAt: SERVER_STARTED_AT,
+    serverBootId: SERVER_BOOT_ID,
     catalogVersion: catalogCloudVersion,
     employeesVersion: employeesDataVersion,
     catalogRows: abayaCatalog.length,
@@ -979,6 +1052,9 @@ function getClientSyncPayload() {
     working_hours_synced_at: WORKING_HOURS_LAST_FETCH_OK_AT,
     workTypesVersion: workTypesDataVersion,
     workTypes: FACTORY_WORK_TYPES.slice(),
+    /** dashboard.html uses Socket.IO; kiosk.html uses floorKioskTransport only. */
+    floorKioskTransport: 'http',
+    dashboardTransport: 'socket.io',
   };
 }
 
@@ -1022,149 +1098,6 @@ async function refreshAbayaCatalogFromCloud() {
   } catch (e) {
     console.warn('[catalog] refresh failed (non-fatal):', e.message);
   }
-}
-
-/**
- * Push the catalog to the Cloudflare Worker so the cloud — the source of truth in
- * cloud-live mode — matches a local edit/upload. Without this, the periodic
- * refreshAbayaCatalogFromCloud() pull (every 60s) would overwrite the local change.
- * No-op ({pushed:false, reason:'cloud-not-configured'}) on local-only deployments.
- */
-async function pushCatalogToCloud(abayas) {
-  if (!CF_URL || !CF_SECRET) return { pushed: false, reason: 'cloud-not-configured' };
-  const url = String(CF_URL).replace(/\/+$/, '') + '/api/catalog/abayas';
-  try {
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Ingest-Secret': CF_SECRET },
-      body: JSON.stringify({ abayas: abayas }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(function () { return ''; });
-      return { pushed: false, error: 'Worker HTTP ' + res.status + (txt ? ': ' + txt.slice(0, 160) : '') };
-    }
-    const j = await res.json().catch(function () { return null; });
-    if (j && j.ok === false) return { pushed: false, error: j.error || 'Worker rejected catalog' };
-    if (j && j.version != null) catalogCloudVersion = String(j.version);
-    return { pushed: true };
-  } catch (e) {
-    return { pushed: false, error: e && e.message ? e.message : String(e) };
-  }
-}
-
-/**
- * Roster sync (employees + factory work types).
- *
- * These used to be local-only, so a freshly installed laptop silently fell back to
- * built-in DEMO employees and DEFAULT work types. The local Excel/JSON stays
- * authoritative — we push it up on every change — and a machine with no local data
- * seeds itself from the cloud instead of running on demo rows.
- */
-async function pushRosterToCloud(pathname, payload) {
-  if (!CF_URL || !CF_SECRET) return { pushed: false, reason: 'cloud-not-configured' };
-  const url = String(CF_URL).replace(/\/+$/, '') + pathname;
-  try {
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Ingest-Secret': CF_SECRET },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(function () { return ''; });
-      return { pushed: false, error: 'Worker HTTP ' + res.status + (txt ? ': ' + txt.slice(0, 160) : '') };
-    }
-    const j = await res.json().catch(function () { return null; });
-    if (j && j.ok === false) return { pushed: false, error: j.error || 'Worker rejected roster' };
-    return { pushed: true, version: j && j.version != null ? String(j.version) : '' };
-  } catch (e) {
-    return { pushed: false, error: e && e.message ? e.message : String(e) };
-  }
-}
-
-function pushEmployeesToCloud(employees) {
-  return pushRosterToCloud('/api/employees', { employees: employees });
-}
-
-function pushWorkTypesToCloud(workTypes) {
-  return pushRosterToCloud('/api/work-types', { workTypes: workTypes });
-}
-
-/** Fetch a roster collection from the Worker. Returns null when unavailable. */
-async function fetchRosterFromCloud(pathname, key) {
-  if (!CF_URL) return null;
-  const url = String(CF_URL).replace(/\/+$/, '') + pathname;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const j = await res.json().catch(function () { return null; });
-    if (!j || j.ok === false || !Array.isArray(j[key])) return null;
-    return j[key];
-  } catch (_) {
-    return null;
-  }
-}
-
-/**
- * Live cloud→local pull for the roster, mirroring refreshAbayaCatalogFromCloud().
- * Runs every 60s so a change made from another laptop / the dashboard appears here
- * without a restart — the reason employees looked "stuck on old data" before.
- *
- * Version-gated (no work when unchanged) and safe: an empty cloud at v0, or an
- * unreachable/500 Worker (e.g. migration not applied yet), leaves local data alone.
- * A local Excel master (EMPLOYEES_XLSX_PATH) opts out — that factory manages the
- * roster in Excel and its edits push up instead.
- */
-let employeesCloudVersion = '0';
-let workTypesCloudVersion = '0';
-
-async function refreshEmployeesFromCloud() {
-  if (!CF_URL || EMPLOYEES_XLSX_PATH) return;
-  try {
-    const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/employees', { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return;
-    const j = await res.json().catch(function () { return null; });
-    if (!j || j.ok === false || !Array.isArray(j.employees)) return;
-    const ver = j.version != null ? String(j.version) : '0';
-    if (j.employees.length === 0 && ver === '0') return; // empty cloud — don't wipe local
-    if (ver === employeesCloudVersion) return;            // unchanged
-    const prevPerfById = Object.create(null);
-    for (let i = 0; i < EMP_PERF.length; i++) prevPerfById[EMP_PERF[i].id] = EMP_PERF[i];
-    EMPLOYEES = j.employees;
-    rebuildACMap();
-    EMP_PERF = EMPLOYEES.map(function (e) {
-      return prevPerfById[e.id] || { id: e.id, units: 0, eff: 0, act: 0, idl: 0 };
-    });
-    employeesCloudVersion = ver;
-    saveEmployeesToManualFile(); // persist so the next boot is offline-safe
-    emitEmployeesChanged();
-    console.log('[employees] Synced', EMPLOYEES.length, 'from cloud (v' + ver + ')');
-  } catch (_) { /* keep local on any error */ }
-}
-
-async function refreshWorkTypesFromCloud() {
-  if (!CF_URL) return;
-  try {
-    const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/work-types', { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return;
-    const j = await res.json().catch(function () { return null; });
-    if (!j || j.ok === false || !Array.isArray(j.workTypes)) return;
-    const ver = j.version != null ? String(j.version) : '0';
-    if (j.workTypes.length === 0 && ver === '0') return;
-    if (ver === workTypesCloudVersion) return;
-    const next = j.workTypes.map(function (s) { return String(s == null ? '' : s).trim(); }).filter(Boolean);
-    if (!next.length) return;
-    FACTORY_WORK_TYPES = next;
-    workTypesDataVersion++;
-    workTypesCloudVersion = ver;
-    try {
-      fs.mkdirSync(path.dirname(WORK_TYPES_JSON_PATH), { recursive: true });
-      fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(FACTORY_WORK_TYPES, null, 2), 'utf8');
-    } catch (_) {}
-    emitWorkTypesChanged();
-    console.log('[work-types] Synced', FACTORY_WORK_TYPES.length, 'from cloud (v' + ver + ')');
-  } catch (_) { /* keep local on any error */ }
 }
 
 let ACTIVE_SESSIONS = {};
@@ -1601,6 +1534,206 @@ function logSocketSignal(kind, details) {
   }
 }
 
+/** Shared kiosk RPC (socket + HTTP fallback for Android Chrome on LAN). */
+function kioskLookupByAcNo(ac_no) {
+  var emp = AC_MAP[ac_no];
+  if (!emp) return { ok: false, error: 'No employee found for AC-No. ' + ac_no };
+  var is_active = !!ACTIVE_SESSIONS[emp.id];
+  var activeSession = is_active ? ACTIVE_SESSIONS[emp.id] : null;
+  var abaya_code = null;
+  if (activeSession) {
+    var abIdx = abayaCatalog.findIndex((a) => a.id === activeSession.abaya_id);
+    abaya_code = abIdx >= 0 ? abayaCatalog[abIdx].code : null;
+  }
+  var session_process = activeSession ? activeSession.process : null;
+  var session_started_at = activeSession ? Number(activeSession.started_at) : null;
+  return {
+    ok: true,
+    employee: emp,
+    is_active: is_active,
+    abaya_code: abaya_code,
+    session_process: session_process,
+    session_started_at: Number.isFinite(session_started_at) ? session_started_at : null,
+  };
+}
+
+function kioskStartWork(data) {
+  const { emp_id, abaya_id, process: selectedProcess } = data || {};
+  if (ACTIVE_SESSIONS[emp_id]) return { ok: false, error: 'Already has active session' };
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!isInWorkingWindow(nowSec)) {
+    return {
+      ok: false,
+      error: 'Outside shift hours. Sessions can only be started within working windows.',
+    };
+  }
+
+  const emp = EMPLOYEES.find((e) => e.id === emp_id);
+  const ab = abayaCatalog.find((a) => a.id === abaya_id);
+  const selectedProcessClean = String(selectedProcess != null ? selectedProcess : '').trim();
+  const sessionProcess = selectedProcessClean || (emp ? emp.process : 'Tailor (01)');
+  if (!isProcessAllowedOnFactory(sessionProcess)) {
+    return {
+      ok: false,
+      error: 'Invalid work type. Refresh the page and choose a role from the factory list.',
+    };
+  }
+  const log_id = 'WL-' + emp_id + '-' + Date.now();
+  const started_at_sec = nowSec;
+  ACTIVE_SESSIONS[emp_id] = { emp_id, abaya_id, log_id, started_at: Date.now(), process: sessionProcess };
+
+  broadcastState();
+  setImmediate(persistOfflineDashboardReport);
+
+  if (emp) {
+    pushToCloudflare('session_start', {
+      emp_id,
+      emp_name: emp.name,
+      emp_code: emp.code,
+      emp_process: sessionProcess,
+      emp_color: emp.color,
+      emp_initials: emp.initials,
+      abaya_id,
+      abaya_code: ab ? ab.code : null,
+      station: 'S-02',
+      started_at: started_at_sec,
+    });
+  }
+  return { ok: true, log_id };
+}
+
+function kioskFinishWork(payload) {
+  var emp_id = typeof payload === 'object' && payload && payload.emp_id != null
+    ? payload.emp_id
+    : payload;
+  var invoice_count = typeof payload === 'object' && payload ? payload.invoice_count : undefined;
+  var invoice_serial = typeof payload === 'object' && payload ? payload.invoice_serial : undefined;
+  var quantity = typeof payload === 'object' && payload ? payload.quantity : undefined;
+  var sess = ACTIVE_SESSIONS[emp_id];
+  if (!sess) return { ok: false, error: 'No active session found' };
+
+  if (sess.process === 'Invoice maker') {
+    var invParsed = parseInvoiceNumberList(invoice_serial);
+    if (!invParsed.ok) return { ok: false, error: invParsed.error };
+    var clientIc =
+      invoice_count != null && invoice_count !== ''
+        ? parseInt(String(invoice_count), 10)
+        : NaN;
+    if (Number.isFinite(clientIc) && clientIc !== invParsed.nums.length) {
+      return {
+        ok: false,
+        error: 'Invoice count does not match the number of invoice numbers in your list.',
+      };
+    }
+    invoice_count = invParsed.nums.length;
+    invoice_serial = invParsed.nums.join(',');
+  } else {
+    invoice_count = undefined;
+    invoice_serial = undefined;
+  }
+
+  var checker_barcode = '';
+
+  if (sess.process === 'Checker') {
+    var qtyParsed =
+      quantity != null && quantity !== ''
+        ? parseInt(String(quantity), 10)
+        : NaN;
+    if (!Number.isFinite(qtyParsed) || qtyParsed <= 0) {
+      return { ok: false, error: 'Checker quantity must be a positive number.' };
+    }
+    quantity = qtyParsed;
+    var chkRaw =
+      typeof payload === 'object' && payload && payload.checker_barcode != null
+        ? payload.checker_barcode
+        : '';
+    var chkParsed = parseCheckerBarcodeList(chkRaw);
+    if (!chkParsed.ok) {
+      return { ok: false, error: chkParsed.error };
+    }
+    checker_barcode = chkParsed.normalized;
+  } else {
+    quantity = undefined;
+  }
+
+  var now = Date.now();
+  var duration_seconds = Math.floor(
+    overlapSecWithWindows(Math.floor(sess.started_at / 1000), Math.floor(now / 1000))
+  );
+
+  var record = {
+    emp_id: emp_id,
+    abaya_id: sess.abaya_id,
+    process: sess.process,
+    start: sess.started_at,
+    end: now,
+    duration_sec: duration_seconds,
+    hour: new Date(now).getHours(),
+    invoice_count: invoice_count,
+    invoice_serial: invoice_serial,
+    quantity: quantity,
+    checker_barcode: sess.process === 'Checker' ? checker_barcode : undefined,
+  };
+  COMPLETED_LOGS.push(record);
+  setImmediate(persistOfflineDashboardReport);
+  setImmediate(() => { void persistSqliteSnapshot(); });
+
+  var ep = EMP_PERF.find((i) => i.id === emp_id);
+  if (ep) {
+    ep.units += 1;
+    ep.act += Math.round(duration_seconds / 60);
+    var targetTime = ep.units * 45;
+    ep.eff = Math.min(100, Math.round((targetTime / Math.max(1, ep.act)) * 100));
+  }
+
+  const emp = EMPLOYEES.find((e) => e.id === emp_id);
+  const abEnd = abayaCatalog.findIndex((a) => a.id === record.abaya_id);
+  const abaya_code = abEnd >= 0 ? abayaCatalog[abEnd].code : null;
+  const abaya_barcode = abEnd >= 0 ? abayaCatalog[abEnd].barcode : null;
+
+  delete ACTIVE_SESSIONS[emp_id];
+  broadcastState();
+  var cbPayload = {
+    ok: true,
+    duration_seconds,
+    abaya_code,
+    abaya_barcode,
+    session_process: record.process,
+    invoice_count: record.invoice_count,
+    invoice_serial: record.invoice_serial,
+    quantity: record.quantity,
+    checker_barcode: record.checker_barcode != null ? record.checker_barcode : undefined,
+  };
+
+  if (emp) {
+    var cfPayload = {
+      emp_id,
+      emp_name: emp.name,
+      emp_code: emp.code,
+      emp_process: record.process,
+      emp_color: emp.color,
+      emp_initials: emp.initials,
+      abaya_id: record.abaya_id,
+      abaya_code,
+      station: 'S-02',
+      started_at: Math.floor(record.start / 1000),
+      ended_at: Math.floor(record.end / 1000),
+      duration_sec: duration_seconds,
+    };
+    if (record.process === 'Invoice maker') {
+      cfPayload.invoice_count = record.invoice_count;
+      cfPayload.invoice_serial = record.invoice_serial;
+    }
+    if (record.process === 'Checker') {
+      cfPayload.quantity = record.quantity;
+      cfPayload.checker_barcode = checker_barcode;
+    }
+    pushToCloudflare('session_finish', cfPayload);
+  }
+  return cbPayload;
+}
+
 // ============================================================
 // WEBSOCKET ROUTES
 // ============================================================
@@ -1620,194 +1753,15 @@ io.on('connection', (socket) => {
   socket.emit('sync_versions', getClientSyncPayload());
 
   socket.on('req_lookup', (ac_no, callback) => {
-    var emp = AC_MAP[ac_no];
-    if (!emp) return callback({ok:false, error:'No employee found for AC-No. ' + ac_no});
-    var is_active = !!ACTIVE_SESSIONS[emp.id];
-    var activeSession = is_active ? ACTIVE_SESSIONS[emp.id] : null;
-    var abaya_code = null;
-    if (activeSession) {
-      var abIdx = abayaCatalog.findIndex(a => a.id === activeSession.abaya_id);
-      abaya_code = abIdx >= 0 ? abayaCatalog[abIdx].code : null;
-    }
-    var session_process = activeSession ? activeSession.process : null;
-    var session_started_at = activeSession ? Number(activeSession.started_at) : null;
-    callback({
-      ok:true,
-      employee:emp,
-      is_active:is_active,
-      abaya_code:abaya_code,
-      session_process:session_process,
-      session_started_at: Number.isFinite(session_started_at) ? session_started_at : null,
-    });
+    callback(kioskLookupByAcNo(ac_no));
   });
 
   socket.on('req_startWork', (data, callback) => {
-    const { emp_id, abaya_id, process: selectedProcess } = data;
-    if (ACTIVE_SESSIONS[emp_id]) return callback({ok:false, error:'Already has active session'});
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (!isInWorkingWindow(nowSec)) {
-      return callback({
-        ok: false,
-        error: 'Outside shift hours. Sessions can only be started within working windows.',
-      });
-    }
-
-    const emp = EMPLOYEES.find(e => e.id === emp_id);
-    const ab  = abayaCatalog.find(a => a.id === abaya_id);
-    // Use the role the employee selected on the kiosk, fall back to their default
-    const selectedProcessClean = String(selectedProcess != null ? selectedProcess : '').trim();
-    const sessionProcess = selectedProcessClean || (emp ? emp.process : 'Tailor (01)');
-    if (!isProcessAllowedOnFactory(sessionProcess)) {
-      return callback({
-        ok: false,
-        error: 'Invalid work type. Refresh the page and choose a role from the factory list.',
-      });
-    }
-    const log_id = 'WL-' + emp_id + '-' + Date.now();
-    const started_at_sec = nowSec;
-    ACTIVE_SESSIONS[emp_id] = { emp_id, abaya_id, log_id, started_at: Date.now(), process: sessionProcess };
-
-    broadcastState();
-    setImmediate(persistOfflineDashboardReport);
-    callback({ ok: true, log_id });
-
-    // ← Non-blocking push to Cloudflare (fire-and-forget)
-    if (emp) {
-      pushToCloudflare('session_start', {
-        emp_id, emp_name: emp.name, emp_code: emp.code,
-        emp_process: sessionProcess, emp_color: emp.color, emp_initials: emp.initials,
-        abaya_id, abaya_code: ab ? ab.code : null,
-        station: 'S-02', started_at: started_at_sec,
-      });
-    }
+    callback(kioskStartWork(data));
   });
 
   socket.on('req_finishWork', (payload, callback) => {
-    var emp_id = typeof payload === 'object' && payload && payload.emp_id != null
-      ? payload.emp_id : payload;
-    var invoice_count = typeof payload === 'object' && payload ? payload.invoice_count : undefined;
-    var invoice_serial = typeof payload === 'object' && payload ? payload.invoice_serial : undefined;
-    var quantity = typeof payload === 'object' && payload ? payload.quantity : undefined;
-    var sess = ACTIVE_SESSIONS[emp_id];
-    if (!sess) return callback({ok:false, error:'No active session found'});
-
-    if (sess.process === 'Invoice maker') {
-      var invParsed = parseInvoiceNumberList(invoice_serial);
-      if (!invParsed.ok) return callback({ ok: false, error: invParsed.error });
-      var clientIc =
-        invoice_count != null && invoice_count !== ''
-          ? parseInt(String(invoice_count), 10)
-          : NaN;
-      if (Number.isFinite(clientIc) && clientIc !== invParsed.nums.length) {
-        return callback({
-          ok: false,
-          error: 'Invoice count does not match the number of invoice numbers in your list.',
-        });
-      }
-      invoice_count = invParsed.nums.length;
-      invoice_serial = invParsed.nums.join(',');
-    } else {
-      invoice_count = undefined;
-      invoice_serial = undefined;
-    }
-
-    var checker_barcode = '';
-
-    if (sess.process === 'Checker') {
-      var qtyParsed =
-        quantity != null && quantity !== ''
-          ? parseInt(String(quantity), 10)
-          : NaN;
-      if (!Number.isFinite(qtyParsed) || qtyParsed <= 0) {
-        return callback({ ok: false, error: 'Checker quantity must be a positive number.' });
-      }
-      quantity = qtyParsed;
-      var chkRaw =
-        typeof payload === 'object' && payload && payload.checker_barcode != null
-          ? payload.checker_barcode
-          : '';
-      var chkParsed = parseCheckerBarcodeList(chkRaw);
-      if (!chkParsed.ok) {
-        return callback({ ok: false, error: chkParsed.error });
-      }
-      checker_barcode = chkParsed.normalized;
-    } else {
-      quantity = undefined;
-    }
-
-    var now = Date.now();
-    // Count only seconds that fall within configured shift windows so that breaks / off-hours
-    // never inflate productivity numbers. start/end timestamps are preserved unchanged.
-    var duration_seconds = Math.floor(
-      overlapSecWithWindows(Math.floor(sess.started_at / 1000), Math.floor(now / 1000))
-    );
-
-    var record = {
-      emp_id: emp_id,
-      abaya_id: sess.abaya_id,
-      process: sess.process,
-      start: sess.started_at,
-      end: now,
-      duration_sec: duration_seconds,
-      hour: new Date(now).getHours(),
-      invoice_count: invoice_count,
-      invoice_serial: invoice_serial,
-      quantity: quantity,
-      checker_barcode: sess.process === 'Checker' ? checker_barcode : undefined,
-    };
-    COMPLETED_LOGS.push(record);
-    setImmediate(persistOfflineDashboardReport);
-    setImmediate(() => { void persistSqliteSnapshot(); });
-
-    var ep = EMP_PERF.find(i => i.id === emp_id);
-    if (ep) {
-      ep.units += 1;
-      ep.act += Math.round(duration_seconds / 60);
-      var targetTime = ep.units * 45;
-      ep.eff = Math.min(100, Math.round((targetTime / Math.max(1, ep.act)) * 100));
-    }
-
-    const emp = EMPLOYEES.find(e => e.id === emp_id);
-    const abEnd = abayaCatalog.findIndex(a => a.id === record.abaya_id);
-    const abaya_code = abEnd >= 0 ? abayaCatalog[abEnd].code : null;
-    const abaya_barcode = abEnd >= 0 ? abayaCatalog[abEnd].barcode : null;
-
-    delete ACTIVE_SESSIONS[emp_id];
-    broadcastState();
-    var cbPayload = {
-      ok: true,
-      duration_seconds,
-      abaya_code,
-      abaya_barcode,
-      session_process: record.process,
-      invoice_count: record.invoice_count,
-      invoice_serial: record.invoice_serial,
-      quantity: record.quantity,
-      checker_barcode: record.checker_barcode != null ? record.checker_barcode : undefined,
-    };
-    callback(cbPayload);
-
-    if (emp) {
-      var cfPayload = {
-        emp_id, emp_name: emp.name, emp_code: emp.code,
-        emp_process: record.process, emp_color: emp.color, emp_initials: emp.initials,
-        abaya_id: record.abaya_id, abaya_code,
-        station: 'S-02',
-        started_at: Math.floor(record.start / 1000),
-        ended_at: Math.floor(record.end / 1000),
-        duration_sec: duration_seconds,
-      };
-      if (record.process === 'Invoice maker') {
-        cfPayload.invoice_count = record.invoice_count;
-        cfPayload.invoice_serial = record.invoice_serial;
-      }
-      if (record.process === 'Checker') {
-        cfPayload.quantity = record.quantity;
-        cfPayload.checker_barcode = checker_barcode;
-      }
-      pushToCloudflare('session_finish', cfPayload);
-    }
+    callback(kioskFinishWork(payload));
   });
 
   socket.on('disconnect', (reason) => {
@@ -1827,15 +1781,61 @@ io.engine.on('connection_error', (err) => {
   });
 });
 
+/** Minimal floor state for tablets — one poll replaces /api/state + /api/work-types. */
+function getKioskFloorStateBundle() {
+  return {
+    active: ACTIVE_SESSIONS,
+    workTypes: FACTORY_WORK_TYPES.slice(),
+    workTypesVersion: workTypesDataVersion,
+    generated_at: Date.now(),
+  };
+}
+
+app.get('/api/kiosk/state', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, state: getKioskFloorStateBundle() });
+});
+
+/** HTTP kiosk RPC — floor tablets (no Socket.IO). */
+app.post('/api/kiosk/lookup', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const ac_no = req.body && req.body.ac_no != null ? req.body.ac_no : req.body;
+  debugLanLog('server.js:/api/kiosk/lookup', 'kiosk http lookup', {
+    clientIp: clientIpFromRequest(req),
+    ac_no: String(ac_no || ''),
+  }, 'H8');
+  res.json(kioskLookupByAcNo(ac_no));
+});
+
+app.post('/api/kiosk/start-work', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  debugLanLog('server.js:/api/kiosk/start-work', 'kiosk http start', {
+    clientIp: clientIpFromRequest(req),
+    emp_id: req.body && req.body.emp_id,
+  }, 'H8');
+  res.json(kioskStartWork(req.body || {}));
+});
+
+app.post('/api/kiosk/finish-work', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  debugLanLog('server.js:/api/kiosk/finish-work', 'kiosk http finish', {
+    clientIp: clientIpFromRequest(req),
+    emp_id: req.body && req.body.emp_id,
+  }, 'H8');
+  res.json(kioskFinishWork(req.body || {}));
+});
+
 app.get('/api/catalog/abayas', (req, res) => {
   res.json({ ok: true, version: catalogCloudVersion, abayas: abayaCatalog });
 });
 
 /** HTTP fallback for dashboards when websocket connectivity is unstable. */
-app.get('/api/state', (req, res) => {
+function handleApiState(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ ok: true, state: getRealtimeStateBundle(req) });
-});
+}
+
+app.get('/api/state', handleApiState);
 
 app.get('/api/employees', (req, res) => {
   res.json({
@@ -1859,27 +1859,9 @@ app.get('/api/work-types', function (req, res) {
 });
 
 const CATALOG_INGEST_SECRET = process.env.CATALOG_INGEST_SECRET || process.env.CF_INGEST_SECRET || '';
-// Employee-facing pass for the catalog Excel upload (so staff can update the catalog from
-// any laptop on the factory Wi-Fi without the admin roster secret). Optional — when unset,
-// the existing ingest secret still works as the pass, so nothing breaks.
-const CATALOG_UPLOAD_PASS = String(process.env.CATALOG_UPLOAD_PASS || '').trim();
-
-/** True if the request carries a valid catalog pass (X-Catalog-Pass) or the admin ingest secret. */
-function catalogPassAuthorized(req) {
-  const provided = String(req.headers['x-catalog-pass'] || req.headers['x-ingest-secret'] || '').trim();
-  if (!provided) return false;
-  if (CATALOG_UPLOAD_PASS && provided === CATALOG_UPLOAD_PASS) return true;
-  if (CATALOG_INGEST_SECRET && provided === CATALOG_INGEST_SECRET) return true;
-  return false;
-}
-
-/** True when at least one catalog credential is configured (pass or ingest secret). */
-function catalogAuthConfigured() {
-  return !!(CATALOG_UPLOAD_PASS || CATALOG_INGEST_SECRET);
-}
 
 app.put('/api/work-types', function (req, res) {
-  if (!catalogPassAuthorized(req)) {
+  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   var body = req.body;
@@ -1897,12 +1879,6 @@ app.put('/api/work-types', function (req, res) {
     return res.status(500).json({ ok: false, error: e.message || 'Could not save work-types.json' });
   }
   emitWorkTypesChanged();
-  // Keep the cloud copy current so a newly installed laptop seeds real work types.
-  void pushWorkTypesToCloud(FACTORY_WORK_TYPES.slice()).then(function (r) {
-    if (!r.pushed && r.reason !== 'cloud-not-configured') {
-      console.warn('[work-types] cloud push failed (local save kept):', r.error);
-    }
-  });
   return res.json({ ok: true, workTypes: FACTORY_WORK_TYPES.slice(), version: workTypesDataVersion });
 });
 
@@ -1938,9 +1914,6 @@ function recomputeEmpPerfFromLogs() {
 
 /** Add a single employee (supervisor use). Protected by ingest secret. Persists to employees.xlsx or employees-manual.json. */
 app.post('/api/employees', function (req, res) {
-  if (!catalogPassAuthorized(req)) {
-    return res.status(401).json({ ok: false, error: 'Unauthorized' });
-  }
   var b = req.body;
   if (!b || !b.name || b.emp_no == null || b.ac_no == null || !b.barcode || !b.process) {
     return res.status(400).json({ ok: false, error: 'Required: name, emp_no, ac_no, barcode, process' });
@@ -2002,7 +1975,7 @@ app.post('/api/employees', function (req, res) {
 
 /** Update an existing employee. Protected by ingest secret. Persists master file when configured. */
 app.put('/api/employees/:id', function (req, res) {
-  if (!catalogPassAuthorized(req)) {
+  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   var targetId = req.params.id;
@@ -2083,10 +2056,14 @@ app.put('/api/employees/:id', function (req, res) {
 
 /** Remove an employee from the roster. Blocked if they have an active session. */
 app.delete('/api/employees/:id', function (req, res) {
-  if (!catalogPassAuthorized(req)) {
+  if (!CATALOG_INGEST_SECRET || req.headers['x-ingest-secret'] !== CATALOG_INGEST_SECRET) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
   const id = req.params.id;
+  
+  // Capture employee details BEFORE deletion for cloud sync
+  const empToDelete = EMPLOYEES.find(function (e) { return e.id === id; });
+  
   enqueueEmployeeMasterWrite(async function () {
     if (ACTIVE_SESSIONS[id]) {
       var act = new Error('Employee has an active session — finish it first');
@@ -2103,6 +2080,21 @@ app.delete('/api/employees/:id', function (req, res) {
     await persistEmployeeRosterAndReload(next);
   })
     .then(function () {
+      // Sync deletion to cloud
+      if (empToDelete && CF_URL && CF_SECRET) {
+        pushToCloudflare('employee_removed', {
+          emp_id: empToDelete.id,
+          emp_name: empToDelete.name,
+          emp_code: empToDelete.code,
+          emp_no: empToDelete.emp_no,
+          ac_no: empToDelete.ac_no,
+          barcode: empToDelete.barcode,
+          process: empToDelete.process,
+          removed_at: Math.floor(Date.now() / 1000)
+        }).catch(function(e) {
+          console.warn('[cloud-sync] Employee deletion sync failed (queued):', e.message);
+        });
+      }
       return res.json({ ok: true });
     })
     .catch(function (e) {
@@ -2478,8 +2470,10 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     throw err;
   }
   if (EMPLOYEES_XLSX_PATH) {
+    employeesXlsxWriteInProgress = true;
     const resolved = resolveEmployeesXlsxAbsolutePath();
     if (!resolved) {
+      employeesXlsxWriteInProgress = false;
       const err = new Error('EMPLOYEES_XLSX_PATH is not resolvable');
       err.statusCode = 500;
       throw err;
@@ -2489,6 +2483,7 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     atomicWriteBufferReplaceFile(resolved, buf);
     lastEmployeesXlsxMtime = 0;
     loadEmployeesFromXlsxFile();
+    employeesXlsxWriteInProgress = false;
   } else {
     const prevPerfById = Object.create(null);
     for (let pi = 0; pi < EMP_PERF.length; pi++) {
@@ -2506,13 +2501,6 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     saveEmployeesToManualFile();
     emitEmployeesChanged();
   }
-  // Mirror the new roster to the cloud (both the xlsx-master and manual paths) so a
-  // freshly installed laptop can seed itself instead of using demo employees.
-  void pushEmployeesToCloud(EMPLOYEES).then(function (r) {
-    if (!r.pushed && r.reason !== 'cloud-not-configured') {
-      console.warn('[employees] cloud push failed (local save kept):', r.error);
-    }
-  });
 }
 
 // Catalog path priority:
@@ -2523,23 +2511,6 @@ const CATALOG_XLSX_FALLBACK = path.join(__dirname, 'docs', 'samples', 'items_exp
 const CATALOG_XLSX_PATH = CATALOG_XLSX_PATH_RAW
   || (_excelDataDir ? path.join(_excelDataDir, 'items_export.xlsx') : '')
   || (fs.existsSync(CATALOG_XLSX_FALLBACK) ? CATALOG_XLSX_FALLBACK : '');
-// Where an uploaded catalog workbook is saved so it survives a restart. We only write
-// to a real configured location (CATALOG_XLSX_PATH / EXCEL_DATA_DIR) — never the bundled
-// repo sample (docs/samples/items_export.xlsx), which is read-only shipped data.
-const CATALOG_XLSX_WRITE_PATH = (function () {
-  if (!CATALOG_XLSX_PATH) return '';
-  const resolved = path.isAbsolute(CATALOG_XLSX_PATH)
-    ? CATALOG_XLSX_PATH
-    : path.join(__dirname, CATALOG_XLSX_PATH);
-  if (path.resolve(resolved) === path.resolve(CATALOG_XLSX_FALLBACK)) return '';
-  return resolved;
-})();
-// Server-side backups: timestamped copies of the previous workbook are kept here
-// before each overwrite (upload or single edit) so a bad change can be rolled back.
-const CATALOG_BACKUP_DIR = CATALOG_XLSX_WRITE_PATH
-  ? path.join(path.dirname(CATALOG_XLSX_WRITE_PATH), 'catalog-backups')
-  : '';
-const CATALOG_BACKUP_KEEP = Math.max(1, Number(process.env.CATALOG_BACKUP_KEEP) || 30);
 const CATALOG_XLSX_INTERVAL_MS = Math.max(Number(process.env.CATALOG_XLSX_INTERVAL_MS) || 0, 3600000) || 86400000;
 const DEFAULT_CATALOG_PROCESS = String(process.env.DEFAULT_CATALOG_PROCESS || 'Tailor (01)').trim() || 'Tailor (01)';
 
@@ -2607,99 +2578,6 @@ function parseCatalogXlsxBuffer(buf) {
   return parseCatalogWorkbook(wb);
 }
 
-/**
- * Save an uploaded catalog workbook to the configured on-disk catalog path so the
- * change survives a server restart. No-op ({persisted:false}) when no writable path
- * is configured. Writes atomically (temp file + rename) and advances the xlsx mtime
- * marker so the periodic re-read does not redundantly reparse our own write.
- */
-function persistUploadedCatalogXlsx(buffer) {
-  if (!CATALOG_XLSX_WRITE_PATH) {
-    return { persisted: false, reason: 'no-writable-path' };
-  }
-  fs.mkdirSync(path.dirname(CATALOG_XLSX_WRITE_PATH), { recursive: true });
-  const backup = backupExistingCatalogXlsx();
-  const tmp = CATALOG_XLSX_WRITE_PATH + '.tmp-' + process.pid + '-' + Date.now();
-  fs.writeFileSync(tmp, buffer);
-  fs.renameSync(tmp, CATALOG_XLSX_WRITE_PATH);
-  try {
-    lastCatalogXlsxMtime = Math.floor(fs.statSync(CATALOG_XLSX_WRITE_PATH).mtimeMs);
-  } catch (_) { /* mtime marker is best-effort */ }
-  return { persisted: true, path: CATALOG_XLSX_WRITE_PATH, backup: backup };
-}
-
-/** Copy the current catalog workbook into the backups folder before it is overwritten. */
-function backupExistingCatalogXlsx() {
-  if (!CATALOG_XLSX_WRITE_PATH || !CATALOG_BACKUP_DIR) return null;
-  if (!fs.existsSync(CATALOG_XLSX_WRITE_PATH)) return null;
-  try {
-    fs.mkdirSync(CATALOG_BACKUP_DIR, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const dest = path.join(CATALOG_BACKUP_DIR, 'items_export_' + stamp + '.xlsx');
-    fs.copyFileSync(CATALOG_XLSX_WRITE_PATH, dest);
-    pruneCatalogBackups();
-    return dest;
-  } catch (e) {
-    console.warn('[catalog-xlsx] Backup failed (non-fatal):', e.message);
-    return null;
-  }
-}
-
-/** Keep only the most recent CATALOG_BACKUP_KEEP backups. */
-function pruneCatalogBackups() {
-  try {
-    const files = fs.readdirSync(CATALOG_BACKUP_DIR)
-      .filter(function (f) { return /^items_export_.*\.xlsx$/.test(f); })
-      .sort();
-    while (files.length > CATALOG_BACKUP_KEEP) {
-      const old = files.shift();
-      try { fs.unlinkSync(path.join(CATALOG_BACKUP_DIR, old)); } catch (_) { /* ignore */ }
-    }
-  } catch (_) { /* best-effort rotation */ }
-}
-
-/**
- * Build an items_export-style workbook from catalog rows. Column titles match the
- * factory export so the file round-trips back through parseCatalogWorkbook. Item
- * images are intentionally omitted — they are managed via the item-photo upload and
- * re-attached from disk on load.
- */
-function buildCatalogXlsxBuffer(rows) {
-  const XLSX = require('xlsx');
-  const headers = ['Barcode Display Name', 'Item Code', 'Item Name', 'Item Category', 'Process'];
-  const aoa = [headers];
-  for (let i = 0; i < rows.length; i++) {
-    const a = rows[i] || {};
-    aoa.push([
-      String(a.barcode == null ? '' : a.barcode),
-      String(a.code == null ? '' : a.code),
-      String(a.design == null ? '' : a.design),
-      String(a.tier == null ? '' : a.tier),
-      String(a.process == null ? '' : a.process),
-    ]);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Items');
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-}
-
-/**
- * Write the current catalog to the on-disk xlsx (factory format) so single add/remove
- * edits update the Excel directly, backing up the previous file first. No-op when no
- * writable path is configured. Returns { persisted, path, backup }.
- */
-function persistCatalogRowsToXlsx(rows) {
-  if (!CATALOG_XLSX_WRITE_PATH) return { persisted: false, reason: 'no-writable-path' };
-  const backup = backupExistingCatalogXlsx();
-  const buf = buildCatalogXlsxBuffer(rows);
-  atomicWriteBufferReplaceFile(CATALOG_XLSX_WRITE_PATH, buf);
-  try {
-    lastCatalogXlsxMtime = Math.floor(fs.statSync(CATALOG_XLSX_WRITE_PATH).mtimeMs);
-  } catch (_) { /* mtime marker is best-effort */ }
-  return { persisted: true, path: CATALOG_XLSX_WRITE_PATH, backup: backup };
-}
-
 function loadCatalogFromXlsxFile() {
   if (!CATALOG_XLSX_PATH) return;
   const resolved = path.isAbsolute(CATALOG_XLSX_PATH)
@@ -2745,7 +2623,6 @@ function validateCatalogPutRows(rows) {
     var barcode = String(r.barcode != null ? r.barcode : '').trim();
     var design = String(r.design != null ? r.design : '').trim();
     var process = String(r.process != null ? r.process : '').trim();
-    var tier = String(r.tier != null ? r.tier : '').trim();
     var iconRaw = r.icon;
     var icon = iconRaw == null || iconRaw === '' ? '' : String(iconRaw);
     if (!barcode) {
@@ -2766,22 +2643,13 @@ function validateCatalogPutRows(rows) {
     if (seenId.has(id) || seenKey.has(uniqKey)) continue;
     seenId.add(id);
     seenKey.add(uniqKey);
-    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, tier: tier, icon: icon });
+    norm.push({ id: id, code: code, barcode: barcode, design: design, process: process, icon: icon });
   }
   return { ok: true, norm: norm };
 }
 
 /** Same contract as Cloudflare PUT /api/catalog/abayas (office watcher or curl). */
-app.put('/api/catalog/abayas', async (req, res) => {
-  if (!catalogAuthConfigured()) {
-    return res.status(503).json({
-      ok: false,
-      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET / CF_INGEST_SECRET or CATALOG_UPLOAD_PASS in .env',
-    });
-  }
-  if (!catalogPassAuthorized(req)) {
-    return res.status(401).json({ ok: false, error: 'Unauthorized ingest request' });
-  }
+app.put('/api/catalog/abayas', (req, res) => {
   var rows = Array.isArray(req.body) ? req.body : req.body && req.body.abayas;
   var v = validateCatalogPutRows(rows);
   if (!v.ok) {
@@ -2791,68 +2659,14 @@ app.put('/api/catalog/abayas', async (req, res) => {
   attachItemImagesFromDisk();
   catalogCloudVersion = String(Date.now());
   io.emit('catalog_update', { version: catalogCloudVersion });
-
-  // Write the change straight to items_export.xlsx (factory format) so the Excel stays
-  // the source of truth and the edit survives a restart. Previous file is backed up first.
-  let persisted = false;
-  let backup = null;
-  let persistWarning = '';
-  try {
-    const p = persistCatalogRowsToXlsx(abayaCatalog);
-    persisted = !!p.persisted;
-    backup = p.backup || null;
-  } catch (e) {
-    persistWarning = 'Saved in memory but could not write the Excel file: ' + (e && e.message ? e.message : String(e));
-    console.error('[catalog] xlsx persist failed:', e);
-  }
-
-  // Mirror to the cloud Worker so a single add/remove is not reverted by the 60s pull.
-  const cloud = await pushCatalogToCloud(abayaCatalog);
-  const out = {
-    ok: true,
-    version: catalogCloudVersion,
-    count: abayaCatalog.length,
-    persisted: persisted,
-    cloudPushed: !!cloud.pushed,
-  };
-  if (backup) out.backup = path.basename(backup);
-  if (persistWarning) out.warning = persistWarning;
-  if (!cloud.pushed && cloud.reason !== 'cloud-not-configured') {
-    out.cloudWarning = 'Saved locally but cloud sync failed: ' + (cloud.error || 'unknown');
-  }
-  res.json(out);
+  res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
 });
 
 /**
  * Dashboard import path: upload items_export-style xlsx and replace catalog in memory.
  * Protected by same ingest secret as /api/catalog/abayas.
  */
-/**
- * Run the xlsx multipart parser but translate multer/file-filter errors (wrong type,
- * too large) into a clean JSON 400 instead of Express's default 500 HTML page, so the
- * uploader (often a second laptop over the LAN) sees a readable message.
- */
-function uploadCatalogXlsx(req, res, next) {
-  uploadXlsxMem.single('file')(req, res, function (err) {
-    if (err) {
-      var msg = err && err.message ? err.message : 'Upload failed';
-      if (err.code === 'LIMIT_FILE_SIZE') msg = 'File too large (max 20 MB).';
-      return res.status(400).json({ ok: false, error: msg });
-    }
-    next();
-  });
-}
-
-app.post('/api/import/catalog-xlsx', uploadCatalogXlsx, async (req, res) => {
-  if (!catalogAuthConfigured()) {
-    return res.status(503).json({
-      ok: false,
-      error: 'Catalog ingest disabled: set CATALOG_INGEST_SECRET / CF_INGEST_SECRET or CATALOG_UPLOAD_PASS in .env',
-    });
-  }
-  if (!catalogPassAuthorized(req)) {
-    return res.status(401).json({ ok: false, error: 'Wrong or missing catalog pass.' });
-  }
+app.post('/api/import/catalog-xlsx', uploadXlsxMem.single('file'), (req, res) => {
   if (!req.file || !req.file.buffer) {
     return res.status(400).json({ ok: false, error: 'Missing file upload (.xlsx)' });
   }
@@ -2869,114 +2683,38 @@ app.post('/api/import/catalog-xlsx', uploadCatalogXlsx, async (req, res) => {
     attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
     io.emit('catalog_update', { version: catalogCloudVersion });
-
-    // Persist the uploaded workbook so the new items survive a restart (prev file backed up).
-    let persisted = false;
-    let backup = null;
-    let persistWarning = '';
-    try {
-      const p = persistUploadedCatalogXlsx(req.file.buffer);
-      persisted = !!p.persisted;
-      backup = p.backup || null;
-      if (p.persisted) {
-        console.log('[catalog-xlsx] Saved uploaded catalog to', p.path, '(' + abayaCatalog.length + ' items)' +
-          (backup ? '; backed up previous to ' + backup : ''));
-      }
-    } catch (e) {
-      persistWarning = 'Catalog updated in memory but could not be saved to disk: ' + (e && e.message ? e.message : String(e));
-      console.error('[catalog-xlsx] Persist failed:', e);
-    }
-
-    // In cloud-live mode the Worker is the source of truth and is pulled every 60s;
-    // push the upload so it is not overwritten and reaches cloud kiosks.
-    const cloud = await pushCatalogToCloud(abayaCatalog);
-    let cloudWarning = '';
-    if (cloud.pushed) {
-      console.log('[catalog-xlsx] Pushed uploaded catalog to cloud Worker (' + abayaCatalog.length + ' items)');
-    } else if (cloud.reason !== 'cloud-not-configured') {
-      cloudWarning = 'Catalog updated locally but cloud sync failed: ' + (cloud.error || 'unknown') +
-        '. The next cloud refresh may revert it — check CF_WORKER_URL / CF_INGEST_SECRET.';
-      console.warn('[catalog-xlsx] Cloud push failed:', cloud.error);
-    }
-
-    const out = {
-      ok: true,
-      version: catalogCloudVersion,
-      count: abayaCatalog.length,
-      persisted: persisted,
-      cloudPushed: !!cloud.pushed,
-    };
-    if (backup) out.backup = path.basename(backup);
-    if (persistWarning) out.warning = persistWarning;
-    if (cloudWarning) out.cloudWarning = cloudWarning;
-    res.json(out);
+    res.json({ ok: true, version: catalogCloudVersion, count: abayaCatalog.length });
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message || 'Could not parse uploaded xlsx' });
   }
 });
 
-/**
- * Download the current catalog as an items_export-style .xlsx. Lets the operator keep an
- * original copy on their own laptop (a client-side backup) before replacing the catalog.
- * Read-only, same as GET /api/catalog/abayas — no secret required.
- */
-app.get('/api/catalog/export.xlsx', (req, res) => {
-  try {
-    const buf = buildCatalogXlsxBuffer(abayaCatalog);
-    const stamp = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="items_export_' + stamp + '.xlsx"');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(buf);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message || 'Could not build catalog xlsx' });
-  }
-});
-
 // ─── TABLET SETUP / QR CODE ENDPOINTS ────────────────────────────────────────
 
-/**
- * Rank an interface so the address the tablets actually use (the physical Wi-Fi
- * LAN, e.g. 192.168.0.101) sorts first. Tailscale/overlay adapters live in the
- * CGNAT 100.64.0.0/10 range and were being printed instead of the real LAN.
- * Lower is better.
- */
-function lanIpPriority(name, address) {
-  const octets = String(address).split('.').map(Number);
-  const a = octets[0];
-  const b = octets[1];
-  let rank;
-  if (a === 192 && b === 168) rank = 0;                 // typical home/office LAN
-  else if (a === 10) rank = 1;                          // private
-  else if (a === 172 && b >= 16 && b <= 31) rank = 2;   // private
-  else if (a === 100 && b >= 64 && b <= 127) rank = 8;  // CGNAT — Tailscale et al.
-  else if (a === 169 && b === 254) rank = 9;            // link-local
-  else rank = 5;
-  if (/tailscale|vethernet|virtualbox|vmware|hyper-?v|wsl|zerotier|docker|tap-|npcap|loopback/i.test(String(name))) {
-    rank += 10; // push virtual/overlay adapters below real NICs
-  }
-  return rank;
+function getLanIPs() {
+  return collectLanIPv4(os.networkInterfaces());
 }
 
-function getLanIPs() {
-  // Explicit override wins — set LAN_IP=192.168.0.101 in .env to pin the address.
-  const forced = String(process.env.LAN_IP || '').trim();
-  const ifaces = os.networkInterfaces();
-  const ips = [];
-  for (const name of Object.keys(ifaces)) {
-    for (const iface of ifaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        ips.push({ name, address: iface.address, _p: lanIpPriority(name, iface.address) });
-      }
-    }
+function buildTabletEndpointMeta() {
+  const lanIPs = getLanIPs();
+  const recommended = lanIPs.length ? 'http://' + lanIPs[0].address + ':' + PORT : '';
+  const fallback = [];
+  for (let i = 1; i < lanIPs.length; i++) {
+    fallback.push('http://' + lanIPs[i].address + ':' + PORT);
   }
-  ips.sort(function (x, y) { return x._p - y._p; });
-  const ordered = ips.map(function (o) { return { name: o.name, address: o.address }; });
-  if (forced) {
-    const match = ordered.find(function (o) { return o.address === forced; });
-    return [{ name: match ? match.name : 'LAN_IP', address: forced }].concat(ordered.filter(function (o) { return o.address !== forced; }));
-  }
-  return ordered;
+  return {
+    recommendedEndpoint: recommended,
+    fallbackEndpoints: fallback,
+    generatedAt: Date.now(),
+    serverBootId: SERVER_BOOT_ID,
+    lanIps: lanIPs,
+  };
+}
+
+function clientIpFromRequest(req) {
+  const xf = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const raw = xf || req.socket?.remoteAddress || req.ip || '';
+  return String(raw).replace(/^::ffff:/, '');
 }
 
 /** Outcome-first release moment for LAN dashboard / kiosk (see config/release-moment.json). */
@@ -2996,21 +2734,130 @@ app.get('/api/release-moment', (req, res) => {
   }
 });
 
-/** Lightweight probe for kiosk LAN checks, synthetic monitors, and SLA measurement. */
+/** Lightweight reachability probe for tablets (no auth). */
 app.get('/api/health', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  const endpointMeta = buildTabletEndpointMeta();
+  const clientIp = clientIpFromRequest(req);
+  const ua = String(req.headers['user-agent'] || '').slice(0, 220);
+  debugLanLog('server.js:/api/health', 'health request', {
+    clientIp,
+    port: PORT,
+    listenHost: LISTEN_HOST,
+    lanIps: endpointMeta.lanIps.map(function (i) { return i.address; }),
+    hostHeader: String(req.headers.host || ''),
+    userAgent: ua,
+    isAndroid: /Android/i.test(ua),
+  }, 'H5');
+  const primary = endpointMeta.lanIps[0];
+  const baseOrigin = primary
+    ? 'http://' + primary.address + ':' + PORT
+    : 'http://127.0.0.1:' + PORT;
   res.json({
     ok: true,
-    service: 'abaya-track-factory',
+    service: 'abaya-factory',
+    port: PORT,
+    listenHost: LISTEN_HOST,
+    lanIps: endpointMeta.lanIps.map((i) => i.address),
+    primaryLanIp: primary ? primary.address : '',
+    kioskExample: buildKioskUrl(baseOrigin),
+    lanCheckUrl: buildLanCheckUrl(baseOrigin),
+    recommendedEndpoint: endpointMeta.recommendedEndpoint,
+    fallbackEndpoints: endpointMeta.fallbackEndpoints,
+    generatedAt: endpointMeta.generatedAt,
+    serverBootId: endpointMeta.serverBootId,
+    clientIp: clientIpFromRequest(req),
+    uptimeSec: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+    /** Floor kiosk contract: HTTP REST + polling only (see public/kiosk-transport.js). */
     floorKioskTransport: 'http',
-    ts: Date.now(),
-    uptimeMs: Date.now() - SERVER_STARTED_AT,
   });
+});
+
+/** Minimal probe for Android tablets (one short request, no Socket.IO). */
+app.get('/api/tablet-ping', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Connection', 'keep-alive');
+  debugLanLog('server.js:/api/tablet-ping', 'tablet ping', {
+    clientIp: clientIpFromRequest(req),
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 180),
+  }, 'H9');
+  res.status(204).end();
 });
 
 /** Returns detected LAN IPs and server port so the setup page can build kiosk URLs. */
 app.get('/api/server-info', (req, res) => {
-  res.json({ ok: true, ips: getLanIPs(), port: PORT, host: HOST });
+  const endpointMeta = buildTabletEndpointMeta();
+  const lanIPs = endpointMeta.lanIps;
+  const urls = lanIPs.map((i) => ({
+    address: i.address,
+    name: i.name,
+    baseUrl: 'http://' + i.address + ':' + PORT,
+    kioskUrl: 'http://' + i.address + ':' + PORT + '/kiosk.html',
+    setupUrl: 'http://' + i.address + ':' + PORT + '/setup',
+    lanCheckUrl: 'http://' + i.address + ':' + PORT + '/lan-check.html',
+  }));
+  res.json({
+    ok: true,
+    ips: lanIPs,
+    port: PORT,
+    listenHost: LISTEN_HOST,
+    urls,
+    recommendedEndpoint: endpointMeta.recommendedEndpoint,
+    fallbackEndpoints: endpointMeta.fallbackEndpoints,
+    generatedAt: endpointMeta.generatedAt,
+    serverBootId: endpointMeta.serverBootId,
+    tabletKioskExample: urls.length ? urls[0].kioskUrl : '',
+    tabletLanCheckExample: urls.length ? urls[0].lanCheckUrl : '',
+    connectionRefusedHints: connectionRefusedHints(PORT),
+    hints: connectionRefusedHints(PORT),
+  });
+});
+
+/** Tablet kiosk debug breadcrumbs (session 590497 — LAN connectivity). */
+app.post('/api/debug-kiosk', express.json(), (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  debugLanLog('server.js:/api/debug-kiosk', String(body.message || 'kiosk'), {
+    clientIp: clientIpFromRequest(req),
+    pageUrl: String(body.pageUrl || ''),
+    data: body.data || {},
+    hypothesisId: String(body.hypothesisId || ''),
+  }, String(body.hypothesisId || 'H5'));
+  res.json({ ok: true });
+});
+
+/** Aggregated LAN diagnostics for tablets/operators (single fetch for lan-check UI). */
+app.get('/api/connectivity-diagnostics', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const endpointMeta = buildTabletEndpointMeta();
+  const lanIPs = endpointMeta.lanIps;
+  const firewallAutoOpenEnabled = !['0', 'false', 'no'].includes(
+    String(process.env.LAN_OPEN_FIREWALL || '1').trim().toLowerCase()
+  );
+  res.json({
+    ok: true,
+    generatedAt: endpointMeta.generatedAt,
+    serverBootId: endpointMeta.serverBootId,
+    uptimeSec: Math.floor((Date.now() - SERVER_STARTED_AT) / 1000),
+    port: PORT,
+    listenHost: LISTEN_HOST,
+    clientIp: clientIpFromRequest(req),
+    recommendedEndpoint: endpointMeta.recommendedEndpoint,
+    fallbackEndpoints: endpointMeta.fallbackEndpoints,
+    lanIps: lanIPs.map((i) => ({ name: i.name, address: i.address })),
+    endpoints: lanIPs.map((i) => ({
+      name: i.name,
+      address: i.address,
+      baseUrl: 'http://' + i.address + ':' + PORT,
+      kioskUrl: 'http://' + i.address + ':' + PORT + '/kiosk.html',
+      lanCheckUrl: 'http://' + i.address + ':' + PORT + '/lan-check.html',
+    })),
+    firewall: {
+      autoOpenEnabled: firewallAutoOpenEnabled,
+      adminScript: 'install\\OPEN-LAN-FIREWALL-ADMIN.bat',
+    },
+    hints: connectionRefusedHints(PORT),
+  });
 });
 
 /** Version snapshot for browsers (auto-refresh catalog/employees, detect server restart). */
@@ -3288,6 +3135,11 @@ function debouncedExcelCatalogReload() {
 }
 
 function debouncedExcelEmployeesReload() {
+  if (employeesXlsxWriteInProgress) {
+    if (excelWatchEmpTimer) clearTimeout(excelWatchEmpTimer);
+    excelWatchEmpTimer = setTimeout(debouncedExcelEmployeesReload, 500);
+    return;
+  }
   if (excelWatchEmpTimer) clearTimeout(excelWatchEmpTimer);
   excelWatchEmpTimer = setTimeout(function () {
     excelWatchEmpTimer = null;
@@ -3339,64 +3191,55 @@ function startExcelFileWatchers() {
 
 loadFactoryWorkTypesFromDisk();
 
-/**
- * Fresh-install seeding. A new laptop has no employees.xlsx and no
- * data/employees-manual.json, so EMPLOYEES would still be the built-in DEMO list —
- * a silent, dangerous default for a real factory. Same for work types, which get
- * written out as DEFAULT_FACTORY_WORK_TYPES on first boot.
- *
- * Local data always wins: we only pull when the local source is genuinely absent
- * (employees) or still byte-identical to the shipped defaults (work types). Once
- * seeded we persist locally so the next boot is offline-safe.
- */
-async function seedRosterFromCloudIfLocalMissing() {
-  if (!CF_URL) return;
-
-  // ── Employees ──
-  const hasXlsx = !!EMPLOYEES_XLSX_PATH && fs.existsSync(
-    path.isAbsolute(EMPLOYEES_XLSX_PATH) ? EMPLOYEES_XLSX_PATH : path.join(__dirname, EMPLOYEES_XLSX_PATH)
-  );
-  const hasManual = fs.existsSync(EMPLOYEES_MANUAL_PATH);
-  if (!hasXlsx && !hasManual) {
-    const cloudEmployees = await fetchRosterFromCloud('/api/employees', 'employees');
-    if (cloudEmployees && cloudEmployees.length) {
-      EMPLOYEES = cloudEmployees;
-      rebuildACMap();
-      EMP_PERF = EMPLOYEES.map(function (e) {
-        return { id: e.id, units: 0, eff: 0, act: 0, idl: 0 };
-      });
-      saveEmployeesToManualFile();
-      console.log('[roster-seed] Seeded', EMPLOYEES.length, 'employees from the cloud (no local employees file).');
-    } else {
-      console.warn(
-        '[roster-seed] WARNING: running on built-in DEMO employees. Set EMPLOYEES_XLSX_PATH (or EXCEL_DATA_DIR) ' +
-        'to the real employees.xlsx, or push the roster to the cloud from the main factory laptop.'
-      );
-    }
-  }
-
-  // ── Work types ──
-  // Only on a genuinely fresh install (file created this boot). Never compare
-  // against the defaults: a factory may deliberately keep them, and the cloud copy
-  // must not silently replace a deliberate local choice on every restart.
-  if (workTypesFileWasCreatedThisBoot) {
-    const cloudTypes = await fetchRosterFromCloud('/api/work-types', 'workTypes');
-    if (cloudTypes && cloudTypes.length) {
-      FACTORY_WORK_TYPES = cloudTypes;
-      workTypesDataVersion++;
-      try {
-        fs.mkdirSync(path.dirname(WORK_TYPES_JSON_PATH), { recursive: true });
-        fs.writeFileSync(WORK_TYPES_JSON_PATH, JSON.stringify(FACTORY_WORK_TYPES, null, 2), 'utf8');
-      } catch (e) {
-        console.warn('[roster-seed] Could not persist work types:', e.message);
+function tryEnsureWindowsFirewall(port) {
+  if (process.platform !== 'win32') return;
+  const flag = String(process.env.LAN_OPEN_FIREWALL || '1').trim().toLowerCase();
+  if (flag === '0' || flag === 'false' || flag === 'no') return;
+  const { execFile } = require('child_process');
+  const ps1 = path.join(__dirname, 'install', 'ENSURE-LAN-FIREWALL.ps1');
+  if (!fs.existsSync(ps1)) return;
+  execFile(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-Port', String(port)],
+    { windowsHide: true },
+    (err) => {
+      if (err) {
+        console.warn(
+          '[lan] Could not auto-open Windows Firewall (run install\\ENSURE-LAN-FIREWALL.ps1 as Administrator):',
+          err.message || err
+        );
       }
-      console.log('[roster-seed] Seeded', FACTORY_WORK_TYPES.length, 'work types from the cloud.');
     }
-  }
+  );
 }
 
+server.on('error', (err) => {
+  debugLanLog('server.js:listen-error', 'server listen failed', {
+    code: err && err.code ? err.code : '',
+    message: err && err.message ? err.message : String(err),
+    port: PORT,
+    listenHost: LISTEN_HOST,
+  }, 'H1');
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(
+      `[fatal] Port ${PORT} is already in use. Stop the other process or change PORT in .env (tablets use http://<LAN-IP>:${PORT}/kiosk.html).`
+    );
+  } else if (err && err.code === 'EACCES') {
+    console.error(`[fatal] Cannot bind ${LISTEN_HOST}:${PORT} (permission denied). Try a port >= 1024 or run as admin.`);
+  } else {
+    console.error('[fatal] Server listen error:', err && err.message ? err.message : err);
+  }
+  process.exit(1);
+});
+
 // START SERVER
-server.listen(PORT, HOST, () => {
+server.listen(PORT, LISTEN_HOST, () => {
+  if (LISTEN_HOST === '127.0.0.1' || LISTEN_HOST === 'localhost') {
+    console.warn(
+      '[lan] LISTEN_HOST is loopback only — tablets on Wi-Fi cannot connect. Set LISTEN_HOST=0.0.0.0 in .env.'
+    );
+  }
+  tryEnsureWindowsFirewall(PORT);
   ensurePublicUploadDirs();
   ensureCeoQueueDir();
   recoverCeoIngestQueue();
@@ -3411,15 +3254,59 @@ server.listen(PORT, HOST, () => {
   attachEmployeeImagesFromDisk();
   attachItemImagesFromDisk();
   loadEmployeesFromManualFile();
-  void seedRosterFromCloudIfLocalMissing();
   const lanIPs = getLanIPs();
   const lanIp = lanIPs.length ? lanIPs[0].address : 'localhost';
-  console.log(`Abaya Central Server running on http://${HOST === '0.0.0.0' ? '0.0.0.0' : HOST}:${PORT}`);
-  console.log(`  Local:     http://127.0.0.1:${PORT}/kiosk.html`);
-  console.log(`  Kiosk:     http://127.0.0.1:${PORT}/kiosk.html`);
-  console.log(`  Dashboard: http://127.0.0.1:${PORT}/dashboard.html`);
-  console.log(`  QR Setup:  http://127.0.0.1:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
+  const endpointMetaBoot = buildTabletEndpointMeta();
+  debugLanLog('server.js:listen-ok', 'server listening', {
+    port: PORT,
+    listenHost: LISTEN_HOST,
+    lanIps: lanIPs.map(function (i) { return { name: i.name, address: i.address }; }),
+    recommendedEndpoint: endpointMetaBoot.recommendedEndpoint,
+    targets192_168_0_101: lanIPs.some(function (i) { return i.address === '192.168.0.101'; }),
+  }, 'H2');
+  if (LISTEN_HOST === '127.0.0.1' || LISTEN_HOST === 'localhost') {
+    debugLanLog('server.js:listen-ok', 'loopback bind blocks LAN tablets', {
+      listenHost: LISTEN_HOST,
+      port: PORT,
+    }, 'H2');
+  }
+  if (!lanIPs.some(function (i) { return i.address === '192.168.0.101'; })) {
+    debugLanLog('server.js:listen-ok', '192.168.0.101 not in detected LAN IPs', {
+      detected: lanIPs.map(function (i) { return i.address; }),
+      tabletTarget: '192.168.0.101',
+    }, 'H3');
+    console.warn(
+      '[lan] Tablets bookmarked to 192.168.0.101 will FAIL if this PC is not that IP. Run ipconfig and use install\\PRINT-LAN-TABLET-URL.bat'
+    );
+  }
+  if (process.env.WSL_DISTRO_NAME) {
+    console.warn(
+      '[lan] Server is running inside WSL. Factory tablets on Wi-Fi cannot use the WSL 172.31.x address. Start with install\\LAUNCH-ALL.bat on Windows (not wsl node).'
+    );
+    debugLanLog('server.js:listen-ok', 'WSL detected', { distro: process.env.WSL_DISTRO_NAME }, 'H3');
+  }
+  console.log(`Abaya Central Server listening on ${LISTEN_HOST}:${PORT}`);
+  if (lanIPs.length) {
+    const tabletKiosk = buildKioskUrl('http://' + lanIPs[0].address + ':' + PORT);
+    console.log('');
+    console.log('  *** OPEN THIS ON FACTORY TABLETS ***');
+    console.log('  ' + tabletKiosk);
+    console.log('');
+  }
+  console.log(`  Kiosk:     http://localhost:${PORT}/kiosk.html`);
+  console.log(`  Dashboard: http://localhost:${PORT}/dashboard.html`);
+  console.log(`  QR Setup:  http://localhost:${PORT}/setup   (LAN: http://${lanIp}:${PORT}/setup)`);
+  console.log(`  LAN check: http://${lanIp}:${PORT}/lan-check.html  (open on tablet if connection refused)`);
+  console.log(`  Firewall:  run install\\OPEN-LAN-FIREWALL-ADMIN.bat once if tablets cannot connect`);
+  if (!lanIPs.length) {
+    console.warn('[lan] No private LAN IPv4 detected — check Wi-Fi/Ethernet or virtual adapter filters.');
+  }
   console.log(`  Media:     http://localhost:${PORT}/asset-upload   (employee + item images)`);
+  if (lanIPs.length > 1) {
+    lanIPs.forEach((i) => {
+      console.log(`  LAN kiosk: http://${i.address}:${PORT}/kiosk.html  (${i.name})`);
+    });
+  }
   console.log(`  Socket.IO: pingInterval=${SOCKET_PING_INTERVAL_MS}ms pingTimeout=${SOCKET_PING_TIMEOUT_MS}ms cookie=false allowEIO3=true`);
   const persistence = getPersistenceHealth();
   console.log(
@@ -3429,13 +3316,6 @@ server.listen(PORT, HOST, () => {
   console.log(`  CEO queue file:   ${persistence.ceoQueueFile} (writable=${persistence.ceoQueueDirWritable})`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
-  // Roster (employees + work types) follows the same live cadence as the catalog,
-  // so an update made on another laptop / the dashboard shows here within ~60s.
-  refreshEmployeesFromCloud();
-  refreshWorkTypesFromCloud();
-  const ROSTER_PULL_MS = Math.max(5000, Number(process.env.ROSTER_PULL_INTERVAL_MS) || 60000);
-  setInterval(refreshEmployeesFromCloud, ROSTER_PULL_MS);
-  setInterval(refreshWorkTypesFromCloud, ROSTER_PULL_MS);
   setInterval(persistOfflineDashboardReport, 60000);
   setImmediate(persistOfflineDashboardReport);
   if (SQLITE_SNAPSHOT_ENABLED) {

@@ -1,0 +1,65 @@
+{
+  "name": "abaya-desktop-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Optional GUI to start factory server + catalog watcher (classic batch launcher remains)",
+  "main": "main.js",
+  "scripts": {
+    "start": "node -r ./.pnp.cjs ./start-electron.cjs",
+    "dist:win": "electron-builder --win nsis --x64",
+    "release:gh": "electron-builder --win nsis --x64 --publish always"
+  },
+  "packageManager": "yarn@4.13.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "electron": "^34.2.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.abaya.track.launcher",
+    "productName": "AbaYa Track Launcher",
+    "directories": {
+      "output": "../../dist/desktop-launcher"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "start-electron.cjs",
+      "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mdabir1203",
+        "repo": "famousabaya",
+        "releaseType": "draft"
+      }
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${channel}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  }
+}
