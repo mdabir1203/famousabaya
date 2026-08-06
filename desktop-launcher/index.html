@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>AbaYa Track - Control Center</title>
+  <style>
+    :root {
+      --bg0: #140d24;
+      --bg1: #1b1230;
+      --glass: rgba(255, 255, 255, 0.08);
+      --glassStrong: rgba(255, 255, 255, 0.14);
+      --stroke: rgba(187, 147, 255, 0.28);
+      --txt: #f3eeff;
+      --muted: #b8adcc;
+      --ok: #bff65c;
+      --warn: #ffd273;
+      --danger: #ff8da1;
+      --accent: #9a7cff;
+      --shadow: 0 22px 48px rgba(4, 2, 10, 0.42);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Cascadia Code', monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      color: var(--txt);
+      background:
+        radial-gradient(1200px 560px at 12% -12%, rgba(154, 124, 255, 0.38), transparent 62%),
+        radial-gradient(980px 620px at 96% 0%, rgba(116, 223, 255, 0.18), transparent 58%),
+        linear-gradient(130deg, var(--bg0), var(--bg1));
+      padding: 18px;
+      overflow: hidden;
+    }
+    .shell {
+      height: 100%;
+      border-radius: 22px;
+      border: 1px solid var(--stroke);
+      background: linear-gradient(150deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+      backdrop-filter: blur(14px) saturate(130%);
+      -webkit-backdrop-filter: blur(14px) saturate(130%);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-rows: repeat(10, auto) 1fr auto;
+      overflow: hidden;
+    }
+    .titlebar {
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 8px 6px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03));
+      backdrop-filter: blur(10px) saturate(130%);
+    }
+    .titlebar .title {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .win-controls {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+    }
+    .win-btn {
+      width: 28px;
+      height: 24px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color: var(--txt);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+    }
+    .win-btn:hover { border-color: rgba(255,255,255,0.45); }
+    .win-btn.close:hover { background: rgba(255,141,161,0.22); border-color: rgba(255,141,161,0.55); }
+    .close-confirm {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at center, rgba(98, 8, 24, 0.45), rgba(7, 3, 16, 0.86));
+      backdrop-filter: blur(8px);
+      z-index: 9999;
+      padding: 24px;
+    }
+    .close-confirm.show { display: flex; }
+    .close-confirm__dialog {
+      position: relative;
+      width: min(620px, 100%);
+      border-radius: 20px;
+      border: 2px solid rgba(255, 112, 143, 0.9);
+      background:
+        linear-gradient(140deg, rgba(56, 14, 32, 0.97), rgba(24, 8, 23, 0.99)),
+        repeating-linear-gradient(
+          -45deg,
+          rgba(255, 93, 131, 0.1) 0px,
+          rgba(255, 93, 131, 0.1) 8px,
+          rgba(255, 255, 255, 0.02) 8px,
+          rgba(255, 255, 255, 0.02) 16px
+        );
+      box-shadow: 0 28px 62px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 154, 180, 0.24) inset;
+      padding: 22px;
+      animation: closeConfirmFlash 1s linear infinite;
+    }
+    .close-confirm__dialog.shake-on-open {
+      animation:
+        closeConfirmFlash 1s linear infinite,
+        closeConfirmShake 430ms cubic-bezier(.36,.07,.19,.97) 1;
+    }
+    .close-confirm__dialog::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 20px;
+      pointer-events: none;
+      border: 2px solid rgba(255, 201, 214, 0.42);
+      opacity: 0.35;
+      animation: closeConfirmPulse 1.1s ease-out infinite;
+    }
+    .close-confirm__hero {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 14px;
+      align-items: center;
+    }
+    .close-confirm__img {
+      width: 84px;
+      height: 84px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 170, 122, 0.45);
+      object-fit: cover;
+      background: rgba(255,255,255,0.04);
+      box-shadow: 0 12px 28px rgba(255, 126, 126, 0.22);
+    }
+    .close-confirm__eyebrow {
+      margin: 0 0 4px;
+      font-size: 11px;
+      color: #fff2b6;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      font-weight: 900;
+      text-shadow: 0 0 14px rgba(255, 209, 104, 0.48);
+    }
+    .close-confirm__title {
+      margin: 0;
+      font-size: clamp(28px, 4.2vw, 42px);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+      font-weight: 950;
+      text-transform: uppercase;
+      color: #fff7fb;
+      text-shadow: 0 0 20px rgba(255, 146, 181, 0.28);
+    }
+    .close-confirm__title strong {
+      display: block;
+      color: #ff5f87;
+      text-shadow: 0 0 26px rgba(255, 52, 103, 0.5);
+      animation: closeConfirmUrgent 0.75s steps(1) infinite;
+    }
+    .close-confirm__text {
+      margin: 14px 0 18px;
+      color: #f2dbe4;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .close-confirm__actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .close-confirm__actions .danger {
+      background: linear-gradient(120deg, #ff5f8e, #e04277);
+      border-color: rgba(255, 176, 197, 0.64);
+      box-shadow: 0 14px 28px rgba(255, 95, 142, 0.34);
+    }
+    @keyframes closeConfirmFlash {
+      0%, 100% {
+        border-color: rgba(255, 112, 143, 0.92);
+        box-shadow: 0 28px 62px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 154, 180, 0.24) inset;
+      }
+      50% {
+        border-color: rgba(255, 208, 220, 0.96);
+        box-shadow: 0 28px 62px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 183, 202, 0.34) inset, 0 0 26px rgba(255, 88, 124, 0.38);
+      }
+    }
+    @keyframes closeConfirmPulse {
+      0% {
+        transform: scale(1);
+        opacity: 0.45;
+      }
+      100% {
+        transform: scale(1.02);
+        opacity: 0;
+      }
+    }
+    @keyframes closeConfirmUrgent {
+      0%, 49% {
+        color: #ff5f87;
+      }
+      50%, 100% {
+        color: #ffd8e6;
+      }
+    }
+    @keyframes closeConfirmShake {
+      10%, 90% { transform: translate3d(-1px, 0, 0); }
+      20%, 80% { transform: translate3d(2px, 0, 0); }
+      30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+      40%, 60% { transform: translate3d(4px, 0, 0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .close-confirm__dialog,
+      .close-confirm__dialog::before,
+      .close-confirm__title strong {
+        animation: none !important;
+      }
+    }
+    header {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    .orb {
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      background: linear-gradient(145deg, #b99eff, #6a4ed8);
+      box-shadow: inset 0 1px 4px rgba(255,255,255,0.26), 0 10px 26px rgba(95,56,187,0.5);
+      flex: 0 0 auto;
+    }
+    .brand h1 { margin: 0; font-size: 15px; letter-spacing: .02em; font-weight: 700; }
+    .brand p { margin: 3px 0 0; font-size: 11px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+    .status-pill {
+      margin-left: auto;
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: rgba(255,141,161,0.14);
+      color: var(--danger);
+    }
+    .status-pill.running { background: rgba(191,246,92,0.14); color: var(--ok); border-color: rgba(191,246,92,0.3); }
+    .status-pill.partial { background: rgba(255,210,115,0.16); color: var(--warn); border-color: rgba(255,210,115,0.26); }
+
+    .release-spotlight {
+      position: relative;
+      margin: 0 18px 12px;
+      border-radius: 18px;
+      border: 1px solid rgba(154, 124, 255, 0.38);
+      background: linear-gradient(125deg, rgba(154, 124, 255, 0.2), rgba(20, 13, 36, 0.94));
+      box-shadow: 0 16px 40px rgba(4, 2, 10, 0.38);
+      overflow: hidden;
+    }
+    .release-spotlight__glow {
+      position: absolute;
+      inset: -42%;
+      background: radial-gradient(closest-side, rgba(154, 124, 255, 0.22), transparent 72%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+    .release-spotlight--motion .release-spotlight__glow {
+      animation: rmGlow 14s ease-in-out infinite alternate;
+    }
+    @keyframes rmGlow {
+      from { transform: translate(-2%, -1%) scale(1); }
+      to { transform: translate(3%, 2%) scale(1.04); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .release-spotlight--motion .release-spotlight__glow { animation: none !important; }
+    }
+    .release-spotlight__inner {
+      position: relative;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 16px;
+      flex-wrap: wrap;
+    }
+    .release-spotlight__eyebrow {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #c9b8ff;
+      margin-bottom: 6px;
+    }
+    .release-spotlight__hook {
+      margin: 0 0 6px;
+      font-size: clamp(17px, 2vw, 21px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+    .release-spotlight__outcome {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      max-width: 52ch;
+    }
+    .release-spotlight__actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .release-spotlight__actions .ghost {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--muted);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+    .release-spotlight__dismiss {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 8px 4px;
+    }
+
+    .health {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      padding: 12px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .sync-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      padding: 0 18px 12px;
+    }
+    .sync-row .tile.warn { border-color: rgba(255,210,115,0.45); background: rgba(255,210,115,0.08); }
+    .sync-row .tile.bad  { border-color: rgba(255,141,161,0.45); background: rgba(255,141,161,0.08); }
+    .pm2-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 18px 12px;
+      flex-wrap: wrap;
+    }
+    .pm2-pill {
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+    }
+    .pm2-pill.ok { background: rgba(191,246,92,0.14); color: var(--ok); border-color: rgba(191,246,92,0.3); }
+    .pm2-pill.bad { background: rgba(255,141,161,0.14); color: var(--danger); border-color: rgba(255,141,161,0.3); }
+    .pm2-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tile {
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(255,255,255,0.04);
+      min-height: 66px;
+    }
+    .tile .k {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: 6px;
+    }
+    .tile .v {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .01em;
+      font-family: var(--mono);
+      line-height: 1.2;
+      word-break: break-word;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .updates {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 18px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .update-success-banner {
+      display: none;
+      margin: 0 18px 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(191,246,92,0.45);
+      background: rgba(191,246,92,0.12);
+      color: var(--txt);
+      font-size: 12px;
+      align-items: center;
+      gap: 10px;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .update-success-banner.show { display: flex; }
+    .update-trust {
+      padding: 0 18px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .trust-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    @media (max-width: 980px) {
+      .trust-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .trust-cell {
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.04);
+      min-width: 0;
+    }
+    .trust-cell .tk {
+      font-size: 9px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .trust-cell .tv {
+      font-size: 11px;
+      font-family: var(--mono);
+      word-break: break-word;
+      line-height: 1.35;
+    }
+    .update-badge {
+      font-size: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 999px;
+      padding: 5px 10px;
+      background: rgba(255,255,255,0.08);
+      font-family: var(--mono);
+    }
+    .update-meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .update-details {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .update-progress {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      overflow: hidden;
+    }
+    .update-progress > span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #7fd2ff, #9a7cff);
+      transition: width .2s ease;
+    }
+    .update-actions { display: flex; gap: 8px; }
+    .actions { display: flex; gap: 8px; }
+    .links { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+    button {
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.08);
+      color: var(--txt);
+      padding: 8px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: .18s ease;
+      backdrop-filter: blur(8px);
+      -webkit-app-region: no-drag;
+    }
+    button:hover { border-color: rgba(255,255,255,0.45); transform: translateY(-1px); }
+    button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .primary {
+      background: linear-gradient(135deg, #8e6cff, #6f58d9);
+      border-color: rgba(181,159,255,.6);
+      box-shadow: 0 9px 22px rgba(88,64,169,0.45);
+    }
+
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 12px 18px;
+    }
+    .log-wrap {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255,255,255,0.16);
+      border-radius: 14px;
+      overflow: hidden;
+      background: rgba(8, 5, 18, 0.52);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.09);
+    }
+    .log-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      font-size: 11px;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 10px rgba(255,141,161,.55); }
+    .dot.ok { background: var(--ok); box-shadow: 0 0 10px rgba(191,246,92,.6); }
+    pre {
+      margin: 0;
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.42;
+      padding: 10px;
+      color: #ddd6ef;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    footer {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 8px 16px 12px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .about {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-left: auto;
+      text-align: right;
+      align-items: flex-end;
+    }
+    .about a {
+      color: #d7c9ff;
+      text-decoration: none;
+    }
+    .about a:hover { text-decoration: underline; }
+    @media (max-width: 980px) {
+      .health { grid-template-columns: 1fr 1fr; }
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class='shell'>
+    <section class='titlebar'>
+      <div class='title'>AbaYa Track · Control Center</div>
+      <div class='win-controls'>
+        <button type='button' class='win-btn' id='btnWinMin' title='Minimize'>—</button>
+        <button type='button' class='win-btn' id='btnWinMax' title='Maximize'>□</button>
+        <button type='button' class='win-btn close' id='btnWinClose' title='Close'>×</button>
+      </div>
+    </section>
+    <header>
+      <div class='orb' aria-hidden='true'></div>
+      <div class='brand'>
+        <h1>AbaYa Track Control</h1>
+        <p>Process Orchestrator</p>
+      </div>
+      <div id='statusBadge' class='status-pill'>Stopped</div>
+    </header>
+
+    <section id='releaseMomentSpotlight' class='release-spotlight' style='display:none' role='region' aria-label='Product update'>
+      <div class='release-spotlight__glow' aria-hidden='true'></div>
+      <div class='release-spotlight__inner'>
+        <div>
+          <div id='rmEyebrow' class='release-spotlight__eyebrow'></div>
+          <h2 id='rmHook' class='release-spotlight__hook'></h2>
+          <p id='rmOutcome' class='release-spotlight__outcome'></p>
+        </div>
+        <div class='release-spotlight__actions'>
+          <button type='button' class='primary' id='rmPrimary'></button>
+          <button type='button' class='ghost' id='rmSecondary' style='display:none'></button>
+          <button type='button' class='release-spotlight__dismiss' id='rmDismiss'>Not now</button>
+        </div>
+      </div>
+    </section>
+
+    <section class='health'>
+      <div class='tile'><div class='k'>Server PID</div><div class='v' id='serverPid'>-</div></div>
+      <div class='tile'><div class='k'>Watcher PID</div><div class='v' id='watcherPid'>-</div></div>
+      <div class='tile'><div class='k'>Port Health</div><div class='v' id='portHealth'>-</div></div>
+      <div class='tile'><div class='k'>Port Owner PIDs</div><div class='v' id='portPids'>-</div></div>
+    </section>
+
+    <section class='sync-row'>
+      <div class='tile' id='tileSyncMode'><div class='k'>Sync Mode</div><div class='v' id='syncMode'>-</div></div>
+      <div class='tile' id='tileQueue'><div class='k'>Queue Pending</div><div class='v' id='syncPending'>-</div></div>
+      <div class='tile' id='tileReconcile'><div class='k'>Reconcile</div><div class='v' id='syncReconcile'>-</div></div>
+      <div class='tile' id='tileSnapshot'><div class='k'>Snapshot</div><div class='v' id='syncSnapshot'>-</div></div>
+    </section>
+
+    <section class='pm2-bar'>
+      <span class='pm2-pill' id='pm2Pill'>PM2: unknown</span>
+      <span class='pm2-pill' id='pm2Server'>server: -</span>
+      <span class='pm2-pill' id='pm2Watcher'>watcher: -</span>
+      <span class='pm2-pill' id='pm2Tunnel'>tunnel: -</span>
+      <span class='pm2-pill' id='alertsPill'>alerts: -</span>
+      <div class='pm2-actions'>
+        <button type='button' id='btnReconcile' title='POST /api/reconcile-now'>Reconcile Now</button>
+        <button type='button' id='btnPm2Reload' title='pm2 reload ecosystem.config.cjs --update-env'>PM2 Reload</button>
+        <button type='button' id='btnPm2Restart' title='pm2 restart ecosystem.config.cjs'>PM2 Restart</button>
+      </div>
+    </section>
+
+    <section class='toolbar'>
+      <div class='actions'>
+        <button type='button' class='primary' id='btnStart'>Start Runtime</button>
+        <button type='button' id='btnStop'>Stop + Free Port</button>
+      </div>
+      <div class='links'>
+        <button type='button' data-url='http://localhost:PORT_PLACEHOLDER/kiosk.html'>Kiosk</button>
+        <button type='button' data-url='http://localhost:PORT_PLACEHOLDER/dashboard.html'>Dashboard</button>
+        <button type='button' data-url='http://localhost:PORT_PLACEHOLDER/setup'>Setup</button>
+      </div>
+    </section>
+    <div id='updateSuccessBanner' class='update-success-banner' role='status'>
+      <span id='updateSuccessText'></span>
+      <button type='button' id='btnDismissUpdateSuccess'>Dismiss</button>
+    </div>
+    <section class='updates'>
+      <div id='updateBadge' class='update-badge'>idle</div>
+      <div class='update-meta'>
+        <div id='updateDetails' class='update-details'>Update service loading...</div>
+        <div id='updateProgress' class='update-progress'><span id='updateProgressFill'></span></div>
+      </div>
+      <div class='update-actions'>
+        <button type='button' id='btnUpdateCheck'>Check Updates</button>
+        <button type='button' id='btnUpdateInstall' disabled>Install & Restart</button>
+        <button type='button' id='btnReleaseNotes' disabled title='Open release notes'>Release notes</button>
+        <button type='button' id='btnExportDiagnostics' title='Save diagnostics JSON for support'>Export diagnostics</button>
+      </div>
+    </section>
+
+    <section class='update-trust' aria-label='Update schedule and errors'>
+      <div class='trust-grid'>
+        <div class='trust-cell'><span class='tk'>Last checked</span><span class='tv' id='trustLastChecked'>-</span></div>
+        <div class='trust-cell'><span class='tk'>Next check</span><span class='tv' id='trustNextCheck'>-</span></div>
+        <div class='trust-cell'><span class='tk'>Retry in</span><span class='tv' id='trustRetryIn'>-</span></div>
+        <div class='trust-cell'><span class='tk'>Last error</span><span class='tv' id='trustLastError'>-</span></div>
+        <div class='trust-cell'><span class='tk'>Notes link</span><span class='tv' id='trustNotesHint'>-</span></div>
+      </div>
+    </section>
+
+    <main>
+      <div class='log-wrap'>
+        <div class='log-head'><span>Server Log</span><span id='serverDot' class='dot'></span></div>
+        <pre id='serverLog'></pre>
+      </div>
+      <div class='log-wrap'>
+        <div class='log-head'><span>Watcher Log</span><span id='watcherDot' class='dot'></span></div>
+        <pre id='watcherLog'></pre>
+      </div>
+    </main>
+
+    <footer>
+      <span>Boot persistence: yarn pm2:setup · Classic fallback: install\\LAUNCH-ALL.bat</span>
+      <span>Status auto-refresh every 2.5s · Sync auto-refresh every 5s · Port is force-cleaned on stop/exit/start</span>
+      <span class='about'>
+        <span>@ Crafted by Cursor and Mohammad Abir Abbas with <a href='https://getwaved.ai' target='_blank' rel='noopener noreferrer'>Wavelink</a></span>
+        <span>Chattogram, Bangladesh</span>
+      </span>
+    </footer>
+  </div>
+  <div class='close-confirm' id='closeConfirm' role='dialog' aria-modal='true' aria-labelledby='closeConfirmTitle'>
+    <div class='close-confirm__dialog'>
+      <div class='close-confirm__hero'>
+        <img
+          class='close-confirm__img'
+          alt='Warning'
+          src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff9d46'/%3E%3Cstop offset='1' stop-color='%23ff4b7a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='96' height='96' rx='20' fill='%231f0f2b'/%3E%3Cpath d='M48 14 83 77H13z' fill='url(%23g)'/%3E%3Crect x='44' y='35' width='8' height='22' rx='4' fill='%23fff'/%3E%3Ccircle cx='48' cy='66' r='5' fill='%23fff'/%3E%3C/svg%3E"
+        />
+        <div>
+          <p class='close-confirm__eyebrow'>Final check</p>
+          <h2 class='close-confirm__title' id='closeConfirmTitle'>Stop right there.<strong>Exit AbaYa Track?</strong></h2>
+        </div>
+      </div>
+      <p class='close-confirm__text'>
+        This action shuts down your control screen immediately. Confirm only if you are fully done monitoring runtime and updates.
+      </p>
+      <div class='close-confirm__actions'>
+        <button type='button' id='btnCloseCancel'>Keep Working</button>
+        <button type='button' id='btnCloseConfirm' class='danger'>Yes, Close Now</button>
+      </div>
+    </div>
+  </div>
+  <script src='renderer.js'></script>
+</body>
+</html>
