@@ -25,6 +25,12 @@ const chokidar = require('chokidar');
 
 /** Default 3000; override with PORT in .env */
 const PORT = process.env.PORT || 3000;
+/** Default 0.0.0.0 (all interfaces) so tablets can reach server on LAN; loopback-only bind prints warning */
+const LISTEN_HOST = String(process.env.LISTEN_HOST || '0.0.0.0').trim() || '0.0.0.0';
+/** Unique boot ID for cache-busting kiosk shells after server restart */
+const SERVER_BOOT_ID = crypto.randomBytes(8).toString('hex');
+/** Flag to prevent chokidar from reloading half-written Excel files when dashboard edits roster */
+let employeesXlsxWriteInProgress = false;
 
 function parseEnvPositiveIntOrNull(name) {
   const raw = String(process.env[name] || '').trim();
@@ -65,6 +71,18 @@ app.use(
   })
 );
 app.use(express.json());
+
+/** Normalize trailing slashes: 308-redirect /api/state/ → /api/state so tablet browsers don't hit 404 */
+function normalizeTrailingSlash(req, res, next) {
+  if (req.path.length > 1 && req.path.endsWith('/') && !req.path.startsWith('/updates/')) {
+    const newPath = req.path.slice(0, -1);
+    const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.path.length + 1) : '';
+    const redirectUrl = query ? newPath + '?' + query : newPath;
+    return res.redirect(308, redirectUrl);
+  }
+  next();
+}
+app.use(normalizeTrailingSlash);
 
 /** LAN mirror for Electron desktop launcher updates (publish `latest.yml` + artifacts per channel). */
 const LAN_UPDATE_MIRROR_ROOT = (() => {
@@ -240,12 +258,16 @@ function attachItemImagesFromDisk() {
 }
 
 const server = http.createServer(app);
+/** TCP keep-alive: prevents Android Chrome from getting ERR_CONNECTION_ABORTED on idle sockets */
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 130000;
+
 const SOCKET_PING_INTERVAL_MS = Number(process.env.SOCKET_PING_INTERVAL_MS) > 0
   ? Number(process.env.SOCKET_PING_INTERVAL_MS)
-  : 15000;
+  : 25000;
 const SOCKET_PING_TIMEOUT_MS = Number(process.env.SOCKET_PING_TIMEOUT_MS) > 0
   ? Number(process.env.SOCKET_PING_TIMEOUT_MS)
-  : 20000;
+  : 60000;
 
 const io = new Server(server, {
   cors: { origin: '*' },
@@ -2332,6 +2354,11 @@ function loadEmployeesFromXlsxFile() {
   try {
     const mt = Math.floor(fs.statSync(resolved).mtimeMs);
     if (lastEmployeesXlsxMtime !== 0 && mt === lastEmployeesXlsxMtime) {
+      return;
+    }
+    /** File-watcher race fix: skip reload if dashboard is mid-write */
+    if (employeesXlsxWriteInProgress) {
+      console.log('[employees-xlsx] Write in progress, skipping reload');
       return;
     }
     const parsed = parseEmployeesXlsxFile(resolved);
