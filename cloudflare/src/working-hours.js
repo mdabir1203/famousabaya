@@ -5,6 +5,17 @@ export const FACTORY_HOURLY_START = 9;
 export const FACTORY_HOURLY_END = 23;
 
 const WORKING_HOURS_KEY = 'working_hours_v1';
+export { WORKING_HOURS_KEY };
+
+/** Parse a worker_settings row into a normalized config (shared by get/batch paths). */
+export function workingHoursConfigFromRow(row) {
+  if (!row || row.v == null) return defaultWorkingHoursConfig();
+  try {
+    return normalizeWorkingHoursConfig(JSON.parse(String(row.v)));
+  } catch (_) {
+    return defaultWorkingHoursConfig();
+  }
+}
 const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 const _ymdFmt = new Map();
@@ -96,12 +107,7 @@ export function normalizeWorkingHoursConfig(raw) {
 
 export async function getWorkingHoursConfig(env) {
   const row = await env.DB.prepare('SELECT v FROM worker_settings WHERE k = ?').bind(WORKING_HOURS_KEY).first();
-  if (!row || row.v == null) return defaultWorkingHoursConfig();
-  try {
-    return normalizeWorkingHoursConfig(JSON.parse(String(row.v)));
-  } catch (_) {
-    return defaultWorkingHoursConfig();
-  }
+  return workingHoursConfigFromRow(row);
 }
 
 export async function saveWorkingHoursConfig(env, cfg) {

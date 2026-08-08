@@ -62,6 +62,37 @@ export function safeYmdOrFallback(value, fallbackYmd) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallbackYmd;
 }
 
+export function isValidYmd(value) {
+  const s = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = parseYmdUtc(s);
+  return ymdFromUtcDate(d) === s;
+}
+
+/**
+ * Explicit custom report range [from, to] (inclusive, YYYY-MM-DD).
+ * Throws Error with a client-safe message on invalid input.
+ * @param {string} from
+ * @param {string} to
+ * @param {{ maxDays?: number }} [opts]
+ */
+export function customRange(from, to, opts) {
+  const maxDays = Math.max(1, Number(opts && opts.maxDays) || 92);
+  if (!isValidYmd(from) || !isValidYmd(to)) {
+    throw new Error('Invalid from/to date (use YYYY-MM-DD)');
+  }
+  if (from > to) {
+    throw new Error('Invalid range: from is after to');
+  }
+  const days = dayDiffInclusive(from, to);
+  if (days > maxDays) {
+    throw new Error('Range too long (max ' + maxDays + ' days)');
+  }
+  const prevEnd = addUtcDays(from, -1);
+  const prevStart = addUtcDays(prevEnd, -(days - 1));
+  return { type: 'custom', startYmd: from, endYmd: to, prevStart, prevEnd, days };
+}
+
 export function sessionsFilterForPeriod(period, anchorYmd) {
   const range = reportRangeForType(period, anchorYmd);
   return {
