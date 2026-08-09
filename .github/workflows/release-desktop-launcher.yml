@@ -1,169 +1,332 @@
-name: QA/QC and Release
+name: 🚀 Auto-Release Desktop Launcher
 
 on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
-  pull_request:
+
   workflow_dispatch:
 
 permissions:
   contents: write
 
-jobs:
-  qa-qc:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
 
-      # Must run before setup-node: with `cache: "yarn"`, setup-node shells out
-      # to `yarn` for the cache key, and the runner's global Yarn 1.x refuses to
-      # run here because package.json pins packageManager: yarn@4.13.0.
-      - name: Enable Corepack
+jobs:
+
+  # ============================================================
+  # 1. QA / QC GATE
+  # ============================================================
+
+  qa-qc:
+    name: 🔍 QA / QC
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Must run before setup-node because setup-node's Yarn cache
+      # invokes Yarn while calculating the cache key.
+      - name: 🟢 Enable Corepack
         run: corepack enable
 
-      - name: Setup Node LTS
+      - name: 🟢 Setup Node.js LTS
         uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
-          cache: "yarn"
+          cache: yarn
 
-      - name: Enable Corepack and activate Yarn 4.13.0
+      - name: 🧶 Activate Yarn 4.13.0
         run: |
           corepack enable
           corepack prepare yarn@4.13.0 --activate
+          yarn --version
 
-      - name: Install dependencies
+      - name: 📦 Install Dependencies
         run: yarn install --immutable
 
-      - name: Run QA/QC pipeline
+      - name: 🧪 Run QA / QC Pipeline
         run: yarn qa:qc:ci
 
-  build-and-publish:
-    needs: qa-qc
-    if: github.event_name != 'pull_request'
-    runs-on: windows-latest
-    env:
-      GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-      ABAYA_UPDATE_CHANNEL: ${{ contains(github.ref_name, 'beta') && 'beta' || 'stable' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Setup Node LTS
+  # ============================================================
+  # 2. WINDOWS BUILD + RELEASE
+  # ============================================================
+
+  build-and-release:
+    name: 🚀 Build & Release Desktop Launcher
+    needs: qa-qc
+
+    runs-on: windows-latest
+
+    steps:
+
+      # ----------------------------------------------------------
+      # CHECKOUT
+      # ----------------------------------------------------------
+
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      # ----------------------------------------------------------
+      # NODE + YARN
+      # ----------------------------------------------------------
+
+      - name: 🟢 Setup Node.js LTS
         uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
 
-      - name: Enable Corepack and activate Yarn 4.13.0
+      - name: 🧶 Enable Corepack + Yarn 4.13.0
+        shell: pwsh
         run: |
           corepack enable
           corepack prepare yarn@4.13.0 --activate
+          yarn --version
 
-      - name: Install launcher dependencies
+
+      # ----------------------------------------------------------
+      # INSTALL LAUNCHER DEPENDENCIES
+      # ----------------------------------------------------------
+
+      - name: 📦 Install Launcher Dependencies
         working-directory: tools/desktop-launcher
-        run: yarn install
+        run: yarn install --immutable
 
-      - name: Generate self-signed Windows certificate
+
+      # ----------------------------------------------------------
+      # GENERATE UNIQUE RELEASE VERSION
+      # ----------------------------------------------------------
+
+      - name: 🏷️ Generate Unique Release Version
+        id: version
+        shell: bash
+        run: |
+          DATE=$(date -u +"%Y.%m.%d")
+          TIME=$(date -u +"%H%M%S")
+
+          VERSION="v${DATE}-${TIME}"
+
+          echo "=========================================="
+          echo "Generated Release Version: $VERSION"
+          echo "=========================================="
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+
+
+      # ----------------------------------------------------------
+      # WINDOWS CODE SIGNING
+      # ----------------------------------------------------------
+
+      - name: 🔐 Generate Windows Signing Certificate
         shell: pwsh
         run: |
-          $certDir = Join-Path $env:GITHUB_WORKSPACE 'dist/cert'
-          New-Item -ItemType Directory -Path $certDir -Force | Out-Null
-          $certPath = Join-Path $certDir 'AbaYaTrackSelfSigned.pfx'
-          $password = 'AbaYa-Track-Self-Signed-2026!'
-          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-          $cert = New-SelfSignedCertificate -CertStoreLocation Cert:\CurrentUser\My -Type CodeSigningCert -Subject "CN=AbaYa Track Self Signed" -KeyUsage DigitalSignature -FriendlyName "AbaYa Track Self Signed" -KeyExportPolicy Exportable -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider"
-          Export-PfxCertificate -Cert $cert -FilePath $certPath -Password $securePassword | Out-Null
-          echo "CSC_LINK=$certPath" >> $env:GITHUB_ENV
-          echo "CSC_KEY_PASSWORD=$password" >> $env:GITHUB_ENV
-          echo "WIN_CSC_LINK=$certPath" >> $env:GITHUB_ENV
 
-      - name: Resolve release version
-        id: release-version
+          $certDir = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "dist/cert"
+
+          New-Item `
+            -ItemType Directory `
+            -Path $certDir `
+            -Force | Out-Null
+
+          $certPath = Join-Path `
+            $certDir `
+            "AbaYaTrackSelfSigned.pfx"
+
+          # Intentionally retained as requested.
+          $password = "AbaYa-Track-Self-Signed-2026!"
+
+          $securePassword = ConvertTo-SecureString `
+            $password `
+            -AsPlainText `
+            -Force
+
+          $cert = New-SelfSignedCertificate `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -Type CodeSigningCert `
+            -Subject "CN=AbaYa Track Self Signed" `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "AbaYa Track Self Signed" `
+            -KeyExportPolicy Exportable `
+            -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider"
+
+          Export-PfxCertificate `
+            -Cert $cert `
+            -FilePath $certPath `
+            -Password $securePassword | Out-Null
+
+          "CSC_LINK=$certPath" >> $env:GITHUB_ENV
+          "CSC_KEY_PASSWORD=$password" >> $env:GITHUB_ENV
+          "WIN_CSC_LINK=$certPath" >> $env:GITHUB_ENV
+
+          Write-Host "Windows signing certificate generated successfully."
+
+
+      # ----------------------------------------------------------
+      # RELEASE NOTES
+      # ----------------------------------------------------------
+
+      - name: 📝 Generate Release Notes
         shell: bash
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version="${GITHUB_REF_NAME#v}"
-            tag="$GITHUB_REF_NAME"
-          else
-            version=$(node -p "require('./tools/desktop-launcher/package.json').version")
-            tag="v$version"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Generate release notes
-        shell: bash
-        run: |
-          node scripts/generate-release-notes.mjs --tag "${{ steps.release-version.outputs.tag }}" --version "${{ steps.release-version.outputs.version }}" --output release-notes.md
-          echo "Release notes generated."
+          node scripts/generate-release-notes.mjs \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --version "${{ steps.version.outputs.version }}" \
+            --output release-notes.md
 
-      - name: Skip release if version already exists
-        id: check-release
-        shell: bash
-        run: |
-          tag="${{ steps.release-version.outputs.tag }}"
-          echo "Checking for existing GitHub release tag $tag..."
-          release=$(curl -s -H "Authorization: token $GH_TOKEN" "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/$tag")
-          if echo "$release" | grep -q '"message": "Not Found"'; then
-            echo "release_exists=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_exists=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "Release notes generated successfully."
 
-      - name: Create or update GitHub release stub
-        if: steps.check-release.outputs.release_exists == 'false'
+
+      # ----------------------------------------------------------
+      # BUILD ELECTRON WINDOWS LAUNCHER
+      # ----------------------------------------------------------
+
+      - name: 🛠️ Build & Publish Signed Launcher
+        working-directory: tools/desktop-launcher
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          tag="${{ steps.release-version.outputs.tag }}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "Release $tag" --notes-file release-notes.md --draft=false
-          else
-            gh release create "$tag" --title "Release $tag" --notes-file release-notes.md
-          fi
-
-      - name: Build and publish signed launcher
-        if: steps.check-release.outputs.release_exists == 'false'
-        working-directory: tools/desktop-launcher
         run: yarn release:gh
 
-      - name: Build portable ZIP release artifact
-        if: steps.check-release.outputs.release_exists == 'false'
+
+      # ----------------------------------------------------------
+      # BUILD PORTABLE ZIP
+      # ----------------------------------------------------------
+
+      - name: 📦 Build Portable ZIP
         shell: pwsh
         run: |
+
           $env:Path += ";$env:ProgramFiles\PowerShell\7"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version "${{ steps.release-version.outputs.version }}"
 
-      - name: Upload portable ZIP to release
-        if: steps.check-release.outputs.release_exists == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-        shell: bash
+          powershell `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File scripts/build-release.ps1 `
+            -Version "${{ steps.version.outputs.version }}"
+
+
+      # ----------------------------------------------------------
+      # VERIFY BUILD ARTIFACTS
+      # ----------------------------------------------------------
+
+      - name: 🔎 Verify Build Artifacts
+        shell: pwsh
         run: |
-          tag="${{ steps.release-version.outputs.tag }}"
-          zip_path="dist/AbaYa-Track-v${{ steps.release-version.outputs.version }}.zip"
-          if [ -f "$zip_path" ]; then
-            gh release upload "$tag" "$zip_path" --clobber
-          else
-            echo "Portable ZIP artifact not found at $zip_path"
+
+          Write-Host "=========================================="
+          Write-Host "Verifying release artifacts..."
+          Write-Host "=========================================="
+
+          $requiredFiles = @(
+            "release-notes.md",
+            "dist/AbaYa-Track-v${{ steps.version.outputs.version }}.zip"
+          )
+
+          foreach ($file in $requiredFiles) {
+
+            if (!(Test-Path $file)) {
+              Write-Error "Required artifact missing: $file"
+              exit 1
+            }
+
+            Write-Host "✓ Found: $file"
+          }
+
+          $exeFiles = Get-ChildItem `
+            "dist/desktop-launcher" `
+            -Filter "*.exe" `
+            -ErrorAction SilentlyContinue
+
+          if (!$exeFiles) {
+            Write-Error "No Windows EXE found in dist/desktop-launcher."
             exit 1
-          fi
+          }
 
-      - name: Verify GitHub release exists
-        if: steps.check-release.outputs.release_exists == 'false'
+          Write-Host "✓ Windows EXE found."
+
+          $ymlFiles = Get-ChildItem `
+            "dist/desktop-launcher" `
+            -Filter "*.yml" `
+            -ErrorAction SilentlyContinue
+
+          if (!$ymlFiles) {
+            Write-Error "No update metadata (.yml) found."
+            exit 1
+          }
+
+          Write-Host "✓ Update metadata found."
+
+          Write-Host ""
+          Write-Host "All release artifacts verified successfully."
+
+
+      # ----------------------------------------------------------
+      # PUBLISH GITHUB RELEASE
+      # ----------------------------------------------------------
+
+      - name: 🚀 Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          tag="${{ steps.release-version.outputs.tag }}"
-          echo "Verifying GitHub release $tag exists..."
-          gh release view "$tag"
 
-      - name: Release already exists
-        if: steps.check-release.outputs.release_exists == 'true'
-        run: echo "Release for version ${{ steps.release-version.outputs.version }} already exists. Skipping publish."
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          echo "=========================================="
+          echo "Publishing GitHub Release"
+          echo "Version: $VERSION"
+          echo "Tag:     $TAG"
+          echo "Commit:  $GITHUB_SHA"
+          echo "=========================================="
+
+          gh release create "$TAG" \
+            --title "AbaYa Track Launcher $VERSION" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            --latest \
+            "dist/desktop-launcher/"*.exe \
+            "dist/desktop-launcher/"*.yml \
+            "dist/desktop-launcher/"*.blockmap \
+            "dist/AbaYa-Track-v${VERSION}.zip"
+
+
+      # ----------------------------------------------------------
+      # FINAL RELEASE VERIFICATION
+      # ----------------------------------------------------------
+
+      - name: ✅ Verify GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+
+          TAG="${{ steps.version.outputs.tag }}"
+
+          echo "=========================================="
+          echo "Verifying GitHub Release"
+          echo "=========================================="
+
+          gh release view "$TAG"
+
+          echo ""
+          echo "=========================================="
+          echo "🚀 RELEASE SUCCESSFUL"
+          echo "=========================================="
+          echo "Version : $TAG"
+          echo "Commit  : $GITHUB_SHA"
+          echo "Trigger : $GITHUB_EVENT_NAME"
+          echo "=========================================="
