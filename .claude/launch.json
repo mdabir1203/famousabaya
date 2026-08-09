@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dispatch-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["services/dispatch-server/server.js"],
+      "port": 3001
+    },
+    {
+      "name": "factory-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-r", "./.pnp.cjs", "server.js"],
+      "port": 3000
+    }
+  ]
+}

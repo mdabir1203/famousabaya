@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "savedAt": 1786294051039,
+  "windowStartMs": 1785084451039,
+  "windowEndMs": 1786294051039,
+  "summary": {
+    "completedSessionsInWindow": 0,
+    "activeSessionsCount": 0
+  },
+  "logs": [],
+  "perf": [
+    {
+      "id": "e_bc_00000109",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000110",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000111",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000112",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000113",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000114",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000115",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000116",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000117",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000118",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000119",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000120",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000121",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000122",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000123",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000124",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000125",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000128",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000129",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000130",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000131",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000132",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000133",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000134",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000135",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000999",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_00000998",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    },
+    {
+      "id": "e_bc_dasdas",
+      "units": 0,
+      "eff": 0,
+      "act": 0,
+      "idl": 0
+    }
+  ],
+  "active": {}
+}

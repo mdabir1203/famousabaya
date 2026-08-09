@@ -17,13 +17,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
-  const out = { channel: 'stable', from: path.join(REPO_ROOT, 'dist', 'desktop-launcher') };
+  const out = { channel: 'stable', from: path.join(REPO_ROOT, 'dist', 'desktop-launcher'), dest: '' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--channel' && argv[i + 1]) {
       out.channel = String(argv[++i]).toLowerCase();
     } else if (a === '--from' && argv[i + 1]) {
       out.from = path.resolve(REPO_ROOT, argv[++i]);
+    } else if (a === '--dest' && argv[i + 1]) {
+      // Test/support override: publish into an explicit directory instead of
+      // the default data/lan-update-mirror/<channel>.
+      out.dest = path.resolve(REPO_ROOT, argv[++i]);
     }
   }
   return out;
@@ -44,16 +48,24 @@ function copyFile(src, dest) {
 const args = parseArgs(process.argv);
 assertChannel(args.channel);
 
-const destDir = path.join(REPO_ROOT, 'data', 'lan-update-mirror', args.channel);
+const destDir = args.dest || path.join(REPO_ROOT, 'data', 'lan-update-mirror', args.channel);
 if (!fs.existsSync(args.from) || !fs.statSync(args.from).isDirectory()) {
   console.error('Source directory not found:', args.from);
   process.exit(1);
 }
 
 const names = fs.readdirSync(args.from);
-const yml = names.find((n) => n === 'latest.yml' || n === 'latest-mac.yml');
+// electron-builder emits latest.yml for stable versions and <prerelease>.yml
+// (e.g. beta.yml) for prerelease versions such as 1.2.4-beta.1
+// (detectUpdateChannel default). Accept whichever one the build produced.
+const YML_CANDIDATES = ['latest.yml', 'beta.yml', 'latest-mac.yml'];
+const yml = YML_CANDIDATES.find((n) => names.includes(n));
 if (!yml) {
-  console.error('No latest.yml in', args.from, '(run electron-builder publish first)');
+  console.error(
+    'No update metadata yml in',
+    args.from,
+    '(expected one of: ' + YML_CANDIDATES.join(', ') + '; run electron-builder publish first)'
+  );
   process.exit(1);
 }
 
@@ -78,7 +90,17 @@ if (exes.length > 1) {
 
 const blockmap = blockmaps.find((b) => b.startsWith(exe.replace(/\.exe$/i, ''))) || blockmaps[0];
 
-copyFile(path.join(args.from, yml), path.join(destDir, 'latest.yml'));
+// electron-updater resolves metadata as `<channel>.yml`: stable-ring clients
+// (channel 'latest') fetch latest.yml, beta-ring clients fetch beta.yml.
+// Publish the produced file under its own name AND as latest.yml — the
+// launcher's mirror probe and the server's mirror-health endpoint both key on
+// latest.yml.
+copyFile(path.join(args.from, yml), path.join(destDir, yml));
+const publishedYmls = [yml];
+if (yml !== 'latest.yml') {
+  copyFile(path.join(args.from, yml), path.join(destDir, 'latest.yml'));
+  publishedYmls.push('latest.yml');
+}
 copyFile(path.join(args.from, exe), path.join(destDir, exe));
 if (blockmap) {
   copyFile(path.join(args.from, blockmap), path.join(destDir, blockmap));
@@ -87,5 +109,5 @@ if (blockmap) {
 console.log('Published LAN update mirror:', {
   channel: args.channel,
   destDir,
-  files: [yml, exe, blockmap].filter(Boolean),
+  files: [...publishedYmls, exe, blockmap].filter(Boolean),
 });

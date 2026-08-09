@@ -110,6 +110,47 @@ export function getCEODashboard(origin) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>AbaYa Track — CEO Dashboard</title>
+<script>
+// Lightweight Web Vitals (TTFB, FCP, LCP, CLS, INP) — zero dependencies.
+// Numbers live on window.__vitals and in console for support reviews.
+(function () {
+  try {
+    var v = (window.__vitals = {});
+    function log() {
+      if (console && console.debug) console.debug('[vitals]', JSON.stringify(v));
+    }
+    var nav = performance.getEntriesByType('navigation')[0];
+    if (nav) {
+      v.TTFB = Math.round(nav.responseStart);
+      v.HTML = Math.round(nav.responseEnd);
+    }
+    new PerformanceObserver(function (l) {
+      var e = l.getEntries();
+      if (e.length) v.LCP = Math.round(e[e.length - 1].startTime);
+      log();
+    }).observe({ type: 'largest-contentful-paint', buffered: true });
+    new PerformanceObserver(function (l) {
+      var e = l.getEntries();
+      if (e.length) v.FCP = Math.round(e[0].startTime);
+      log();
+    }).observe({ type: 'paint', buffered: true });
+    var cls = 0;
+    new PerformanceObserver(function (l) {
+      l.getEntries().forEach(function (x) {
+        if (!x.hadRecentInput) cls += x.value;
+      });
+      v.CLS = Math.round(cls * 1000) / 1000;
+      log();
+    }).observe({ type: 'layout-shift', buffered: true });
+    new PerformanceObserver(function (l) {
+      l.getEntries().forEach(function (x) {
+        v.INP = Math.max(v.INP || 0, Math.round(x.duration));
+      });
+      log();
+    }).observe({ type: 'event', durationThreshold: 40, buffered: true });
+  } catch (_) {}
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
@@ -205,6 +246,24 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   <div class="rep-panel" id="exec-reports">
     <div style="font-size:15px;font-weight:700;color:var(--bl);display:flex;align-items:center;gap:8px">&#128274; Executive Reports</div>
     <div style="font-size:11px;color:var(--tx2);margin-top:4px">View report, then export to WhatsApp in one tap</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 2px">
+      <label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:8px">
+        <span>&#128197; Pick a date</span>
+        <input type="date" id="report-date" style="padding:8px 10px;border-radius:8px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:12px;font-family:var(--fn)">
+      </label>
+      <button type="button" class="rep-btn" style="padding:8px 12px;text-transform:none" onclick="resetReportDate()">Today</button>
+      <span style="font-size:10px;color:var(--tx3)">Reports open for this date. Leave empty for today.</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 2px">
+      <label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:8px">
+        <span>&#128100; Pick a person</span>
+        <select id="employee-day-select" style="padding:10px 12px;border-radius:10px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:13px;font-family:var(--fn);max-width:240px">
+          <option value="">Loading names...</option>
+        </select>
+      </label>
+      <button type="button" class="rep-btn" style="padding:10px 18px" onclick="openSelectedEmployeeDay()">&#128269; Show their day</button>
+      <span style="font-size:10px;color:var(--tx3)">See what that person did on the picked date (or today).</span>
+    </div>
     <div class="rep-btns">
       <button class="rep-btn" onclick="openReport('daily')">&#128467; Daily Report</button>
       <button class="rep-btn" onclick="openReport('weekly')">&#128196; Weekly Report</button>
@@ -1236,6 +1295,144 @@ async function runGarmentTrace() {
 }
 
 // ─── REPORT MODAL ─────────────────────────────────────────────────────────────
+function getPickedReportDate() {
+  const el = document.getElementById('report-date');
+  const v = el ? String(el.value || '').trim() : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+}
+
+function resetReportDate() {
+  const el = document.getElementById('report-date');
+  if (el) el.value = '';
+}
+
+/** Roster for the "Pick a person" dropdown — fetched once per page load. */
+async function loadEmployeeDayOptions() {
+  const sel = document.getElementById('employee-day-select');
+  try {
+    const r = await fetchWithRetry(BASE + '/api/employees?ts=' + Date.now(), { cache: 'no-store' });
+    const data = await r.json();
+    const list = (data && data.employees) || [];
+    if (!sel) return;
+    if (!list.length) {
+      sel.innerHTML = '<option value="">No people found</option>';
+      return;
+    }
+    sel.innerHTML =
+      '<option value="">Choose a person...</option>' +
+      list
+        .map(function (e) {
+          const label = String(e.name || e.id || '') + (e.process ? ' — ' + String(e.process) : '');
+          return '<option value="' + encodeURIComponent(String(e.id || '')) + '">' + esc(label) + '</option>';
+        })
+        .join('');
+  } catch (_) {
+    if (sel) sel.innerHTML = '<option value="">Could not load names</option>';
+  }
+}
+
+function openSelectedEmployeeDay() {
+  const sel = document.getElementById('employee-day-select');
+  const raw = sel ? String(sel.value || '') : '';
+  if (!raw) {
+    document.getElementById('modal-title').textContent = 'Pick a person first';
+    document.getElementById('modal-ts').textContent = '';
+    document.getElementById('modal-body').innerHTML =
+      '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">Choose a name from "Pick a person", then tap Show their day.</div>';
+    document.getElementById('modal').classList.add('open');
+    return;
+  }
+  openEmployeeDay(decodeURIComponent(raw));
+}
+
+/** Date the per-employee day view applies to: picked date, else the report's end date. */
+function employeeDayAnchorYmd() {
+  const picked = getPickedReportDate();
+  if (picked) return picked;
+  const p = lastReportData && lastReportData.period;
+  return (p && p.end_date) || localYmdNow();
+}
+
+async function openEmployeeDay(empId) {
+  const anchor = employeeDayAnchorYmd();
+  document.getElementById('modal-title').textContent = 'Employee day';
+  document.getElementById('modal-ts').textContent = 'Loading ' + anchor + '...';
+  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
+  try {
+    const r = await fetchWithRetry(
+      BASE + '/api/report/employee-day?emp_id=' + encodeURIComponent(empId) +
+        '&date=' + encodeURIComponent(anchor) + '&ts=' + Date.now(),
+      { cache: 'no-store' }
+    );
+    const data = await r.json();
+    if (!data || data.ok === false) throw new Error((data && data.error) || 'load failed');
+    renderEmployeeDay(data);
+  } catch (e) {
+    document.getElementById('modal-body').innerHTML =
+      backToReportBtnHtml() +
+      '<div style="padding:20px;text-align:center;color:var(--rd);font-size:13px">Could not load employee day: ' +
+      esc(String((e && e.message) || e)) + '</div>';
+  }
+}
+
+function renderEmployeeDay(data) {
+  const emp = data.emp || {};
+  const t = data.totals || {};
+  const name = emp.name || emp.id || 'Employee';
+  document.getElementById('modal-title').textContent = name + ' — ' + String(data.date || '');
+  document.getElementById('modal-ts').textContent =
+    (emp.process ? emp.process + ' — ' : '') +
+    'What ' + name + ' did on this date, in order. Generated: ' +
+    new Date().toLocaleString([], { timeZone: uiTz() });
+  let html =
+    backToReportBtnHtml() +
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 0 14px">' +
+    card('Units', t.units || 0, 'var(--gr)') +
+    card('Work time', fmtHMS(t.active_time_sec || 0), 'var(--am)') +
+    card('Live now', fmtHMS(t.live_active_time_sec || 0), 'var(--bl)') +
+    '</div>';
+  const rows = data.sessions || [];
+  if (!rows.length) {
+    html += '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">No sessions on this date.</div>';
+  } else {
+    html +=
+      '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden;max-height:320px;overflow-y:auto">' +
+      '<div style="display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr) 64px;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px">' +
+      '<span>Time</span><span>Process</span><span>Item</span><span style="text-align:right">Duration</span></div>';
+    rows.forEach(function (s) {
+      const start = s.started_at
+        ? new Date(Number(s.started_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+        : '—';
+      const end = s.live
+        ? 'now'
+        : s.ended_at
+          ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+          : '—';
+      html +=
+        '<div style="display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr) 64px;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center;' +
+        (s.live ? 'background:rgba(106,95,193,.14);' : '') +
+        '">' +
+        '<span style="color:var(--tx3)">' + esc(start + '–' + end) + '</span>' +
+        '<span style="font-weight:600;color:' + procColorUI(s.emp_process) + '">' +
+        esc(String(s.emp_process || '—')) +
+        (s.live ? ' <span style="color:var(--bl);font-size:10px">(active)</span>' : '') +
+        '</span>' +
+        '<span style="color:var(--tx2)">' + esc(String(s.abaya_code || s.abaya_id || '—')) + '</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(s.duration_sec) + '</span></div>';
+    });
+    html += '</div>';
+  }
+  document.getElementById('modal-body').innerHTML = html;
+}
+
+function backToReportBtnHtml() {
+  return '<div style="margin-bottom:10px"><button type="button" class="rep-btn" style="padding:8px 12px;text-transform:none" onclick="backToReport()">&larr; Back to report</button></div>';
+}
+
+function backToReport() {
+  if (activeReportType) openReport(activeReportType);
+}
+
 async function openReport(type) {
   activeReportType = type;
   lastModalAnalytics = null;
@@ -1246,8 +1443,12 @@ async function openReport(type) {
   document.getElementById('modal').classList.add('open');
 
   try {
+    const pickedDate = getPickedReportDate();
     const r = await fetchWithRetry(
-      BASE + '/api/report?type=' + encodeURIComponent(type) + '&local_today=' + encodeURIComponent(localYmdNow()) + '&ts=' + Date.now(),
+      BASE + '/api/report?type=' + encodeURIComponent(type) +
+        '&local_today=' + encodeURIComponent(localYmdNow()) +
+        (pickedDate ? '&date=' + encodeURIComponent(pickedDate) : '') +
+        '&ts=' + Date.now(),
       { cache: 'no-store' }
     );
     const data = await r.json();
@@ -1298,6 +1499,7 @@ async function openReport(type) {
       card('Active vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.active_time_sec_delta) || 0), 'var(--am)') +
       card('Avg vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.avg_sec_delta) || 0), 'var(--bl)') +
       '</div>' +
+      '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">By employee — tap a name to see their day</div>' +
       '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden">' +
       '<div style="display:grid;grid-template-columns:1fr 44px 62px 62px 62px 62px 62px 62px;gap:6px;padding:9px 10px;font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd)">' +
       '<span>Employee</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>' +
@@ -1305,7 +1507,7 @@ async function openReport(type) {
 
     (data.by_employee||[]).forEach(e => {
       html += '<div style="display:grid;grid-template-columns:1fr 44px 62px 62px 62px 62px 62px 62px;gap:6px;padding:9px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px">' +
-        '<span style="font-weight:600">'+e.emp_name+'<span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
+        '<span style="font-weight:600"><a href="javascript:void(0)" style="color:var(--tx);text-decoration:underline dotted" title="See this employee\'s day" onclick="openEmployeeDay(decodeURIComponent(\'' + encodeURIComponent(String(e.emp_id || '')) + '\'))">' + esc(String(e.emp_name || e.emp_id || '')) + '</a><span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
         '<span style="text-align:right;font-weight:700">'+e.units+'</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">'+fmtHMS(e.active_time_sec)+'</span>' +
         '<span style="text-align:right;color:var(--tx2)">'+fmtHMS(e.elapsed_time_sec)+'</span>' +
@@ -1630,6 +1832,7 @@ function showToast(msg,type) {
 loadAbayaCatalog().then(function () {
   renderAbayaTotalsTable();
 });
+loadEmployeeDayOptions();
 schedulePollLoop();
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'visible') poll();

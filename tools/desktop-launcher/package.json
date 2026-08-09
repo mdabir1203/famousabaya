@@ -1,6 +1,6 @@
 {
   "name": "abaya-desktop-launcher",
-  "version": "1.0.0",
+  "version": "1.2.5",
   "private": true,
   "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
   "author": "Mohammad Abir Abbas",
@@ -32,10 +32,12 @@
     "files": [
       "index.html",
       "main.js",
+      "update-policy.cjs",
       "preload.js",
       "renderer.js",
       "start-electron.cjs",
       "package.json",
+<<<<<<< HEAD
       "README.md"
     ],
     "extraResources": [
@@ -94,6 +96,46 @@
         "from": ".factory-deps/node_modules",
         "to": "node_modules"
       }
+=======
+      "../../package.json",
+      "../../yarn.lock",
+      "../../.yarnrc.yml",
+      "../../.pnp.cjs",
+      "../../.env.example",
+      "../../tools/catalog-watcher/config.example.json",
+      "../../.yarn/**/*",
+      "../../install/**/*",
+      "../../server.js",
+      "../../scripts/**/*",
+      "../../shared/**/*",
+      "../../services/**/*",
+      "../../cloudflare/**/*",
+      "../../config/**/*",
+      "../../docs/**/*",
+      "../../lib/**/*",
+      "../../public/**/*",
+      "../../tools/**/*",
+      "../../gk/**/*",
+      "../../objects/**/*",
+      "../../data/**/*",
+      "../../node_modules/**/*",
+      "../../tools/catalog-watcher/node_modules/**/*",
+      "../../*.md",
+      "../../*.txt",
+      "../../*.json",
+      "../../*.cjs",
+      "../../*.mjs",
+      "../../*.js",
+      "../../*.bat",
+      "../../*.ps1",
+      "../../*.sql",
+      "../../*.xlsx",
+      "../../ecosystem.config.cjs",
+      "../../wrangler.jsonc",
+      "../../docker/**/*",
+      "../../product-explainer/**/*",
+      "../../kiosk-pwa/**/*"
+>>>>>>> 10247c8476e05885c1d050fb2ebb59bb7a0856e3
     ],
     "publish": [
       {

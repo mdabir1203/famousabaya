@@ -7,8 +7,8 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const os = require('os');
-const crypto = require('crypto');
 const { spawn, execSync, execFileSync } = require('child_process');
+const updatePolicyLib = require('./update-policy.cjs');
 
 /** Resolve the runtime root for both source runs and packaged installs. */
 function resolveRepoRoot() {
@@ -22,6 +22,8 @@ function resolveRepoRoot() {
   const candidates = [
     process.env.ABAYA_REPO_ROOT,
     process.env.ABAYA_APP_ROOT,
+    process.resourcesPath ? path.join(process.resourcesPath, 'app') : '',
+    process.resourcesPath ? path.join(process.resourcesPath, 'app', 'resources') : '',
     __dirname,
     app && typeof app.getAppPath === 'function' ? app.getAppPath() : '',
     path.resolve(__dirname, '..', '..'),
@@ -66,17 +68,7 @@ const UPDATE_META_PATH = path.join(LAUNCHER_DATA_DIR, 'pending-update.json');
 const LAUNCHER_PKG_PATH = path.join(__dirname, 'package.json');
 const APP_MODE_PATH = path.join(REPO_ROOT, 'config', 'app-mode.json');
 const DEFAULT_APP_MODE = 'production';
-const DEFAULT_UPDATE_POLICY = {
-  defaultChannel: 'stable',
-  betaPercent: 0,
-  checkIntervalMinutes: 360,
-  retryIntervalMinutes: 15,
-  maxBackoffMinutes: 720,
-  jitterPercent: 20,
-  rolloutSeed: 'abaya-track-default-seed',
-  auditLogMaxBytes: 2 * 1024 * 1024,
-  auditLogMaxArchives: 5,
-};
+const DEFAULT_UPDATE_POLICY = updatePolicyLib.DEFAULT_UPDATE_POLICY;
 
 function ensureLauncherRuntimeDirs() {
   try {
@@ -139,6 +131,12 @@ function readPortFromDotenv(repoRoot) {
   return 3000;
 }
 
+function readHostFromDotenv(repoRoot) {
+  const env = readDotenvMap(repoRoot);
+  const host = String(env.HOST || env.host || '').trim();
+  return host || '0.0.0.0';
+}
+
 function readIngestSecretFromDotenv(repoRoot) {
   const env = readDotenvMap(repoRoot);
   return String(env.CF_INGEST_SECRET || env.cf_ingest_secret || '').trim();
@@ -166,6 +164,7 @@ let allowWindowClose = false;
 /** After one LAN feed error, fall back to GitHub once per process (electron-updater). */
 let githubFallbackAfterLanError = false;
 const FACTORY_PORT = readPortFromDotenv(REPO_ROOT);
+const FACTORY_HOST = readHostFromDotenv(REPO_ROOT);
 let updateCheckTimer = null;
 let updatePolicy = Object.assign({}, DEFAULT_UPDATE_POLICY);
 /**
@@ -200,12 +199,23 @@ function hasDevUpdateConfig() {
 }
 appMode = loadAppMode();
 let updateFailureCount = 0;
+/** True while a checkForUpdates() call is in flight — prevents overlapping checks. */
+let updateCheckInFlight = false;
+/**
+ * Set when the updater error handler has already dealt with a LAN-feed failure
+ * by scheduling the one-time GitHub fallback retry, so the rejected
+ * checkForUpdates() promise does not also count it as a check failure.
+ */
+let lanFallbackRetryPending = false;
+/** Updater event handlers and powerMonitor hook must be registered exactly once. */
+let updaterHandlersRegistered = false;
 /** @type {{ from: string } | null} */
 let pendingUpdateApplyResult = null;
 let updateState = {
   enabled: false,
   phase: 'idle',
   channel: 'stable',
+  updaterChannel: 'latest',
   version: app.getVersion(),
   availableVersion: '',
   downloaded: false,
@@ -239,16 +249,12 @@ function setUpdateState(patch) {
   emitUpdateState();
 }
 
-function getDesiredUpdateChannel() {
-  const raw = String(process.env.ABAYA_UPDATE_CHANNEL || '').trim().toLowerCase();
-  if (raw === 'beta' || raw === 'stable') return raw;
-  const pct = Number(updatePolicy.betaPercent);
-  if (!Number.isFinite(pct) || pct <= 0) {
-    return String(updatePolicy.defaultChannel || 'stable') === 'beta' ? 'beta' : 'stable';
-  }
-  const bucket = computeDeviceBucket(updatePolicy.rolloutSeed || DEFAULT_UPDATE_POLICY.rolloutSeed);
-  if (bucket < Math.min(100, Math.max(0, pct))) return 'beta';
-  return String(updatePolicy.defaultChannel || 'stable') === 'beta' ? 'beta' : 'stable';
+/**
+ * Rollout ring for this device: 'stable' | 'beta'.
+ * Distinct from the electron-updater channel — see mapRingToUpdaterChannel().
+ */
+function getDesiredUpdateRing() {
+  return updatePolicyLib.getDesiredUpdateRing(process.env.ABAYA_UPDATE_CHANNEL, updatePolicy);
 }
 
 function readJsonFileSafe(filePath) {
@@ -261,51 +267,8 @@ function readJsonFileSafe(filePath) {
   }
 }
 
-function normalizePositiveInt(v, fallback, min, max) {
-  const n = parseInt(String(v || ''), 10);
-  if (!Number.isFinite(n)) return fallback;
-  const lo = Number.isFinite(min) ? min : n;
-  const hi = Number.isFinite(max) ? max : n;
-  return Math.max(lo, Math.min(hi, n));
-}
-
 function loadUpdatePolicy() {
-  const fromFile = readJsonFileSafe(UPDATE_POLICY_PATH) || {};
-  const merged = Object.assign({}, DEFAULT_UPDATE_POLICY, fromFile);
-  merged.defaultChannel = String(merged.defaultChannel || 'stable').toLowerCase() === 'beta' ? 'beta' : 'stable';
-  merged.betaPercent = Math.max(0, Math.min(100, Number(merged.betaPercent) || 0));
-  merged.checkIntervalMinutes = normalizePositiveInt(merged.checkIntervalMinutes, DEFAULT_UPDATE_POLICY.checkIntervalMinutes, 15, 24 * 60);
-  merged.retryIntervalMinutes = normalizePositiveInt(merged.retryIntervalMinutes, DEFAULT_UPDATE_POLICY.retryIntervalMinutes, 1, 180);
-  merged.maxBackoffMinutes = normalizePositiveInt(
-    merged.maxBackoffMinutes,
-    DEFAULT_UPDATE_POLICY.maxBackoffMinutes,
-    merged.retryIntervalMinutes,
-    7 * 24 * 60
-  );
-  merged.jitterPercent = normalizePositiveInt(merged.jitterPercent, DEFAULT_UPDATE_POLICY.jitterPercent, 0, 40);
-  merged.rolloutSeed = String(merged.rolloutSeed || DEFAULT_UPDATE_POLICY.rolloutSeed);
-  merged.auditLogMaxBytes = normalizePositiveInt(
-    merged.auditLogMaxBytes,
-    DEFAULT_UPDATE_POLICY.auditLogMaxBytes,
-    256 * 1024,
-    50 * 1024 * 1024
-  );
-  merged.auditLogMaxArchives = normalizePositiveInt(
-    merged.auditLogMaxArchives,
-    DEFAULT_UPDATE_POLICY.auditLogMaxArchives,
-    1,
-    50
-  );
-  return merged;
-}
-
-function computeDeviceBucket(seed) {
-  const host = os.hostname() || process.env.COMPUTERNAME || 'unknown-host';
-  const user = process.env.USERNAME || process.env.USER || 'unknown-user';
-  const base = String(seed || '') + '|' + String(host) + '|' + String(user);
-  const digest = crypto.createHash('sha256').update(base).digest();
-  const n = digest.readUInt32BE(0);
-  return n % 100;
+  return updatePolicyLib.loadUpdatePolicy(readJsonFileSafe(UPDATE_POLICY_PATH));
 }
 
 /** @returns {any | null} */
@@ -364,7 +327,8 @@ function applyGithubUpdaterFeedFromPackage() {
       repo: String(pub.repo),
     };
     if (typeof pub.releaseType === 'string') opts.releaseType = pub.releaseType;
-    if (typeof pub.token === 'string' && pub.token) opts.token = pub.token;
+    const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || pub.token || '').trim();
+    if (token) opts.token = token;
     autoUpdater.setFeedURL(opts);
     return true;
   } catch (e) {
@@ -375,18 +339,7 @@ function applyGithubUpdaterFeedFromPackage() {
   }
 }
 
-/**
- * @param {string} raw
- * @returns {string}
- */
-function normalizeMirrorBaseUrl(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  if (!/^https?:\/\//i.test(s)) {
-    return 'http://' + s.replace(/^\/+/, '');
-  }
-  return s.replace(/\/+$/, '');
-}
+const normalizeMirrorBaseUrl = updatePolicyLib.normalizeMirrorBaseUrl;
 
 /**
  * Mirror base is factory origin only, e.g. `http://192.168.1.10:3000` (no `/updates` suffix required).
@@ -399,30 +352,27 @@ function resolveUpdateMirrorBaseUrl() {
   return String(map.ABAYA_UPDATE_MIRROR_BASE_URL || '').trim();
 }
 
-/**
- * @param {string} baseUrlNorm
- * @param {string} channel
- * @returns {string}
- */
-function buildLanGenericFeedUrl(baseUrlNorm, channel) {
-  const base = normalizeMirrorBaseUrl(baseUrlNorm);
-  const ch = channel === 'beta' ? 'beta' : 'stable';
-  return new URL('/updates/' + ch + '/', base.endsWith('/') ? base : base + '/').href;
-}
+const buildLanGenericFeedUrl = updatePolicyLib.buildLanGenericFeedUrl;
 
 /**
+ * Probe the exact metadata file the updater will request from the mirror:
+ * `/updates/<ring>/<updaterChannel>.yml` (latest.yml for stable, beta.yml for
+ * beta). Probing only latest.yml could green-light a beta mirror that lacks
+ * beta.yml and send the real fetch into a 404.
  * @param {string} baseUrlNorm
- * @param {string} channel
+ * @param {string} ring 'stable' | 'beta' rollout ring (mirror path segment)
+ * @param {string} updaterChannel electron-updater channel ('latest' | 'beta')
  * @param {number} timeoutMs
  * @returns {Promise<{ ok: boolean, error: string, url?: string }>}
  */
-function probeLanMirrorLatestYml(baseUrlNorm, channel, timeoutMs) {
+function probeLanMirrorLatestYml(baseUrlNorm, ring, updaterChannel, timeoutMs) {
   const base = normalizeMirrorBaseUrl(baseUrlNorm);
   if (!base) return Promise.resolve({ ok: false, error: 'empty-base' });
-  const ch = channel === 'beta' ? 'beta' : 'stable';
+  const ch = ring === 'beta' ? 'beta' : 'stable';
+  const ymlName = String(updaterChannel || 'latest') + '.yml';
   let fullUrl;
   try {
-    fullUrl = new URL('/updates/' + ch + '/latest.yml', base.endsWith('/') ? base : base + '/').href;
+    fullUrl = new URL('/updates/' + ch + '/' + ymlName, base.endsWith('/') ? base : base + '/').href;
   } catch (_) {
     return Promise.resolve({ ok: false, error: 'bad-url' });
   }
@@ -653,15 +603,7 @@ function buildDiagnosticsPayload() {
 }
 
 function getNextCheckDelayMs() {
-  const baseMinutes = updateFailureCount > 0
-    ? Math.min(updatePolicy.maxBackoffMinutes, updatePolicy.retryIntervalMinutes * Math.pow(2, updateFailureCount - 1))
-    : updatePolicy.checkIntervalMinutes;
-  const baseMs = baseMinutes * 60 * 1000;
-  const jitterRatio = (Number(updatePolicy.jitterPercent) || 0) / 100;
-  if (jitterRatio <= 0) return baseMs;
-  const min = Math.floor(baseMs * (1 - jitterRatio));
-  const max = Math.ceil(baseMs * (1 + jitterRatio));
-  return Math.floor(min + Math.random() * Math.max(1, max - min));
+  return updatePolicyLib.getNextCheckDelayMs(updatePolicy, updateFailureCount);
 }
 
 function scheduleNextUpdateCheck(reason) {
@@ -686,14 +628,33 @@ function scheduleNextUpdateCheck(reason) {
 }
 
 async function checkForUpdatesSafe(reason) {
-  if (!updateState.enabled) return;
+  if (!updateState.enabled) return { skipped: 'disabled' };
+  if (updateCheckInFlight) {
+    // Overlapping checks (manual click during a scheduled check) are skipped,
+    // never counted as failures.
+    appendUpdateAudit('check-skipped-in-flight', { reason: String(reason || 'unknown') });
+    return { skipped: 'in-flight' };
+  }
+  updateCheckInFlight = true;
   try {
     await autoUpdater.checkForUpdates();
     updateFailureCount = 0;
     appendUpdateAudit('check-ok', { reason: String(reason || 'unknown') });
+    return { ok: true };
   } catch (err) {
-    updateFailureCount += 1;
     const msg = String(err && err.message ? err.message : err);
+    if (lanFallbackRetryPending) {
+      // The updater error handler already switched to the GitHub feed and
+      // scheduled the fallback retry — this rejection is the same failure
+      // surfacing through the promise, so it must not be counted twice.
+      lanFallbackRetryPending = false;
+      appendUpdateAudit('check-superseded-by-lan-fallback', {
+        reason: String(reason || 'unknown'),
+        error: msg,
+      });
+      return { skipped: 'lan-fallback' };
+    }
+    updateFailureCount += 1;
     setUpdateState({
       phase: 'error',
       error: msg,
@@ -707,12 +668,19 @@ async function checkForUpdatesSafe(reason) {
       error: msg,
       failureCount: updateFailureCount,
     });
+    return { ok: false, error: msg };
+  } finally {
+    updateCheckInFlight = false;
   }
 }
 
 function setupAutoUpdates() {
   updatePolicy = loadUpdatePolicy();
-  const channel = getDesiredUpdateChannel();
+  const ring = getDesiredUpdateRing();
+  // electron-updater fetches `<channel>.yml`: the stable ring must use the
+  // conventional 'latest' channel (latest.yml is what electron-builder and the
+  // LAN mirror publish); the beta ring uses 'beta' (beta.yml).
+  const updaterMapping = updatePolicyLib.mapRingToUpdaterChannel(ring);
   const isPackaged = app.isPackaged;
   // Updates run only in production. From source (unpackaged) they additionally
   // require a dev-app-update.yml, per electron-updater.
@@ -720,7 +688,8 @@ function setupAutoUpdates() {
   if (updatesDisabled) {
     const patch = {
       enabled: false,
-      channel: channel,
+      channel: ring,
+      updaterChannel: updaterMapping.channel,
       phase: 'disabled',
       message:
         appMode === 'development'
@@ -752,132 +721,158 @@ function setupAutoUpdates() {
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = channel === 'beta';
+  autoUpdater.allowPrerelease = updaterMapping.allowPrerelease;
   autoUpdater.allowDowngrade = false;
-  if (typeof autoUpdater.channel === 'string') {
-    autoUpdater.channel = channel;
-  }
-  setUpdateState({ channel: channel });
+  // Unconditional: the channel getter is null on unpackaged apps without
+  // app-update.yml, and a guarded assignment used to silently strand beta
+  // devices on the default 'latest' channel.
+  try {
+    autoUpdater.channel = updaterMapping.channel;
+  } catch (_) {}
+  setUpdateState({ channel: ring, updaterChannel: updaterMapping.channel });
 
-  autoUpdater.on('checking-for-update', function () {
-    setUpdateState({
-      phase: 'checking',
-      message: 'Checking for updates...',
-      checkedAt: Date.now(),
-      error: '',
-    });
-    appendUpdateAudit('checking-for-update');
-  });
+  // Event handlers and the powerMonitor hook are registered exactly once.
+  // setupAutoUpdates() also runs on every mode toggle (set-mode IPC); without
+  // this guard each toggle stacked duplicate listeners, duplicate checks and
+  // duplicate audit rows.
+  if (!updaterHandlersRegistered) {
+    updaterHandlersRegistered = true;
 
-  autoUpdater.on('update-available', function (info) {
-    const notesUrl = deriveReleaseNotesUrl(info) || buildGithubReleaseUrl(String((info && info.version) || ''));
-    setUpdateState({
-      phase: 'downloading',
-      availableVersion: String((info && info.version) || ''),
-      downloaded: false,
-      progress: 0,
-      message: 'Update available, downloading in background',
-      checkedAt: Date.now(),
-      lastCheckedAt: Date.now(),
-      error: '',
-      lastErrorMessage: '',
-      releaseNotesUrl: notesUrl,
+    autoUpdater.on('checking-for-update', function () {
+      setUpdateState({
+        phase: 'checking',
+        message: 'Checking for updates...',
+        checkedAt: Date.now(),
+        error: '',
+      });
+      appendUpdateAudit('checking-for-update');
     });
-    appendUpdateAudit('update-available', {
-      version: String((info && info.version) || ''),
-    });
-  });
 
-  autoUpdater.on('update-not-available', function () {
-    setUpdateState({
-      phase: 'idle',
-      availableVersion: '',
-      downloaded: false,
-      progress: 0,
-      message: 'App is up to date',
-      checkedAt: Date.now(),
-      lastCheckedAt: Date.now(),
-      error: '',
-      lastErrorMessage: '',
+    autoUpdater.on('update-available', function (info) {
+      updateFailureCount = 0;
+      const notesUrl = deriveReleaseNotesUrl(info) || buildGithubReleaseUrl(String((info && info.version) || ''));
+      setUpdateState({
+        phase: 'downloading',
+        availableVersion: String((info && info.version) || ''),
+        downloaded: false,
+        progress: 0,
+        message: 'Update available, downloading in background',
+        checkedAt: Date.now(),
+        lastCheckedAt: Date.now(),
+        error: '',
+        lastErrorMessage: '',
+        releaseNotesUrl: notesUrl,
+      });
+      appendUpdateAudit('update-available', {
+        version: String((info && info.version) || ''),
+      });
     });
-    appendUpdateAudit('update-not-available');
-  });
 
-  autoUpdater.on('download-progress', function (progressObj) {
-    const progress = Number(progressObj && progressObj.percent);
-    setUpdateState({
-      phase: 'downloading',
-      progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
-      message: 'Downloading update...',
-      error: '',
+    autoUpdater.on('update-not-available', function () {
+      updateFailureCount = 0;
+      setUpdateState({
+        phase: 'idle',
+        availableVersion: '',
+        downloaded: false,
+        progress: 0,
+        message: 'App is up to date',
+        checkedAt: Date.now(),
+        lastCheckedAt: Date.now(),
+        error: '',
+        lastErrorMessage: '',
+      });
+      appendUpdateAudit('update-not-available');
     });
-    appendUpdateAudit('download-progress', {
-      percent: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
-    });
-  });
 
-  autoUpdater.on('update-downloaded', function (info) {
-    const newVer = String((info && info.version) || updateState.availableVersion || '');
-    writePendingUpdateMeta(app.getVersion(), newVer);
-    const notesUrl = deriveReleaseNotesUrl(info) || buildGithubReleaseUrl(newVer);
-    setUpdateState({
-      phase: 'downloaded',
-      downloaded: true,
-      progress: 100,
-      availableVersion: newVer,
-      message: 'Update downloaded. Restart app to apply.',
-      error: '',
-      lastCheckedAt: Date.now(),
-      releaseNotesUrl: notesUrl,
+    autoUpdater.on('download-progress', function (progressObj) {
+      const progress = Number(progressObj && progressObj.percent);
+      setUpdateState({
+        phase: 'downloading',
+        progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+        message: 'Downloading update...',
+        error: '',
+      });
+      appendUpdateAudit('download-progress', {
+        percent: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+      });
     });
-    appendUpdateAudit('update-downloaded', {
-      version: newVer,
-    });
-  });
 
-  autoUpdater.on('error', function (err) {
-    const msg = String(err && err.message ? err.message : err);
-    if (updateState.updateFeedSource === 'lan' && !githubFallbackAfterLanError) {
-      githubFallbackAfterLanError = true;
-      if (applyGithubUpdaterFeedFromPackage()) {
-        setUpdateState({
-          phase: 'ready',
-          error: '',
-          lastErrorMessage: '',
-          updateFeedSource: 'github',
-          updateMirrorFeedUrl: '',
-          updateMirrorProbeOk: false,
-          updateMirrorProbeMessage: 'fallback-after-lan-error',
-          message: 'LAN update mirror failed; retrying via cloud update source.',
-        });
-        appendUpdateAudit('updater-fallback-github-after-lan-error', {
-          error: msg,
-        });
-        setTimeout(function () {
-          checkForUpdatesSafe('after-lan-fallback');
-        }, 400);
-        return;
+    autoUpdater.on('update-downloaded', function (info) {
+      updateFailureCount = 0;
+      const newVer = String((info && info.version) || updateState.availableVersion || '');
+      writePendingUpdateMeta(app.getVersion(), newVer);
+      const notesUrl = deriveReleaseNotesUrl(info) || buildGithubReleaseUrl(newVer);
+      setUpdateState({
+        phase: 'downloaded',
+        downloaded: true,
+        progress: 100,
+        availableVersion: newVer,
+        message: 'Update downloaded. Restart app to apply.',
+        error: '',
+        lastCheckedAt: Date.now(),
+        releaseNotesUrl: notesUrl,
+      });
+      appendUpdateAudit('update-downloaded', {
+        version: newVer,
+      });
+    });
+
+    autoUpdater.on('error', function (err) {
+      const msg = String(err && err.message ? err.message : err);
+      if (updateState.updateFeedSource === 'lan' && !githubFallbackAfterLanError) {
+        githubFallbackAfterLanError = true;
+        if (applyGithubUpdaterFeedFromPackage()) {
+          // If this error belongs to an in-flight check, its promise rejection
+          // is already handled here — tell checkForUpdatesSafe not to count it.
+          if (updateCheckInFlight) lanFallbackRetryPending = true;
+          setUpdateState({
+            phase: 'ready',
+            error: '',
+            lastErrorMessage: '',
+            updateFeedSource: 'github',
+            updateMirrorFeedUrl: '',
+            updateMirrorProbeOk: false,
+            updateMirrorProbeMessage: 'fallback-after-lan-error',
+            message: 'LAN update mirror failed; retrying via cloud update source.',
+          });
+          appendUpdateAudit('updater-fallback-github-after-lan-error', {
+            error: msg,
+          });
+          setTimeout(function () {
+            checkForUpdatesSafe('after-lan-fallback');
+          }, 400);
+          return;
+        }
       }
-    }
-    setUpdateState({
-      phase: 'error',
-      error: msg,
-      message: 'Updater encountered an error',
-      checkedAt: Date.now(),
-      lastErrorAt: Date.now(),
-      lastErrorMessage: msg,
+      setUpdateState({
+        phase: 'error',
+        error: msg,
+        message: 'Updater encountered an error',
+        checkedAt: Date.now(),
+        lastErrorAt: Date.now(),
+        lastErrorMessage: msg,
+      });
+      appendUpdateAudit('updater-error', {
+        error: msg,
+      });
     });
-    appendUpdateAudit('updater-error', {
-      error: msg,
-    });
-  });
 
-  autoUpdater.on('before-quit-for-update', function () {
-    writePendingUpdateMeta(app.getVersion(), updateState.availableVersion);
-    appendUpdateAudit('before-quit-for-update', {
-      expectedVersion: String(updateState.availableVersion || ''),
+    autoUpdater.on('before-quit-for-update', function () {
+      // Let the install quit pass the window close-confirmation guard.
+      allowWindowClose = true;
+      writePendingUpdateMeta(app.getVersion(), updateState.availableVersion);
+      appendUpdateAudit('before-quit-for-update', {
+        expectedVersion: String(updateState.availableVersion || ''),
+      });
     });
-  });
+
+    if (powerMonitor && typeof powerMonitor.on === 'function') {
+      powerMonitor.on('resume', function () {
+        checkForUpdatesSafe('system-resume');
+        scheduleNextUpdateCheck('system-resume');
+      });
+    }
+  }
 
   void (async function configureFeedAndStart() {
     const mirrorBaseRaw = resolveUpdateMirrorBaseUrl();
@@ -888,11 +883,11 @@ function setupAutoUpdates() {
     let probeMsg = mirrorBaseNorm ? 'pending' : 'no-mirror-config';
 
     if (mirrorBaseNorm) {
-      const probe = await probeLanMirrorLatestYml(mirrorBaseNorm, channel, 3500);
+      const probe = await probeLanMirrorLatestYml(mirrorBaseNorm, ring, updaterMapping.channel, 3500);
       probeOk = probe.ok;
       probeMsg = probe.ok ? 'ok' : String(probe.error || 'probe-failed');
       if (probe.ok) {
-        mirrorFeedUrl = buildLanGenericFeedUrl(mirrorBaseNorm, channel);
+        mirrorFeedUrl = buildLanGenericFeedUrl(mirrorBaseNorm, ring);
         try {
           autoUpdater.setFeedURL({ provider: 'generic', url: mirrorFeedUrl });
           source = 'lan';
@@ -914,7 +909,8 @@ function setupAutoUpdates() {
 
     setUpdateState({
       enabled: true,
-      channel: channel,
+      channel: ring,
+      updaterChannel: updaterMapping.channel,
       phase: 'ready',
       message: source === 'lan' ? 'Update service ready (LAN mirror)' : 'Update service ready (cloud)',
       error: '',
@@ -930,6 +926,7 @@ function setupAutoUpdates() {
       betaPercent: updatePolicy.betaPercent,
       checkIntervalMinutes: updatePolicy.checkIntervalMinutes,
       updateFeedSource: source,
+      updaterChannel: updaterMapping.channel,
       updateMirrorBaseUrl: mirrorBaseRaw || '',
       updateMirrorFeedUrl: mirrorFeedUrl,
       updateMirrorProbeOk: probeOk,
@@ -949,12 +946,6 @@ function setupAutoUpdates() {
 
     checkForUpdatesSafe('startup');
     scheduleNextUpdateCheck('startup');
-    if (powerMonitor && typeof powerMonitor.on === 'function') {
-      powerMonitor.on('resume', function () {
-        checkForUpdatesSafe('system-resume');
-        scheduleNextUpdateCheck('system-resume');
-      });
-    }
   })();
 }
 
@@ -1077,10 +1068,16 @@ function buildChildEnv(extra) {
   // App mode drives the runtime posture of every spawned server.
   env.NODE_ENV = isProductionMode() ? 'production' : 'development';
   env.ABAYA_MODE = appMode;
+<<<<<<< HEAD
   // Point the factory server at the stable, update-safe data root + .env so its
   // snapshots, roster files, and cloud credentials live outside the install dir.
   env.ABAYA_DATA_DIR = FACTORY_DATA_DIR;
   env.ABAYA_ENV_FILE = FACTORY_ENV_FILE;
+=======
+  env.ABAYA_REPO_ROOT = REPO_ROOT;
+  if (!env.PORT) env.PORT = String(FACTORY_PORT);
+  if (!env.HOST) env.HOST = FACTORY_HOST;
+>>>>>>> 10247c8476e05885c1d050fb2ebb59bb7a0856e3
   return env;
 }
 
@@ -1164,6 +1161,34 @@ function runPm2Command(args) {
 }
 
 /** GET an HTTP URL on localhost and return parsed JSON (best-effort). */
+function waitForFactoryServerHealth(timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 30000);
+  return new Promise((resolve) => {
+    const tick = () => {
+      const req = http.get(
+        {
+          host: '127.0.0.1',
+          port: FACTORY_PORT,
+          path: '/api/health',
+          timeout: 2000,
+        },
+        (res) => {
+          res.resume();
+          if (res.statusCode === 200) return resolve(true);
+          retry();
+        }
+      );
+      req.on('error', retry);
+      req.on('timeout', () => req.destroy());
+    };
+    const retry = () => {
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 700);
+    };
+    tick();
+  });
+}
+
 function fetchLocalJson(port, urlPath, headers, timeoutMs) {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -1558,8 +1583,11 @@ ipcMain.handle('update-status', function () {
 });
 
 ipcMain.handle('update-check-now', async function () {
-  await checkForUpdatesSafe('manual');
+  const result = await checkForUpdatesSafe('manual');
   scheduleNextUpdateCheck('manual');
+  if (result && result.skipped === 'in-flight') {
+    setUpdateState({ message: 'Update check already in progress' });
+  }
   return getPublicUpdateState();
 });
 
@@ -1570,6 +1598,10 @@ ipcMain.handle('update-install-now', function () {
   writePendingUpdateMeta(app.getVersion(), updateState.availableVersion);
   setUpdateState({ message: 'Applying update and restarting...' });
   appendUpdateAudit('install-requested');
+  // The install quit must pass the window close-confirmation guard, otherwise
+  // quitAndInstall() is intercepted and the operator sees a close dialog
+  // instead of the update being applied.
+  allowWindowClose = true;
   setTimeout(function () {
     autoUpdater.quitAndInstall();
   }, 250);
@@ -1652,6 +1684,12 @@ async function startAllServers() {
   } catch (e) {
     serverProc = null;
     return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+
+  const healthy = await waitForFactoryServerHealth(30000);
+  if (!healthy) {
+    sendLog('server', '[launcher] Factory server did not answer /api/health after 30s.\n');
+    return { ok: false, error: 'Factory server did not become healthy on port ' + FACTORY_PORT };
   }
 
   if (watcherCanStart()) {

@@ -97,9 +97,9 @@ echo [INFO] Waiting for server to initialize...
 timeout /t 5 /nobreak >nul
 
 echo [INFO] Opening Application...
-start "" "http://localhost:%PORT%/dashboard.html"
-start "" "http://localhost:%PORT%/kiosk.html"
-start "" "http://localhost:%PORT%/setup"
+start "" "http://127.0.0.1:%PORT%/dashboard.html"
+start "" "http://127.0.0.1:%PORT%/kiosk.html"
+start "" "http://127.0.0.1:%PORT%/setup"
 
 echo.
 echo =======================================================

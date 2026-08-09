@@ -1,12 +1,13 @@
-import { jsonRes, CEO_JSON_NO_STORE } from '../http-response.js';
+import { jsonRes, errRes, CEO_JSON_NO_STORE } from '../http-response.js';
 import { SUMMARY_WT_CASES, canonicalEmpProcess } from '../domain/process.js';
 import {
   factoryTodayString,
-  getWorkingHoursConfig,
+  workingHoursConfigFromRow,
+  WORKING_HOURS_KEY,
   overlapSecWithWindows,
   factoryDateStringForUnix,
 } from '../working-hours.js';
-import { reportRangeForType, safeYmdOrFallback } from './report-shared.js';
+import { reportRangeForType, safeYmdOrFallback, customRange } from './report-shared.js';
 
 export function rowElapsedSec(row) {
   const start = Number(row && row.min_started_at);
@@ -25,18 +26,43 @@ const EMP_TOLERANCE_DAILY_CAP_SEC = 12 * 60;
 const ITEM_TOLERANCE_PER_SEGMENT_SEC = 60;
 
 export async function handleReport(env, url) {
+  const t0 = Date.now();
   const type = url.searchParams.get('type') || 'daily';
   const factoryToday = factoryTodayString(env);
   const localToday = safeYmdOrFallback(url.searchParams.get('local_today'), factoryToday);
-  const workingCfg = await getWorkingHoursConfig(env);
-  let range = reportRangeForType(type, localToday);
+  // Optional explicit window: from+to (custom range) or date (anchor day for
+  // daily/weekly/monthly/yearly). Backwards compatible — without them the
+  // report behaves exactly as before (anchored at local_today).
+  const fromParam = String(url.searchParams.get('from') || '').trim();
+  const toParam = String(url.searchParams.get('to') || '').trim();
+  const dateParam = String(url.searchParams.get('date') || '').trim();
+  let range;
+  let isCustomRange = false;
+  if (fromParam || toParam) {
+    try {
+      range = customRange(fromParam, toParam);
+    } catch (e) {
+      return errRes(String((e && e.message) || e), 400);
+    }
+    isCustomRange = true;
+  } else {
+    const anchorYmd = dateParam ? safeYmdOrFallback(dateParam, localToday) : localToday;
+    range = reportRangeForType(type, anchorYmd);
+  }
+  // An explicit date/range is a deliberate choice: never silently fall back to
+  // the previous day — show the honest empty window instead.
+  const explicitAnchor = isCustomRange || !!dateParam;
   let dayBinds = [range.startYmd, range.endYmd];
   let prevDayBinds = [range.prevStart, range.prevEnd];
   let dailyFallbackApplied = false;
   const dayFilter = `WHERE day_date >= ? AND day_date <= ?`;
 
-  const runReportBatch = (activeDayBinds, activePrevDayBinds) =>
-    env.DB.batch([
+  // Total time spent in D1 report batches — surfaced via Server-Timing so
+  // real-world speed can be reviewed without guessing.
+  let dbMs = 0;
+  const runReportBatch = (activeDayBinds, activePrevDayBinds) => {
+    const t = Date.now();
+    return env.DB.batch([
       env.DB.prepare(`
       SELECT COUNT(*) as total_units, ROUND(AVG(duration_sec)) as avg_sec,
         COUNT(DISTINCT emp_id) as unique_workers,
@@ -83,32 +109,41 @@ export async function handleReport(env, url) {
         COALESCE(SUM(duration_sec), 0) as active_time_sec
       FROM sessions WHERE day_date >= ? AND day_date <= ?
     `).bind(...activePrevDayBinds),
-    ]);
-
-  let [summary, byEmployeeRes, byProcessRes, invMaker, itemTotalsRes, prevSummary] = await runReportBatch(
+      // Working-hours config + live sessions ride the same batch: one D1 round
+      // trip for the whole report instead of four separate ones.
+      env.DB.prepare(`SELECT v FROM worker_settings WHERE k = ?`).bind(WORKING_HOURS_KEY),
+      env.DB.prepare(`
+      SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code, started_at
+      FROM active_sessions
+    `),
+    ]).then((rows) => {
+      dbMs += Date.now() - t;
+      return rows;
+    });
+  };
+  let [summary, byEmployeeRes, byProcessRes, invMaker, itemTotalsRes, prevSummary, whRowRes, activeRes] = await runReportBatch(
     dayBinds,
     prevDayBinds
   );
   const firstSummaryRow = (summary && summary.results && summary.results[0]) || {};
-  if (range.type === 'daily' && (Number(firstSummaryRow.total_units) || 0) === 0) {
+  if (range.type === 'daily' && !explicitAnchor && (Number(firstSummaryRow.total_units) || 0) === 0) {
     const fallbackDay = range.prevStart;
     range = reportRangeForType(type, fallbackDay);
     dayBinds = [range.startYmd, range.endYmd];
     prevDayBinds = [range.prevStart, range.prevEnd];
     dailyFallbackApplied = true;
-    [summary, byEmployeeRes, byProcessRes, invMaker, itemTotalsRes, prevSummary] = await runReportBatch(
+    [summary, byEmployeeRes, byProcessRes, invMaker, itemTotalsRes, prevSummary, whRowRes, activeRes] = await runReportBatch(
       dayBinds,
       prevDayBinds
     );
   }
 
+  const workingCfg = workingHoursConfigFromRow(whRowRes && whRowRes.results && whRowRes.results[0]);
+
   const summaryRow = (summary && summary.results && summary.results[0]) || {};
   const prevSummaryRow = (prevSummary && prevSummary.results && prevSummary.results[0]) || {};
 
-  const activeRows = (await env.DB.prepare(`
-    SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code, started_at
-    FROM active_sessions
-  `).all()).results || [];
+  const activeRows = (activeRes && activeRes.results) || [];
 
   const nowUnix = Math.floor(Date.now() / 1000);
   const inRangeActive = activeRows.filter((r) => {
@@ -345,6 +380,8 @@ export async function handleReport(env, url) {
         start_date: range.startYmd,
         end_date: range.endYmd,
         effective_date: range.type === 'daily' ? range.startYmd : '',
+        anchor_date: isCustomRange || !dateParam ? '' : range.startYmd,
+        custom: isCustomRange,
         fallback_applied: dailyFallbackApplied,
         previous_start_date: range.prevStart,
         previous_end_date: range.prevEnd,
@@ -389,6 +426,8 @@ export async function handleReport(env, url) {
       item_totals: itemTotals,
     },
     200,
-    CEO_JSON_NO_STORE
+    Object.assign({}, CEO_JSON_NO_STORE, {
+      'Server-Timing': 'db;dur=' + dbMs + ', total;dur=' + (Date.now() - t0),
+    })
   );
 }

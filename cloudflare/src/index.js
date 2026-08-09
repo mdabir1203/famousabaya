@@ -20,6 +20,7 @@ import { getWorkingHoursConfig, saveWorkingHoursConfig } from './working-hours.j
 import { handleIngest } from './handlers/ingest.js';
 import { handleState } from './handlers/state.js';
 import { handleReport } from './handlers/report.js';
+import { handleEmployeeDay } from './handlers/employee-day.js';
 import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
 import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
@@ -277,6 +278,10 @@ export default {
         // Without await, rejected report promises escape to the Worker runtime, which
         // can render an HTML error page that the dashboard then tries to parse as JSON.
         return await handleReport(env, url);
+      }
+
+      if (path === '/api/report/employee-day' && request.method === 'GET') {
+        return await handleEmployeeDay(env, url);
       }
 
       if (path === '/api/settings/working-hours' && request.method === 'PUT') {

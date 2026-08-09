@@ -20,8 +20,8 @@ call "%~dp0PICK-RUNTIME.bat"
 call "%~dp0RUNTIME-COMMON.bat" :ResolveServerCommand
 call "%~dp0RUNTIME-COMMON.bat" :ReadPortFromEnv
 
-echo Starting AbaYa server (%ABAYA_RUNTIME%) on http://localhost:%ABA_PORT%/
-start "" "http://localhost:%ABA_PORT%/kiosk.html"
-start "" "http://localhost:%ABA_PORT%/dashboard.html"
+echo Starting AbaYa server (%ABAYA_RUNTIME%) on http://127.0.0.1:%ABA_PORT%/
+start "" "http://127.0.0.1:%ABA_PORT%/kiosk.html"
+start "" "http://127.0.0.1:%ABA_PORT%/dashboard.html"
 %RUN_SRV%
 pause

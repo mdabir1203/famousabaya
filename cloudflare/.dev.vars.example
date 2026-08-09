@@ -1,0 +1,8 @@
+# Local-only secrets for `wrangler dev` (copy to `.dev.vars` — never commit).
+# Remote production uses: npx wrangler secret put <NAME>
+#
+# CEO login requires BOTH lines below.
+
+CEO_TOKEN=your-ceo-login-password
+CEO_JWT_SECRET=generate-with-openssl-rand-base64-32
+INGEST_SECRET=must-match-factory-CF_INGEST_SECRET
