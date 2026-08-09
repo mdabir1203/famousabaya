@@ -1,0 +1,109 @@
+================================================================================
+                    AbaYa Track - Build & Deploy Guide
+================================================================================
+
+QUICK START (One-Click Build):
+-------------------------------
+1. Double-click: install\BUILD-AND-PUBLISH.bat
+   
+   This will:
+   - Install all dependencies
+   - Build the Windows installer (EXE)
+   - Publish to LAN mirror for auto-updates
+   - Verify the build output
+
+2. The installer will be created at:
+   dist/desktop-launcher/AbaYa-Track-Launcher-Setup-<version>.exe
+
+3. LAN update mirror populated at:
+   data/lan-update-mirror/stable/
+
+
+CONFIGURATION (.env file):
+--------------------------
+Before building, ensure .env has correct values:
+
+  HOST=0.0.0.0
+  PORT=3111
+  LAN_IP=192.168.0.101
+  
+  ABAYA_UPDATE_MIRROR_BASE_URL=http://192.168.0.101:3111
+  
+  # Optional: GitHub token for fallback updates
+  GH_TOKEN=your_github_token_here
+  GITHUB_TOKEN=your_github_token_here
+
+
+DEPLOYMENT STEPS:
+-----------------
+1. BUILD on your development machine:
+   install\BUILD-AND-PUBLISH.bat
+
+2. INSTALL on factory server (192.168.0.101):
+   - Copy the EXE from dist/desktop-launcher/
+   - Run the installer on the factory server
+   - Server will start automatically
+
+3. TABLETS connect to:
+   http://192.168.0.101:3111/kiosk.html
+
+4. DESKTOP LAUNCHER auto-updates:
+   - First run: installs from EXE
+   - Subsequent runs: checks LAN mirror for updates
+   - Falls back to GitHub if LAN unavailable
+
+
+TROUBLESHOOTING:
+----------------
+A. Dashboard not loading:
+   - Check server is running: http://192.168.0.101:3111/api/health
+   - Verify firewall allows port 3111
+   - Check browser console for errors
+
+B. Electron launcher shows token authentication error:
+   - This is NORMAL if GH_TOKEN is not set in .env
+   - Launcher will use LAN mirror first (preferred)
+   - GitHub is only a fallback for offline scenarios
+   - To fix: Generate token at https://github.com/settings/tokens
+     and add to .env: GH_TOKEN=your_token
+
+C. LAN mirror empty after build:
+   - Ensure dist/desktop-launcher contains .exe and latest.yml
+   - Re-run: npm run package:installer:win
+   - Then: npm run publish:lan-mirror -- --channel stable
+
+D. Tablets can't connect:
+   - Verify HOST=0.0.0.0 in .env (not 127.0.0.1)
+   - Check Windows Firewall allows port 3111
+   - Run: install\ENSURE-LAN-FIREWALL.ps1
+
+
+DIAGNOSTIC ENDPOINTS:
+---------------------
+Server health:     http://192.168.0.101:3111/api/health
+Server info:       http://192.168.0.101:3111/api/server-info
+Connectivity test: http://192.168.0.101:3111/api/connectivity-diagnostics
+Tablet ping:       POST http://192.168.0.101:3111/api/tablet-ping
+Debug kiosk:       http://192.168.0.101:3111/api/debug-kiosk
+
+
+MANUAL COMMANDS:
+----------------
+Build installer only:
+  npm run package:installer:win
+
+Publish to LAN mirror:
+  npm run publish:lan-mirror -- --channel stable
+
+Start server:
+  node server.js
+  OR
+  install\LAUNCH-ALL.bat
+
+Check PM2 status:
+  npm run pm2:status
+
+
+================================================================================
+                         Support: Mohammad Abir Abbas
+================================================================================
