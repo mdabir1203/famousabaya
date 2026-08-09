@@ -38,6 +38,13 @@ function resolveServerBindHost() {
   return raw;
 }
 
+function warnOnLoopbackBind(bindHost) {
+  if (bindHost === '127.0.0.1' || bindHost === 'localhost') {
+    console.warn('\n⚠️  WARNING: Server bound to localhost - tablets will NOT be able to connect!');
+    console.warn('   For LAN access, set HOST=0.0.0.0 in .env\n');
+  }
+}
+
 /** Default 3000; override with PORT in .env */
 const PORT = parseEnvPositiveIntOrNull('PORT') || 3000;
 const HOST = resolveServerBindHost();
@@ -52,6 +59,7 @@ function readAppPackageVersion() {
 }
 
 const SERVER_STARTED_AT = Date.now();
+const SERVER_BOOT_ID = crypto.randomUUID();
 const APP_PACKAGE_VERSION = readAppPackageVersion();
 
 const app = express();
@@ -73,6 +81,15 @@ app.use(
   })
 );
 app.use(express.json());
+
+// Trailing slash normalization middleware: 308-redirects /api/state/ → /api/state so tablet browsers don't hit 404.
+function normalizeTrailingSlash(req, res, next) {
+  if (req.path.length > 1 && req.path.endsWith('/')) {
+    return res.redirect(308, req.path.slice(0, -1) + (req.url.slice(req.path.length) || ''));
+  }
+  next();
+}
+app.use(normalizeTrailingSlash);
 
 /** LAN mirror for Electron desktop launcher updates (`latest.yml` for stable, `beta.yml` + `latest.yml` for beta, plus NSIS artifacts per channel). */
 const LAN_UPDATE_MIRROR_ROOT = (() => {
@@ -248,12 +265,18 @@ function attachItemImagesFromDisk() {
 }
 
 const server = http.createServer(app);
+
+// TCP keep-alive: prevents Android Chrome from getting ERR_CONNECTION_ABORTED on idle sockets.
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 130000;
+
+// Relaxed Socket.IO ping settings to tolerate factory Wi-Fi jitter without dropping tablets.
 const SOCKET_PING_INTERVAL_MS = Number(process.env.SOCKET_PING_INTERVAL_MS) > 0
   ? Number(process.env.SOCKET_PING_INTERVAL_MS)
-  : 15000;
+  : 25000;
 const SOCKET_PING_TIMEOUT_MS = Number(process.env.SOCKET_PING_TIMEOUT_MS) > 0
   ? Number(process.env.SOCKET_PING_TIMEOUT_MS)
-  : 20000;
+  : 60000;
 
 const io = new Server(server, {
   cors: { origin: '*' },
@@ -2328,8 +2351,15 @@ function parseEmployeesXlsxFile(filePath) {
   return employees;
 }
 
+// File-watcher race fix: stops chokidar from reloading a half-written Excel sheet when the dashboard edits the roster.
+let employeesXlsxWriteInProgress = false;
+
 function loadEmployeesFromXlsxFile() {
   if (!EMPLOYEES_XLSX_PATH) return;
+  if (employeesXlsxWriteInProgress) {
+    console.log('[employees-xlsx] Skipping reload — write in progress');
+    return;
+  }
   const resolved = path.isAbsolute(EMPLOYEES_XLSX_PATH)
     ? EMPLOYEES_XLSX_PATH
     : path.join(__dirname, EMPLOYEES_XLSX_PATH);
@@ -2478,17 +2508,22 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     throw err;
   }
   if (EMPLOYEES_XLSX_PATH) {
-    const resolved = resolveEmployeesXlsxAbsolutePath();
-    if (!resolved) {
-      const err = new Error('EMPLOYEES_XLSX_PATH is not resolvable');
-      err.statusCode = 500;
-      throw err;
+    employeesXlsxWriteInProgress = true;
+    try {
+      const resolved = resolveEmployeesXlsxAbsolutePath();
+      if (!resolved) {
+        const err = new Error('EMPLOYEES_XLSX_PATH is not resolvable');
+        err.statusCode = 500;
+        throw err;
+      }
+      const sheetName = getEmployeesWorkbookSheetNameForWrite(resolved);
+      const buf = buildEmployeesXlsxBuffer(nextEmployees, sheetName);
+      atomicWriteBufferReplaceFile(resolved, buf);
+      lastEmployeesXlsxMtime = 0;
+      loadEmployeesFromXlsxFile();
+    } finally {
+      employeesXlsxWriteInProgress = false;
     }
-    const sheetName = getEmployeesWorkbookSheetNameForWrite(resolved);
-    const buf = buildEmployeesXlsxBuffer(nextEmployees, sheetName);
-    atomicWriteBufferReplaceFile(resolved, buf);
-    lastEmployeesXlsxMtime = 0;
-    loadEmployeesFromXlsxFile();
   } else {
     const prevPerfById = Object.create(null);
     for (let pi = 0; pi < EMP_PERF.length; pi++) {
@@ -2979,6 +3014,28 @@ function getLanIPs() {
   return ordered;
 }
 
+// Windows Firewall: auto-opens the port via install/ENSURE-LAN-FIREWALL.ps1 on startup.
+function tryEnsureWindowsFirewall(port) {
+  if (process.platform !== 'win32') return;
+  
+  const scriptPath = path.join(__dirname, 'install', 'ENSURE-LAN-FIREWALL.ps1');
+  if (!fs.existsSync(scriptPath)) {
+    console.log('[firewall] Script not found:', scriptPath);
+    return;
+  }
+  
+  try {
+    const { execSync } = require('child_process');
+    execSync(`powershell -ExecutionPolicy Bypass -File "${scriptPath}" -Port ${port}`, {
+      stdio: 'ignore',
+      timeout: 5000
+    });
+    console.log('[firewall] Windows Firewall rule ensured for port', port);
+  } catch (e) {
+    console.warn('[firewall] Could not ensure firewall rule:', e.message);
+  }
+}
+
 /** Outcome-first release moment for LAN dashboard / kiosk (see config/release-moment.json). */
 app.get('/api/release-moment', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -3008,9 +3065,133 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-/** Returns detected LAN IPs and server port so the setup page can build kiosk URLs. */
+/** Enhanced server info with boot ID for cache busting and diagnostics */
 app.get('/api/server-info', (req, res) => {
-  res.json({ ok: true, ips: getLanIPs(), port: PORT, host: HOST });
+  res.json({
+    ok: true,
+    ips: getLanIPs(),
+    port: PORT,
+    host: HOST,
+    bootId: SERVER_BOOT_ID,
+    startedAt: SERVER_STARTED_AT,
+  });
+});
+
+/** LAN diagnostics: full connectivity report for tablets */
+app.get('/api/connectivity-diagnostics', (req, res) => {
+  res.json({
+    ok: true,
+    serverBootId: SERVER_BOOT_ID,
+    startedAt: SERVER_STARTED_AT,
+    uptimeMs: Date.now() - SERVER_STARTED_AT,
+    host: HOST,
+    port: PORT,
+    lanIPs: getLanIPs().map(ip => ip.address),
+    cloudSyncMode: getCeoSyncMode(),
+    socketPingInterval: SOCKET_PING_INTERVAL_MS,
+    socketPingTimeout: SOCKET_PING_TIMEOUT_MS,
+  });
+});
+
+/** Tablet ping endpoint for latency testing */
+app.post('/api/tablet-ping', (req, res) => {
+  const { tabletId, ts } = req.body || {};
+  res.json({
+    ok: true,
+    serverTs: Date.now(),
+    tabletId,
+    clientTs: ts,
+    latencyMs: ts ? Date.now() - ts : null,
+  });
+});
+
+/** Debug kiosk state for troubleshooting */
+app.get('/api/debug-kiosk', (req, res) => {
+  res.json({
+    ok: true,
+    activeSessions: Object.keys(ACTIVE_SESSIONS).length,
+    employeesCount: EMPLOYEES.length,
+    catalogCount: abayaCatalog.length,
+    acMapSize: Object.keys(AC_MAP).length,
+    workingHours: WORKING_HOURS_CACHE || defaultWorkingHoursConfigLocal(),
+    serverBootId: SERVER_BOOT_ID,
+  });
+});
+
+/** HTTP REST kiosk fallback: lookup employee by AC number */
+app.post('/api/kiosk/lookup', (req, res) => {
+  const { ac_no } = req.body;
+  const emp = AC_MAP[ac_no];
+  if (!emp) {
+    return res.json({ ok: false, error: 'No employee found for AC-No. ' + ac_no });
+  }
+  const is_active = !!ACTIVE_SESSIONS[emp.id];
+  const activeSession = is_active ? ACTIVE_SESSIONS[emp.id] : null;
+  res.json({
+    ok: true,
+    employee: {
+      id: emp.id,
+      name: emp.name,
+      ac_no: emp.ac_no,
+      department: emp.department,
+      position: emp.position,
+    },
+    is_active,
+    active_session: activeSession,
+  });
+});
+
+/** HTTP REST kiosk fallback: start work session */
+app.post('/api/kiosk/start-work', (req, res) => {
+  const { ac_no, work_type } = req.body;
+  const emp = AC_MAP[ac_no];
+  if (!emp) {
+    return res.json({ ok: false, error: 'No employee found for AC-No. ' + ac_no });
+  }
+  if (ACTIVE_SESSIONS[emp.id]) {
+    return res.json({ ok: false, error: 'Employee already has an active session' });
+  }
+  const session_id = crypto.randomUUID();
+  const session = {
+    id: session_id,
+    employee_id: emp.id,
+    start_time: new Date(),
+    work_type,
+    items: [],
+  };
+  ACTIVE_SESSIONS[emp.id] = session;
+  io.emit('session_started', { employee: emp, session });
+  res.json({ ok: true, session_id, message: 'Work session started successfully' });
+});
+
+/** HTTP REST kiosk fallback: finish work session */
+app.post('/api/kiosk/finish-work', (req, res) => {
+  const { ac_no, session_id, items } = req.body;
+  const emp = AC_MAP[ac_no];
+  if (!emp) {
+    return res.json({ ok: false, error: 'No employee found for AC-No. ' + ac_no });
+  }
+  const session = ACTIVE_SESSIONS[emp.id];
+  if (!session || session.id !== session_id) {
+    return res.json({ ok: false, error: 'Invalid session' });
+  }
+  session.items = session.items.concat(items || []);
+  session.end_time = new Date();
+  delete ACTIVE_SESSIONS[emp.id];
+  io.emit('session_finished', { employee: emp, session });
+  res.json({
+    ok: true,
+    message: 'Work session completed successfully',
+    session_summary: {
+      items_count: session.items.length,
+      duration_ms: session.end_time - session.start_time,
+    },
+  });
+});
+
+/** HTTP REST kiosk fallback: get current state */
+app.get('/api/kiosk/state', (req, res) => {
+  res.json(getRealtimeStateBundle(req));
 });
 
 /** Version snapshot for browsers (auto-refresh catalog/employees, detect server restart). */
@@ -3396,7 +3577,27 @@ async function seedRosterFromCloudIfLocalMissing() {
 }
 
 // START SERVER
-server.listen(PORT, HOST, () => {
+// Server error handling: catches EADDRINUSE / EACCES on boot and tells the operator exactly what to fix.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ ERROR: Port ${PORT} is already in use.`);
+    console.error('   Fix: Either stop the other process or change PORT in .env\n');
+    process.exit(1);
+  } else if (err.code === 'EACCES') {
+    console.error(`\n❌ ERROR: Permission denied to bind to port ${PORT}.`);
+    console.error('   Fix: Run as administrator or use a port > 1024\n');
+    process.exit(1);
+  } else {
+    console.error('Server error:', err.message);
+    process.exit(1);
+  }
+});
+
+const bindHost = resolveServerBindHost();
+warnOnLoopbackBind(bindHost);
+tryEnsureWindowsFirewall(PORT);
+
+server.listen(PORT, bindHost, () => {
   ensurePublicUploadDirs();
   ensureCeoQueueDir();
   recoverCeoIngestQueue();
