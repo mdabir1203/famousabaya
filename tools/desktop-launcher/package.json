@@ -37,7 +37,7 @@
       "renderer.js",
       "start-electron.cjs",
       "package.json",
-<<<<<<< HEAD
+      "update-policy.cjs",
       "README.md"
     ],
     "extraResources": [
@@ -96,46 +96,6 @@
         "from": ".factory-deps/node_modules",
         "to": "node_modules"
       }
-=======
-      "../../package.json",
-      "../../yarn.lock",
-      "../../.yarnrc.yml",
-      "../../.pnp.cjs",
-      "../../.env.example",
-      "../../tools/catalog-watcher/config.example.json",
-      "../../.yarn/**/*",
-      "../../install/**/*",
-      "../../server.js",
-      "../../scripts/**/*",
-      "../../shared/**/*",
-      "../../services/**/*",
-      "../../cloudflare/**/*",
-      "../../config/**/*",
-      "../../docs/**/*",
-      "../../lib/**/*",
-      "../../public/**/*",
-      "../../tools/**/*",
-      "../../gk/**/*",
-      "../../objects/**/*",
-      "../../data/**/*",
-      "../../node_modules/**/*",
-      "../../tools/catalog-watcher/node_modules/**/*",
-      "../../*.md",
-      "../../*.txt",
-      "../../*.json",
-      "../../*.cjs",
-      "../../*.mjs",
-      "../../*.js",
-      "../../*.bat",
-      "../../*.ps1",
-      "../../*.sql",
-      "../../*.xlsx",
-      "../../ecosystem.config.cjs",
-      "../../wrangler.jsonc",
-      "../../docker/**/*",
-      "../../product-explainer/**/*",
-      "../../kiosk-pwa/**/*"
->>>>>>> 10247c8476e05885c1d050fb2ebb59bb7a0856e3
     ],
     "publish": [
       {

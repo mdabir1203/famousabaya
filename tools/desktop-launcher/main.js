@@ -1,7 +1,6 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, shell, Menu, powerMonitor, dialog } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -9,6 +8,19 @@ const https = require('https');
 const os = require('os');
 const { spawn, execSync, execFileSync } = require('child_process');
 const updatePolicyLib = require('./update-policy.cjs');
+
+// electron-updater is loaded lazily inside setupAutoUpdates() — it instantiates
+// its adapter (and calls require('electron').app) at module-evaluation time.
+// On a fresh main.js require, depending on how Electron was invoked,
+// `require('electron').app` can be temporarily undefined and crash the
+// constructor with "Cannot read properties of undefined (reading 'getVersion')".
+// Resolving it after `app.whenReady()` is always safe.
+let _autoUpdater = null;
+function getAutoUpdater() {
+  if (_autoUpdater) return _autoUpdater;
+  _autoUpdater = require('electron-updater').autoUpdater;
+  return _autoUpdater;
+}
 
 /** Resolve the runtime root for both source runs and packaged installs. */
 function resolveRepoRoot() {
@@ -329,7 +341,7 @@ function applyGithubUpdaterFeedFromPackage() {
     if (typeof pub.releaseType === 'string') opts.releaseType = pub.releaseType;
     const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || pub.token || '').trim();
     if (token) opts.token = token;
-    autoUpdater.setFeedURL(opts);
+    getAutoUpdater().setFeedURL(opts);
     return true;
   } catch (e) {
     appendUpdateAudit('github-feed-error', {
@@ -637,7 +649,7 @@ async function checkForUpdatesSafe(reason) {
   }
   updateCheckInFlight = true;
   try {
-    await autoUpdater.checkForUpdates();
+    await getAutoUpdater().checkForUpdates();
     updateFailureCount = 0;
     appendUpdateAudit('check-ok', { reason: String(reason || 'unknown') });
     return { ok: true };
@@ -715,19 +727,19 @@ function setupAutoUpdates() {
   // Production from source: let electron-updater read dev-app-update.yml.
   if (!isPackaged) {
     try {
-      autoUpdater.forceDevUpdateConfig = true;
+      getAutoUpdater().forceDevUpdateConfig = true;
     } catch (_) {}
   }
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.allowPrerelease = updaterMapping.allowPrerelease;
-  autoUpdater.allowDowngrade = false;
+  getAutoUpdater().autoDownload = true;
+  getAutoUpdater().autoInstallOnAppQuit = true;
+  getAutoUpdater().allowPrerelease = updaterMapping.allowPrerelease;
+  getAutoUpdater().allowDowngrade = false;
   // Unconditional: the channel getter is null on unpackaged apps without
   // app-update.yml, and a guarded assignment used to silently strand beta
   // devices on the default 'latest' channel.
   try {
-    autoUpdater.channel = updaterMapping.channel;
+    getAutoUpdater().channel = updaterMapping.channel;
   } catch (_) {}
   setUpdateState({ channel: ring, updaterChannel: updaterMapping.channel });
 
@@ -738,7 +750,7 @@ function setupAutoUpdates() {
   if (!updaterHandlersRegistered) {
     updaterHandlersRegistered = true;
 
-    autoUpdater.on('checking-for-update', function () {
+    getAutoUpdater().on('checking-for-update', function () {
       setUpdateState({
         phase: 'checking',
         message: 'Checking for updates...',
@@ -748,7 +760,7 @@ function setupAutoUpdates() {
       appendUpdateAudit('checking-for-update');
     });
 
-    autoUpdater.on('update-available', function (info) {
+    getAutoUpdater().on('update-available', function (info) {
       updateFailureCount = 0;
       const notesUrl = deriveReleaseNotesUrl(info) || buildGithubReleaseUrl(String((info && info.version) || ''));
       setUpdateState({
@@ -768,7 +780,7 @@ function setupAutoUpdates() {
       });
     });
 
-    autoUpdater.on('update-not-available', function () {
+    getAutoUpdater().on('update-not-available', function () {
       updateFailureCount = 0;
       setUpdateState({
         phase: 'idle',
@@ -784,7 +796,7 @@ function setupAutoUpdates() {
       appendUpdateAudit('update-not-available');
     });
 
-    autoUpdater.on('download-progress', function (progressObj) {
+    getAutoUpdater().on('download-progress', function (progressObj) {
       const progress = Number(progressObj && progressObj.percent);
       setUpdateState({
         phase: 'downloading',
@@ -797,7 +809,7 @@ function setupAutoUpdates() {
       });
     });
 
-    autoUpdater.on('update-downloaded', function (info) {
+    getAutoUpdater().on('update-downloaded', function (info) {
       updateFailureCount = 0;
       const newVer = String((info && info.version) || updateState.availableVersion || '');
       writePendingUpdateMeta(app.getVersion(), newVer);
@@ -817,7 +829,7 @@ function setupAutoUpdates() {
       });
     });
 
-    autoUpdater.on('error', function (err) {
+    getAutoUpdater().on('error', function (err) {
       const msg = String(err && err.message ? err.message : err);
       if (updateState.updateFeedSource === 'lan' && !githubFallbackAfterLanError) {
         githubFallbackAfterLanError = true;
@@ -857,7 +869,7 @@ function setupAutoUpdates() {
       });
     });
 
-    autoUpdater.on('before-quit-for-update', function () {
+    getAutoUpdater().on('before-quit-for-update', function () {
       // Let the install quit pass the window close-confirmation guard.
       allowWindowClose = true;
       writePendingUpdateMeta(app.getVersion(), updateState.availableVersion);
@@ -889,7 +901,7 @@ function setupAutoUpdates() {
       if (probe.ok) {
         mirrorFeedUrl = buildLanGenericFeedUrl(mirrorBaseNorm, ring);
         try {
-          autoUpdater.setFeedURL({ provider: 'generic', url: mirrorFeedUrl });
+          getAutoUpdater().setFeedURL({ provider: 'generic', url: mirrorFeedUrl });
           source = 'lan';
         } catch (e) {
           probeMsg = 'setFeedURL-failed: ' + String(e && e.message ? e.message : e);
@@ -1068,16 +1080,13 @@ function buildChildEnv(extra) {
   // App mode drives the runtime posture of every spawned server.
   env.NODE_ENV = isProductionMode() ? 'production' : 'development';
   env.ABAYA_MODE = appMode;
-<<<<<<< HEAD
   // Point the factory server at the stable, update-safe data root + .env so its
   // snapshots, roster files, and cloud credentials live outside the install dir.
   env.ABAYA_DATA_DIR = FACTORY_DATA_DIR;
   env.ABAYA_ENV_FILE = FACTORY_ENV_FILE;
-=======
   env.ABAYA_REPO_ROOT = REPO_ROOT;
   if (!env.PORT) env.PORT = String(FACTORY_PORT);
   if (!env.HOST) env.HOST = FACTORY_HOST;
->>>>>>> 10247c8476e05885c1d050fb2ebb59bb7a0856e3
   return env;
 }
 
@@ -1603,7 +1612,7 @@ ipcMain.handle('update-install-now', function () {
   // instead of the update being applied.
   allowWindowClose = true;
   setTimeout(function () {
-    autoUpdater.quitAndInstall();
+    getAutoUpdater().quitAndInstall();
   }, 250);
   return { ok: true };
 });
