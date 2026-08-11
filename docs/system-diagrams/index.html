@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbaYa Track — System Diagrams</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0c1a;
+    --bg-2: #181428;
+    --s1: #1c1530;
+    --s2: #261b40;
+    --s3: #362a5b;
+    --bd: rgba(106,95,193,0.25);
+    --bd2: rgba(167,139,250,0.35);
+    --tx: #ffffff;
+    --tx2: #e5e7eb;
+    --tx3: #9c98b0;
+    --label: #c4b5fd;
+    --gr: #c2ef4e;
+    --rd: #ef4444;
+    --bl: #6a5fc1;
+    --am: #ffb287;
+    --pu: #a78bfa;
+    --focus: #fa7faa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--tx); font-family: 'Rubik', -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif; line-height: 1.55; }
+  body { padding: 0 0 80px; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 22px; }
+  header {
+    background: linear-gradient(135deg, #1c1530 0%, #0f0c1a 100%);
+    border-bottom: 1px solid var(--bd);
+    padding: 36px 0 26px;
+    margin-bottom: 30px;
+  }
+  header h1 {
+    font-family: 'Sora', 'Rubik', sans-serif;
+    font-size: 30px; font-weight: 800; letter-spacing: -.6px;
+    background: linear-gradient(135deg, #c4b5fd 0%, #fa7faa 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  header .sub { color: var(--tx3); margin-top: 6px; font-size: 14px; }
+  header .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  header .chip { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: var(--s2); color: var(--label); border: 1px solid var(--bd2); }
+
+  nav.toc {
+    background: var(--s1); border: 1px solid var(--bd); border-radius: 14px;
+    padding: 18px 22px; margin-bottom: 36px;
+  }
+  nav.toc h2 { font-size: 13px; color: var(--tx3); text-transform: uppercase; letter-spacing: .15em; margin-bottom: 12px; font-weight: 700; }
+  nav.toc ol { columns: 2; column-gap: 28px; }
+  nav.toc li { break-inside: avoid; padding: 4px 0; font-size: 14px; }
+  nav.toc a { color: var(--label); text-decoration: none; border-bottom: 1px dashed transparent; }
+  nav.toc a:hover { color: var(--tx); border-color: var(--label); }
+  @media (max-width: 720px) { nav.toc ol { columns: 1; } }
+
+  section {
+    background: var(--s1); border: 1px solid var(--bd); border-radius: 18px;
+    padding: 24px 26px; margin-bottom: 28px; scroll-margin-top: 24px;
+  }
+  section h2 {
+    font-family: 'Sora', 'Rubik', sans-serif;
+    font-size: 22px; font-weight: 700; letter-spacing: -.3px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  section h2 .num {
+    background: linear-gradient(135deg, #6a5fc1, #422082);
+    color: #fff; font-size: 11px; font-weight: 800; padding: 4px 9px;
+    border-radius: 8px; letter-spacing: .1em;
+  }
+  section h3 { font-size: 15px; color: var(--label); margin: 18px 0 8px; font-weight: 600; }
+  section p { color: var(--tx2); font-size: 14px; margin-bottom: 14px; }
+  section ul, section ol { color: var(--tx2); font-size: 14px; padding-left: 22px; margin-bottom: 14px; }
+  section li { padding: 3px 0; }
+  section code { font-family: 'JetBrains Mono', Monaco, Menlo, monospace; font-size: 12.5px; background: var(--s2); padding: 1px 6px; border-radius: 5px; color: var(--am); }
+
+  .mermaid {
+    background: var(--bg-2); border: 1px solid var(--bd); border-radius: 12px;
+    padding: 18px 14px; margin: 12px 0 6px; overflow-x: auto;
+  }
+  .mermaid-caption { font-size: 11.5px; color: var(--tx3); margin-top: 4px; text-align: center; font-style: italic; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 880px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .callout {
+    background: var(--s2); border-left: 3px solid var(--pu); border-radius: 0 10px 10px 0;
+    padding: 12px 16px; margin: 14px 0; font-size: 13.5px; color: var(--tx2);
+  }
+  .callout.warn { border-color: var(--am); }
+  .callout.ok { border-color: var(--gr); }
+  .callout strong { color: var(--tx); }
+
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 6px; }
+  .stat { background: var(--s2); border: 1px solid var(--bd); border-radius: 12px; padding: 12px 14px; }
+  .stat .k { font-size: 10.5px; color: var(--tx3); text-transform: uppercase; letter-spacing: .12em; margin-bottom: 4px; }
+  .stat .v { font-family: 'Sora', sans-serif; font-size: 20px; font-weight: 700; color: var(--tx); }
+  .stat .v .u { font-size: 12px; color: var(--tx3); font-weight: 400; margin-left: 4px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--bd); color: var(--tx2); }
+  th { color: var(--label); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em; background: var(--s2); }
+  td code { font-size: 11.5px; }
+  tr:hover td { background: rgba(106,95,193,0.05); }
+
+  footer { text-align: center; color: var(--tx3); font-size: 12px; margin-top: 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>AbaYa Track — System Diagrams</h1>
+    <div class="sub">Visual map of the factory-floor server, Cloudflare Worker, dispatch service, and how they all fit together. Auto-generated from the source tree at <code>v1.0.2</code>.</div>
+    <div class="meta">
+      <span class="chip">Node 18+ / Yarn 4 PnP</span>
+      <span class="chip">Express 5 + Socket.IO 4</span>
+      <span class="chip">Cloudflare Workers + D1 + R2</span>
+      <span class="chip">Local-first (offline-safe)</span>
+      <span class="chip">Bun runtime supported</span>
+      <span class="chip">PM2 / Windows Service</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#what">What is this app?</a></li>
+    <li><a href="#topology">High-level topology (3 lanes)</a></li>
+    <li><a href="#components">Runtime components</a></li>
+    <li><a href="#server">The factory server (server.js) — internal map</a></li>
+    <li><a href="#worker">The Cloudflare Worker — internal map</a></li>
+    <li><a href="#dataflow">Data flow: Excel → Catalog → Kiosk</a></li>
+    <li><a href="#session">Session lifecycle (sequence)</a></li>
+    <li><a href="#dispatch">Dispatch service (material logistics)</a></li>
+    <li><a href="#persistence">Persistence &amp; offline story</a></li>
+    <li><a href="#api">API surface</a></li>
+    <li><a href="#security">Security &amp; deployment</a></li>
+    <li><a href="#ops">Ops &amp; maintenance</a></li>
+    <li><a href="#debt">Risks &amp; technical debt</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<section id="what">
+  <h2><span class="num">1</span> What is this app?</h2>
+  <p><strong>AbaYa Track</strong> is a hybrid factory-floor productivity system for an abaya (Islamic garment) factory. Workers tap their employee code on a tablet, scan an abaya barcode, do their station's work (cutting, stitching, embroidery, buttons, stone work, invoice, packaging, QC), then tap Finish. The factory server times them inside configured shift windows and pushes events to a Cloudflare Worker so the owner (CEO) can read live dashboards and daily/weekly/monthly reports from any browser, anywhere.</p>
+
+  <div class="grid-2">
+    <div class="callout ok">
+      <strong>Local-first.</strong> The factory <em>never</em> blocks on the cloud. If the internet drops, all floor operations keep working and event payloads are queued to a JSONL file that auto-replays when the link is back.
+    </div>
+    <div class="callout">
+      <strong>Three user groups.</strong> Factory operators (kiosk tablets), supervisors (LAN dashboard), executives (CEO cloud dashboard), plus IT/admin for installs and updates.
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat"><div class="k">server.js</div><div class="v">3,712 <span class="u">lines, single file</span></div></div>
+    <div class="stat"><div class="k">Express routes</div><div class="v">~40 <span class="u">HTTP endpoints</span></div></div>
+    <div class="stat"><div class="k">Socket events</div><div class="v">5+5 <span class="u">client/server</span></div></div>
+    <div class="stat"><div class="k">Worker routes</div><div class="v">~30 <span class="u">Cloudflare endpoints</span></div></div>
+    <div class="stat"><div class="k">D1 tables</div><div class="v">12+ <span class="u">via 10 migrations</span></div></div>
+    <div class="stat"><div class="k">Work types</div><div class="v">12 <span class="u">factory stations</span></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="topology">
+  <h2><span class="num">2</span> High-level topology — three lanes</h2>
+  <p>There are three independent ways to reach the system, each with a different trust boundary and a different runtime behind it.</p>
+
+  <div class="mermaid">
+flowchart LR
+  subgraph Cloud["☁️  Cloudflare Edge  (dashboard.farewellabaya.com)"]
+    direction TB
+    Worker["Cloudflare Worker\ncloudflare/src/index.js\n+ D1 + R2 + JWT auth"]
+    R2["R2 bucket\nabaya-updates\n(Desktop OTA installers)"]
+    Worker -. serves .-> R2
+  end
+
+  subgraph OnPrem["🏭  Factory (Windows PC)"]
+    direction TB
+    Server["Factory Server\nNode + Express 5 + Socket.IO 4\nserver.js :3000\n+ portable Node in .bin/"]
+    Kiosk["Kiosk Tablets\n/public/kiosk.html\nLAN or Tailscale"]
+    LAN["Supervisor PC\n/public/dashboard.html"]
+    Electron["Electron Launcher\n(tools/desktop-launcher)\noptional GUI"]
+    Kiosk <-->|"ws + http"| Server
+    LAN <-->|"ws + http"| Server
+    Electron -->|"spawn"| Server
+  end
+
+  subgraph Office["💼  Office Laptop"]
+    direction TB
+    Watcher["Catalog Watcher\ntools/catalog-watcher\nwatches items_export.xlsx"]
+    Excel["items_export.xlsx\nemployees.xlsx"]
+    Watcher -->|"reads"| Excel
+  end
+
+  CEO["👔 CEO Phone / Browser"]
+  Admin["🛠️ IT Admin / Supervisor"]
+
+  Kiosk -. fingerprint .-> Workers((Factory\nworkers))
+  Admin -->|"LAN / Tailscale"| Server
+  Admin -->|"Tailscale 100.x"| Server
+  CEO -->|"HTTPS only\nno install"| Worker
+  Watcher -->|"PUT /api/catalog/abayas\nX-Ingest-Secret"| Worker
+  Watcher -->|"PUT /api/employees\nX-Ingest-Secret"| Worker
+  Server ==>|"POST /api/event\nsession_start / session_finish\nNDJSON queue + auto-replay"| Worker
+  Server -.->|"GET /api/state\nperiodic (60s)\nreconcile loop pulls cloud truth"| Worker
+  Worker -. "/updates/stable/..." .-> R2
+  Electron -. "auto-update over\nR2 mirror" .-> R2
+  </div>
+  <div class="mermaid-caption">Three independent access lanes. Factory operations run entirely on-prem; the cloud is a read/analytics surface that is optional for daily work.</div>
+
+  <h3>Lane summary</h3>
+  <table>
+    <thead><tr><th>Lane</th><th>Path</th><th>Auth</th><th>Install on client</th></tr></thead>
+    <tbody>
+      <tr><td>Kiosk (worker)</td><td>Browser → <code>http://LAN_IP:3000/kiosk.html</code> or <code>https://kiosk.farewellabaya.com</code> PWA</td><td>None (LAN-trusted / shared secret)</td><td>None (PWA add-to-home)</td></tr>
+      <tr><td>Supervisor / Admin</td><td>Browser → <code>http://LAN_IP:3000/dashboard.html</code> or Tailscale <code>100.x.x.x:3000</code></td><td>None on LAN; Access policy on Tailscale serve</td><td>None (Tailscale client)</td></tr>
+      <tr><td>CEO</td><td>Browser → <code>https://dashboard.farewellabaya.com</code></td><td>Password → JWT session cookie (CEO_JWT_SECRET)</td><td>Zero (browser only)</td></tr>
+      <tr><td>Office catalog sync</td><td>Watcher → <code>https://dashboard.farewellabaya.com/api/...</code></td><td>X-Ingest-Secret shared key</td><td>Yarn + watcher config</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="components">
+  <h2><span class="num">3</span> Runtime components</h2>
+  <p>Five independent deployables. Each one is optional except the first one.</p>
+
+  <div class="mermaid">
+flowchart TB
+  subgraph Factory["Factory runtime  (Windows PC, Node 18+)"]
+    direction TB
+    Server["server.js\nExpress 5 + Socket.IO 4\n3,712 LOC, single file"]
+    Shared["shared/*.cjs\n• offline-report-store\n• sqlite-snapshot\n• reconcile-cloudflare\n• invoice-parser\n• checker-barcode-parser\n• smart-ops-core\n• snapshot-manifest\n• resend-alerts"]
+    Public["public/\n• kiosk.html (6 screens)\n• dashboard.html\n• setup.html (QR)\n• asset-upload.html\n• lan-check.html\n• kiosk.js / dashboard.js / data.js"]
+    SQLLite["data/sqlite-snapshots/\nabaya-snapshot-YYYYMMDD-HHMMSS.db"]
+    Queue["data/ceo-ingest-queue.jsonl\n(NDJSON, atomic rename, auto-replay)"]
+    JSON["data/offline-dashboard-reports/\ndashboard-offline-latest.json"]
+    Uploads["public/uploads/\nemployees/ + items/\n(8 MB image cap)"]
+    Server --> Shared
+    Server --> Public
+    Server --> SQLLite
+    Server --> Queue
+    Server --> JSON
+    Server --> Uploads
+  end
+
+  subgraph Edge["Cloudflare Edge  (Workers + D1 + R2)"]
+    direction TB
+    Index["cloudflare/src/index.js\nfetch handler + scheduled handler"]
+    Handlers["handlers/\ningest, state, report, employee-day,\nanalytics, trace, dispatch"]
+    Auth["auth/\nceo-auth, ceo-jwt, ceo-login, ceo-token"]
+    Domain["domain/process.js\nworking-hours.js\neod-summary.js"]
+    UI["ui/ceo-pages.js\nHTML dashboard + login + privacy + ToS"]
+    D1[("D1 abaya-db\nsessions, active_sessions,\ndaily_stats, abaya_catalog,\ndispatch_invoices, employees,\nwork_types, idempotency_keys,\ntunnel_probes, customer_messages")]
+    R2[("R2 abaya-updates\nstable/ + beta/\nlatest.yml + NSIS installers")]
+    Index --> Handlers
+    Index --> Auth
+    Handlers --> Domain
+    Handlers --> D1
+    Index --> UI
+    Index --> R2
+  end
+
+  subgraph Office2["Office runtime  (any laptop)"]
+    direction TB
+    Watcher["tools/catalog-watcher/\n• watch-catalog.js (chokidar)\n• catalog-parse.js\n• config.json"]
+    CatalogW["Subscribes to:\n{watchDir}/*.xlsx\nor subfolder per employee"]
+    Watcher --> CatalogW
+  end
+
+  subgraph Desktop["Desktop launcher  (optional)"]
+    direction TB
+    Electron["tools/desktop-launcher/\n• main.js (Electron)\n• renderer.js\n• electron-updater (OTA from R2)"]
+  end
+
+  subgraph Material["Material logistics  (services/dispatch-server/)"]
+    direction TB
+    Dispatch["server.js  (Node/Bun, port 3111)\n• WhatsApp webhook parsing\n• Invoice bridge to Worker\n• SSE leaderboard"]
+    SSE["SSE stream to\npublic/leaderboard.html"]
+    Dispatch --> SSE
+  end
+
+  Index -. "POST /api/event\nsession_start/finish" .- Server
+  Index -. "PUT /api/catalog/abayas\nPUT /api/employees" .- Watcher
+  Dispatch -. "POST /dispatch/invoices\nX-Idempotency-Key" .- Index
+  </div>
+  <div class="mermaid-caption">Five deployables. Solid arrows = in-process dependencies. Dotted arrows = HTTPS across network boundaries.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="server">
+  <h2><span class="num">4</span> The factory server (server.js) — internal map</h2>
+  <p>The factory server is one 3,712-line Node file. Internally it acts like a mini-framework: env loading, data store, Excel parsers, Watcher, Cloudflare push, Socket.IO, REST routes, media upload, shutdown hooks.</p>
+
+  <div class="mermaid">
+flowchart TB
+  Boot["Server boot"] --> Env["dotenv load (.env or ABAYA_ENV_FILE)"]
+  Env --> DataDir["Resolve DATA_DIR\n(ABAYA_DATA_DIR or ./data)"]
+  DataDir --> Express["express() + cors + static(public/)\n+ json + trailing-slash 308 redirect"]
+  Express --> Socket["new Server(http)\ncookie=false, EIO3, 25s/60s ping"]
+  Express --> Routes["REST routes"]
+  Socket --> SioHandlers["io.on('connection')"]
+
+  Routes --> Catalog["Catalog\nGET/PUT /api/catalog/abayas\nGET /api/catalog/export.xlsx\nPOST /api/import/catalog-xlsx\nGET /api/release-moment"]
+  Routes --> Employees["Employees\nGET /api/employees\nPOST/PUT/DELETE /api/employees[/:id]"]
+  Routes --> WorkTypes["Work types\nGET/PUT /api/work-types"]
+  Routes --> State["State\nGET /api/state\nGET /api/server-info\nGET /api/health\nGET /api/connectivity-diagnostics\nGET /api/debug-kiosk"]
+  Routes --> Kiosk2["Kiosk\nGET /api/kiosk/state\nPOST /api/kiosk/lookup\nPOST /api/kiosk/start-work\nPOST /api/kiosk/finish-work\nGET /api/tablet-ping"]
+  Routes --> Uploads2["Media\nPOST /api/upload/employee-image\nPOST /api/upload/catalog-item-image\n(8 MB multer memory)"]
+  Routes --> Sync["Sync\nGET /api/ceo-ingest-status\nGET /api/ceo-ingest-export\nPOST /api/reconcile-now\nPOST /api/alerts/test"]
+  Routes --> Floor["Floor data\nGET /api/export/floor-sessions.json\nGET /api/export/floor-sessions.csv\nPOST /api/import/floor-sessions.json"]
+  Routes --> QR["Setup\nGET /api/qr (SVG)\nGET /setup\nGET /asset-upload\nGET /lan-check"]
+  Routes --> Updates["OTA mirror\nGET /api/updates/mirror-health\nGET /updates/stable/*\nGET /updates/beta/*"]
+
+  SioHandlers --> SioEvents["events:\nstate_update (broadcast)\nsync_versions\ncatalog_update\nemployees_update\nwork_types_update\nsession_started\nsession_finished\nRPC:\nreq_lookup(ac_no)\nreq_startWork(emp_id, abaya_id, process)\nreq_finishWork(emp_id, invoice_*)"]
+
+  InMem["In-memory state (mutated by events)\n• EMPLOYEES + AC_MAP\n• abayaCatalog\n• ACTIVE_SESSIONS{ emp_id -> {abaya_id, process, started_at} }\n• COMPLETED_LOGS[]\n• EMP_PERF[{id, units, eff, act, idl}]\n• FACTORY_WORK_TYPES\n• employeesDataVersion / catalogCloudVersion"]
+  SioEvents --> InMem
+  Catalog --> InMem
+  Employees --> InMem
+
+  InMem --> Persist["Persist (setImmediate, every change)"]
+  Persist --> Offline["offline-report-store.cjs\ndashboard-offline-latest.json"]
+  Persist --> Snap["sqlite-snapshot.cjs\n.abaya-snapshot-*.db (sql.js in memory)"]
+  Persist --> CFOps["pushToCloudflare (best-effort)"]
+  CFOps -->|"NDJSON queue\non failure"| Queue2["data/ceo-ingest-queue.jsonl\ndrainCeoIngestQueue() retry loop"]
+  CFOps -->|"on 401/403"| Alert["Resend email alert\n(cloud-auth-error)"]
+  CFOps -->|"on 4xx"| Reject["ceo-ingest-rejected.jsonl\n(permanent)"]
+
+  Watcher["chokidar watchers\nitems_export.xlsx + employees.xlsx\n+ setInterval(refreshFromCloud, 60s)\n+ setInterval(loadXlsx, 1h)"] --> InMem
+
+  Shut["SIGINT/SIGTERM\ngracefulShutdown()\nflush offline + sqlite snapshot\nstop reconcile + alert loops\nprocess.exit(0)"] -.-> Server2
+  </div>
+  <div class="mermaid-caption">server.js as a single-process mini framework. The 5 colored clusters are: boot, in-memory store, routes, Socket.IO, persistence. The dotted arrow on graceful shutdown fires on Ctrl+C / LAUNCH-ALL.</div>
+
+  <h3>HTTP routes — quick reference</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/api/state</code></td><td>Bounded realtime snapshot (active sessions + recent logs + perf)</td></tr>
+      <tr><td>GET</td><td><code>/api/employees</code></td><td>Employee directory (JSON, versioned)</td></tr>
+      <tr><td>PUT/POST/DELETE</td><td><code>/api/employees[/:id]</code></td><td>CRUD on roster (with integrity check)</td></tr>
+      <tr><td>GET/PUT</td><td><code>/api/catalog/abayas</code></td><td>Catalog cache (auth via X-Ingest-Secret)</td></tr>
+      <tr><td>POST</td><td><code>/api/import/catalog-xlsx</code></td><td>Drag-and-drop Excel import (multer, 20 MB cap)</td></tr>
+      <tr><td>GET</td><td><code>/api/catalog/export.xlsx</code></td><td>Download current catalog as Excel</td></tr>
+      <tr><td>GET/PUT</td><td><code>/api/work-types</code></td><td>Factory work types (Tailor (01), Cutting, Stone Work, …)</td></tr>
+      <tr><td>GET</td><td><code>/api/server-info</code></td><td>LAN IP + port + uptime + boot id</td></tr>
+      <tr><td>GET</td><td><code>/api/connectivity-diagnostics</code></td><td>Self-checks for tablet LAN troubleshooting</td></tr>
+      <tr><td>GET</td><td><code>/api/health</code></td><td>Liveness</td></tr>
+      <tr><td>POST</td><td><code>/api/kiosk/lookup</code></td><td>Identify by AC number (REST mirror of req_lookup)</td></tr>
+      <tr><td>POST</td><td><code>/api/kiosk/start-work</code></td><td>REST mirror of req_startWork</td></tr>
+      <tr><td>POST</td><td><code>/api/kiosk/finish-work</code></td><td>REST mirror of req_finishWork</td></tr>
+      <tr><td>POST</td><td><code>/api/upload/employee-image</code></td><td>multer memory upload → public/uploads/employees/</td></tr>
+      <tr><td>POST</td><td><code>/api/upload/catalog-item-image</code></td><td>Same for items</td></tr>
+      <tr><td>GET</td><td><code>/api/ceo-ingest-status</code></td><td>Pending queue depth, last success, alert state</td></tr>
+      <tr><td>GET</td><td><code>/api/ceo-ingest-export</code></td><td>Manual NDJSON download (X-Ingest-Secret)</td></tr>
+      <tr><td>POST</td><td><code>/api/reconcile-now</code></td><td>Force a reconcile cycle</td></tr>
+      <tr><td>POST</td><td><code>/api/alerts/test</code></td><td>Send a test Resend email</td></tr>
+      <tr><td>GET</td><td><code>/api/export/floor-sessions.json|csv</code></td><td>Floor session export (X-Export-Secret)</td></tr>
+      <tr><td>POST</td><td><code>/api/import/floor-sessions.json</code></td><td>Restore from floor session backup</td></tr>
+      <tr><td>GET</td><td><code>/api/qr?url=&amp;size=</code></td><td>QR SVG for tablet onboarding</td></tr>
+      <tr><td>GET</td><td><code>/updates/stable/&lt;file&gt;</code> and <code>/updates/beta/&lt;file&gt;</code></td><td>LAN mirror of Electron installers (latest.yml + NSIS)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="worker">
+  <h2><span class="num">5</span> The Cloudflare Worker — internal map</h2>
+  <p>Deployed to <code>dashboard.farewellabaya.com</code> via <code>wrangler.jsonc</code> at the repo root. Single <code>fetch</code> handler with conditional routing; scheduled handler runs crons.</p>
+
+  <div class="mermaid">
+flowchart TB
+  Edge["Worker entry point\ndefault.fetch(request, env, ctx)"] --> Router{Path router}
+
+  Router -->|"OPTIONS"| Cors["CORS preflight → 204"]
+  Router -->|"/api/health"| Health["ok: true"]
+  Router -->|"/updates/<channel>/<file>"| OTA["Read R2 binding UPDATES\nonly stable|beta channels, regex filename\nlatest.yml = 60s cache, binaries = 1y immutable"]
+  Router -->|"/api/ceo/session*"| Login["Password check vs CEO_PASSWORD\nmint JWT pair (CEO_JWT_SECRET)\nset HttpOnly+Secure cookies\nrotating refresh token"]
+  Router -->|"/api/catalog/abayas"| Cat["catalog.js\nGET = open, PUT = X-Ingest-Secret\n→ D1 abaya_catalog"]
+  Router -->|"/api/employees|"/api/work-types"| Roster["roster.js\nGET = open, PUT = X-Ingest-Secret\n→ D1 employees + work_types"]
+  Router -->|"/dispatch/*"| Dispatch["dispatch.js\nWhatsApp webhook verify + receive\nInvoice bridge to local dispatch server\nTunnel probes (cron)"]
+  Router -->|"/privacy | /terms"| Legal["Static HTML (no auth)"]
+  Router -->|"/sw.js"| Cleanup["Service worker cleanup script\nno-store"]
+  Router -->|"/api/settings/working-hours"| WH["working-hours.js\nGET = CEO OR ingest-secret\nPUT = CEO only\n→ D1 worker_settings"]
+  Router -->|"/"| Root["Bootstrap: ?token=...\n→ mint session cookies + 302\nelse: serve login HTML"]
+  Router -->|"/api/release-moment"| Rel["static release-moment.json"]
+  Router -->|"OTHER (CEO)"| Gate["isCeoAuthenticated()\n+ rateLimit CEO_READ_RATE_LIMIT (800/min)\n→ fail 401, else serve"]
+
+  Gate --> Api["/api/event    → ingest.js\n/api/state     → state.js (D1 batch)\n/api/report    → report.js\n/api/report/employee-day\n/api/analytics → analytics.js\n/api/trace     → trace.js\n/api/messaging/status|toggle"]
+  Gate --> UI2["/ and /dashboard.html and /ceo\n→ getCEODashboard(origin)"]
+
+  Cron["default.scheduled(event, env, ctx)\n• '* * * * *'  → runTunnelProbe(env)\n• '0 14 * * *' → sendEODSummary(env)"]
+  Cron --> CronOps
+
+  subgraph D1db[("D1  abaya-db")]
+    direction TB
+    T1["sessions"]
+    T2["active_sessions"]
+    T3["daily_stats"]
+    T4["abaya_catalog"]
+    T5["employees (migration 0010)"]
+    T6["work_types (migration 0010)"]
+    T7["dispatch_invoices"]
+    T8["customer_messages"]
+    T9["idempotency_keys"]
+    T10["tunnel_probes"]
+    T11["worker_settings"]
+    T12["catalog_meta"]
+  end
+
+  Cat --> T4
+  Roster --> T5
+  Roster --> T6
+  Api --> T1
+  Api --> T2
+  Api --> T3
+  Api --> T11
+  Dispatch --> T7
+  Dispatch --> T10
+  Dispatch --> T8
+  Dispatch --> T9
+  </div>
+  <div class="mermaid-caption">Worker is a single fetch handler with conditional routing. CEO routes are gated by JWT cookie + rate-limit; ingest/catalog/roster use the X-Ingest-Secret shared key so the factory server can push without a CEO login.</div>
+
+  <h3>Worker secrets &amp; bindings (wrangler.jsonc)</h3>
+  <table>
+    <thead><tr><th>Type</th><th>Name</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>D1</td><td><code>DB</code> (abaya-db, 5d61fb15-…)</td><td>All relational state</td></tr>
+      <tr><td>R2</td><td><code>UPDATES</code> (abaya-updates)</td><td>OTA installers, latest.yml</td></tr>
+      <tr><td>Secret</td><td><code>CEO_PASSWORD</code></td><td>Login password (env: CEO_PASSWORD)</td></tr>
+      <tr><td>Secret</td><td><code>CEO_JWT_SECRET</code></td><td>HMAC sign session + refresh tokens</td></tr>
+      <tr><td>Secret</td><td><code>INGEST_SECRET</code></td><td>X-Ingest-Secret from factory server</td></tr>
+      <tr><td>Secret</td><td><code>WHATSAPP_TOKEN</code>, <code>WHATSAPP_VERIFY_TOKEN</code>, <code>WHATSAPP_PHONE_NUMBER_ID</code></td><td>Meta Cloud API for dispatch.js</td></tr>
+      <tr><td>Secret</td><td><code>DISPATCH_BRIDGE_SECRET</code></td><td>Local dispatch server ↔ Worker</td></tr>
+      <tr><td>Rate limit</td><td><code>INGEST_RATE_LIMIT</code> 3000/60s</td><td>Factory ingest throttle</td></tr>
+      <tr><td>Rate limit</td><td><code>CATALOG_PUT_RATE_LIMIT</code> 120/60s</td><td>Catalog writes</td></tr>
+      <tr><td>Rate limit</td><td><code>CEO_READ_RATE_LIMIT</code> 800/60s</td><td>CEO dashboard polling</td></tr>
+      <tr><td>Cron</td><td><code>0 14 * * *</code></td><td>EOD summary email</td></tr>
+      <tr><td>Cron</td><td><code>* * * * *</code></td><td>Tunnel health probe</td></tr>
+      <tr><td>Route</td><td><code>dashboard.farewellabaya.com</code> (custom domain)</td><td>Public surface</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="dataflow">
+  <h2><span class="num">6</span> Data flow — from Excel to Kiosk</h2>
+  <p>There are three writer paths for the catalog. The factory server merges them and broadcasts the latest version to all kiosk/dashboard clients.</p>
+
+  <div class="mermaid">
+flowchart LR
+  subgraph Sources["Source writers"]
+    direction TB
+    X1["Office laptop:\nitems_export.xlsx dropped in watched folder"]
+    X2["Factory server:\nEXCEL_DATA_DIR or\nCATALOG_XLSX_PATH/EMPLOYEES_XLSX_PATH"]
+    X3["Admin:\nPUT /api/catalog/abayas (X-Ingest-Secret)"]
+  end
+
+  X1 -->|"chokidar on tools/catalog-watcher"| WatcherNode["watch-catalog.js\nparse + PUT to factory OR Worker"]
+  WatcherNode -->|"HTTP"| Factory[("Factory Server\nabayaCatalog[] in memory")]
+  X2 -->|"chokidar + setInterval 1h"| Factory
+  X3 -->|"direct"| Factory
+
+  Factory -->|"refreshAbayaCatalogFromCloud()\nevery 60s"| Cloud[("Cloudflare Worker\nD1 abaya_catalog")]
+  Cloud -.->|"GET /api/catalog/abayas\n+ X-Ingest-Secret"| Factory
+
+  Factory -->|"io.emit('catalog_update', {version})\n+ version bump"| Kiosk[("Kiosk clients\nSocket.IO")]
+  Factory -->|"io.emit('catalog_update')"| Dash[("Dashboard\nSocket.IO")]
+  Factory -->|"io.emit('state_update')"| Dash
+
+  Factory -->|"On admin edit:\nputCatalogToCloud()"| Cloud
+  Cloud -->|"/api/release-moment\n+ dashboard pull"| CEO[("CEO Dashboard\ndashboard.farewellabaya.com")]
+  </div>
+  <div class="mermaid-caption">Three writer paths converge on the in-memory catalog; the server polls the cloud every 60s and pushes back on admin edits. Last-writer-wins by version timestamp.</div>
+
+  <h3>Factory data — local-first sources of truth</h3>
+  <table>
+    <thead><tr><th>What</th><th>Source (precedence)</th><th>Refresh</th></tr></thead>
+    <tbody>
+      <tr><td>Abaya catalog</td><td>1. <code>CATALOG_XLSX_PATH</code> (Excel) → 2. Cloud D1 (via ingest) → 3. <code>DEFAULT_ABAYA_CATALOG</code> (built-in demo)</td><td>chokidar + setInterval (1h) + cloud pull (60s)</td></tr>
+      <tr><td>Employees</td><td>1. <code>EMPLOYEES_XLSX_PATH</code> → 2. <code>data/employees-manual.json</code> (manual edit) → 3. Cloud D1 (fresh-install seed only) → 4. <code>DEFAULT_EMPLOYEES</code></td><td>chokidar + setInterval (1h) + cloud pull (60s)</td></tr>
+      <tr><td>Work types</td><td>1. <code>data/work-types.json</code> → 2. Cloud D1 (fresh-install seed) → 3. <code>DEFAULT_FACTORY_WORK_TYPES</code></td><td>Cloud pull (60s)</td></tr>
+      <tr><td>Working hours</td><td>1. Cloud D1 <code>worker_settings</code> → 2. <code>defaultWorkingHoursConfigLocal()</code></td><td>Cloud pull (5 min)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="session">
+  <h2><span class="num">7</span> Session lifecycle (sequence)</h2>
+  <p>The core unit of work. A worker taps in, picks an abaya, does their station, taps out. Duration is computed only against configured shift windows so breaks and off-hours never inflate the numbers.</p>
+
+  <div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor W as Worker
+  participant K as Kiosk<br/>(public/kiosk.html)
+  participant S as Factory Server<br/>(server.js)
+  participant D as LAN Dashboard
+  participant Q as ceo-ingest-queue.jsonl
+  participant CF as Cloudflare Worker
+  participant D1 as D1 abaya-db
+
+  Note over K,S: Screen 1: fingerprint (mocked in factory build)
+  W->>K: Tap AC number
+  K->>S: req_lookup(ac_no)
+  S-->>K: employee + is_active
+
+  alt Already active
+    S-->>K: active abaya + process + started_at
+    K->>S: req_finishWork(emp_id, invoice_count, invoice_serial, quantity, checker_barcode)
+  else Not active
+    Note over K,S: Screen 3: scan abaya barcode
+    K->>S: req_startWork(emp_id, abaya_id, process)
+    S->>S: isInWorkingWindow(now) ?
+    S->>S: ACTIVE_SESSIONS[emp_id] = {abaya_id, process, started_at}
+    S-->>K: ok + log_id
+    S-->>D: io.emit('state_update', ...)
+    S-->>D: io.emit('session_started', ...)
+    S->>CF: pushToCloudflare('session_start', ...)
+  end
+
+  Note over S: Working. Worker does their station. No further events.
+  S-->>D: io.emit('state_update', ...) (periodic)
+
+  alt Cloud unreachable
+    CF-->>S: timeout / 5xx
+    S->>Q: append {type:'session_start', payload}
+    S-->>S: setInterval(drainCeoIngestQueue, 30s)
+    S->>CF: retry when online
+    CF->>D1: INSERT OR REPLACE active_sessions
+    S-->>Q: atomic rename to .processed
+  else Cloud OK
+    CF->>D1: INSERT OR REPLACE active_sessions
+  end
+
+  W->>K: Tap Finish
+  K->>S: req_finishWork(payload)
+
+  alt process === 'Invoice maker'
+    S->>S: parseInvoiceNumberList(invoice_serial)
+    Note right of S: validates count matches
+  else process === 'Checker'
+    S->>S: parseCheckerBarcodeList + quantity>0
+  end
+
+  S->>S: duration_sec = overlapSecWithWindows(start, end)
+  S->>S: COMPLETED_LOGS.push(record)
+  S->>S: EMP_PERF[emp_id].units++ ; .act += min ; .eff = min(100, units*45/act*100)
+  S-->>K: ok + log_id + duration
+  S-->>D: io.emit('state_update', ...)
+  S-->>D: io.emit('session_finished', ...)
+  S->>S: setImmediate(persistOfflineDashboardReport)
+  S->>S: setImmediate(persistSqliteSnapshot)
+  S->>CF: pushToCloudflare('session_finish', ...)
+  CF->>D1: INSERT INTO sessions + UPDATE daily_stats
+  </div>
+  <div class="mermaid-caption">One Start ties a worker to one abaya and one process until they tap Finish. Breaks inside the shift window are counted; off-hours are not.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="dispatch">
+  <h2><span class="num">8</span> Dispatch service (material logistics)</h2>
+  <p>A separate <em>optional</em> sub-service in <code>services/dispatch-server/</code> for material/invoice logistics. It is a Bun/Node HTTP server (default port 3111) that runs alongside the main factory server.</p>
+
+  <div class="mermaid">
+flowchart LR
+  subgraph Edge2["Cloudflare Worker (cloudflare/src/handlers/dispatch.js)"]
+    direction TB
+    WH["POST /dispatch/webhook/whatsapp\nMeta Cloud API verification + receive"]
+    Inv["POST /dispatch/invoices\nX-Idempotency-Key\nbridge to local server"]
+    Probe["GET /dispatch/tunnel-health\n(read tunnel_probes table)"]
+    Msg["GET/POST /api/messaging/status|toggle\ncustomer notifications on/off"]
+  end
+
+  subgraph Local["services/dispatch-server/  (Node or Bun)"]
+    direction TB
+    API["server.js\n• parseInboundMessages (WhatsApp text)\n• extractPdfText + extractInvoiceFields (PDF invoices)\n• upsertInvoice, setItemDone, updateInvoiceStatus"]
+    Store["src/store.js\nin-memory sorted invoices + JSONL persistence"]
+    SSE["src/sse.js\nSSE client registry"]
+    Zhipu["Zhipu Vision AI\n(pdf-image → JSON invoice fields)"]
+    API --> Store
+    API --> SSE
+    API -. optional OCR .-> Zhipu
+  end
+
+  subgraph Out2["Consumers"]
+    direction TB
+    Leader["public/leaderboard.html\nrealtime progress board"]
+    Factory["Factory server\npatch /api/employees, /api/catalog\nvia notifyFactory()"]
+  end
+
+  WA["📱 Supplier WhatsApp"]
+  WA -->|"inbound text/PDF/image"| WH
+  WH -->|"verify + parse"| API
+  API -->|"upsert"| Store
+  Store -->|"SSE push"| Leader
+  Inv -->|"forward"| API
+  Store -->|"on status change"| Factory
+  API -->|"customer phone ready"| Msg
+  </div>
+  <div class="mermaid-caption">Hybrid-edge material flow. Incoming WhatsApp/PDF is processed at the cloud edge first (faster webhook ack), then mirrored to the local server for real-time SSE to the floor leaderboard.</div>
+
+  <div class="callout">
+    <strong>Note on scope.</strong> The dispatch service is intentionally isolated from the main factory server. They share <code>schema.sql</code> and the <code>dispatch_invoices</code> migration, but the main Worker handles the cloud-side webhook and bridge; <code>services/dispatch-server/</code> only runs on the factory PC. The README explicitly warns: <em>"Do not run <code>wrangler deploy</code> from this folder."</em>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="persistence">
+  <h2><span class="num">9</span> Persistence &amp; offline story</h2>
+  <p>Three independent local stores back up the in-memory state, plus a fourth offline-resilient queue for cloud writes.</p>
+
+  <div class="mermaid">
+flowchart TB
+  subgraph IM["In-memory (server.js)"]
+    direction LR
+    A1["ACTIVE_SESSIONS{}"]
+    A2["COMPLETED_LOGS[]"]
+    A3["EMP_PERF[]"]
+    A4["abayaCatalog[]"]
+    A5["EMPLOYEES[]"]
+  end
+
+  IM -->|"setImmediate after every mutation\n+ setInterval 60s"| OR["offline-report-store.cjs\n→ data/offline-dashboard-reports/dashboard-offline-latest.json\natomic .tmp + rename\nretention: OFFLINE_SNAPSHOT_RETENTION_DAYS"]
+  IM -->|"setInterval SQLITE_SNAPSHOT_INTERVAL_MS (default 5m)\n+ setTimeout(5s) on boot\n+ after every finish"| SQ["sqlite-snapshot.cjs\n→ data/sqlite-snapshots/abaya-snapshot-YYYYMMDD-HHMMSS.db\nreal SQLite via sql.js\nmatches cloudflare/schema.sql\n+ signed manifest (SNAPSHOT_SIGNING_SECRET)\nNTFS ACL hardening via snapshot:harden"]
+  IM -->|"On cloud failure (timeout, 5xx)"| NDJ["ceo-ingest-queue.jsonl\nappend-only NDJSON\n.ceo-ingest-rejected.jsonl for permanent 4xx\ndrainCeoIngestQueue() on\nCEO_INGEST_RETRY_MS (default 30s)"]
+
+  SQ -->|"yarn snapshot:import --to-d1 [--remote]"| D1[("D1 abaya-db")]
+  NDJ -->|"Retry until 2xx\nor move to rejected"| CW["Cloudflare Worker\nPOST /api/event"]
+
+  Boot["On server start"] --> OR2["load latest offline snapshot\nreviveActiveSessionsFromSnapshot()\nfilter by RESTORE_ACTIVE_SESSION_MAX_AGE_MS (default 48h)"]
+  OR2 --> IM
+  </div>
+  <div class="mermaid-caption">Layered durability. In-memory is fast but volatile; offline JSON is human-readable; SQLite is the canonical local copy; the NDJSON queue survives full power loss and reorders gracefully.</div>
+
+  <h3>Restore rules on startup</h3>
+  <ul>
+    <li><strong>In-progress sessions</strong> (kiosk) are revived from the latest snapshot if <code>started_at</code> is within <code>RESTORE_ACTIVE_SESSION_MAX_AGE_MS</code> (default 48h) <em>and</em> the employee still exists in the current roster.</li>
+    <li><strong>Completed logs</strong> are restored subject to <code>OFFLINE_LOG_WINDOW_MS</code> (default = entire history, still capped by <code>STATE_LOG_MAX_ROWS</code>).</li>
+    <li><strong>Catalog &amp; roster</strong> are always re-fetched from the cloud (60s) and reloaded from the local xlsx (1h) on every boot — never trusted from the offline snapshot.</li>
+    <li><strong>Graceful shutdown</strong> (<code>SIGINT/SIGTERM</code>) flushes both <code>persistOfflineDashboardReport()</code> and <code>persistSqliteSnapshot()</code> before <code>process.exit(0)</code>. An OS power-cut may still lose the last in-progress session.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="api">
+  <h2><span class="num">10</span> API surface — sockets and events</h2>
+
+  <div class="grid-2">
+    <div>
+      <h3>Socket.IO (factory server)</h3>
+      <table>
+        <thead><tr><th>Direction</th><th>Event</th><th>Payload</th></tr></thead>
+        <tbody>
+          <tr><td>S→C</td><td><code>state_update</code></td><td>Bounded realtime snapshot</td></tr>
+          <tr><td>S→C</td><td><code>sync_versions</code></td><td>employees / catalog / workTypes / workingHours versions</td></tr>
+          <tr><td>S→C</td><td><code>catalog_update</code></td><td>{ version: string }</td></tr>
+          <tr><td>S→C</td><td><code>employees_update</code></td><td>{ count, version }</td></tr>
+          <tr><td>S→C</td><td><code>work_types_update</code></td><td>{ workTypes, version }</td></tr>
+          <tr><td>S→C</td><td><code>session_started</code></td><td>{ employee, session }</td></tr>
+          <tr><td>S→C</td><td><code>session_finished</code></td><td>{ employee, session }</td></tr>
+          <tr><td>C→S</td><td><code>req_lookup(ac_no, cb)</code></td><td>Returns {ok, employee, is_active, abaya_code, session_process, session_started_at}</td></tr>
+          <tr><td>C→S</td><td><code>req_startWork({emp_id, abaya_id, process}, cb)</code></td><td>Returns {ok, log_id}</td></tr>
+          <tr><td>C→S</td><td><code>req_finishWork(payload, cb)</code></td><td>Returns {ok, log_id, duration_sec}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Socket.IO (kiosk — fallback only)</h3>
+      <p>The same Socket.IO endpoint is also used by <code>public/kiosk.js</code> directly. The dashboard prefers Socket.IO but falls back to <code>GET /api/state</code> polling on disconnect.</p>
+
+      <h3>Cloudflare Worker</h3>
+      <table>
+        <thead><tr><th>Method</th><th>Path</th><th>Auth</th></tr></thead>
+        <tbody>
+          <tr><td>POST</td><td><code>/api/ceo/session</code></td><td>password in body</td></tr>
+          <tr><td>POST</td><td><code>/api/ceo/session/refresh</code></td><td>refresh cookie</td></tr>
+          <tr><td>POST</td><td><code>/api/ceo/logout</code></td><td>none</td></tr>
+          <tr><td>GET/PUT</td><td><code>/api/catalog/abayas</code></td><td>open GET, X-Ingest-Secret PUT</td></tr>
+          <tr><td>GET/PUT</td><td><code>/api/employees</code></td><td>open GET, X-Ingest-Secret PUT</td></tr>
+          <tr><td>GET/PUT</td><td><code>/api/work-types</code></td><td>open GET, X-Ingest-Secret PUT</td></tr>
+          <tr><td>GET/PUT</td><td><code>/api/settings/working-hours</code></td><td>CEO OR ingest-secret</td></tr>
+          <tr><td>POST</td><td><code>/api/event</code></td><td>X-Ingest-Secret</td></tr>
+          <tr><td>GET</td><td><code>/api/state</code></td><td>CEO cookie</td></tr>
+          <tr><td>GET</td><td><code>/api/report?type=Daily|Weekly|Monthly</code></td><td>CEO</td></tr>
+          <tr><td>GET</td><td><code>/api/report/employee-day</code></td><td>CEO</td></tr>
+          <tr><td>GET</td><td><code>/api/analytics</code></td><td>CEO</td></tr>
+          <tr><td>GET</td><td><code>/api/trace?barcode=...</code></td><td>CEO</td></tr>
+          <tr><td>GET</td><td><code>/api/release-moment</code></td><td>CEO</td></tr>
+          <tr><td>GET</td><td><code>/api/messaging/status</code></td><td>CEO</td></tr>
+          <tr><td>POST</td><td><code>/api/messaging/toggle</code></td><td>CEO</td></tr>
+          <tr><td>GET/POST/PATCH</td><td><code>/dispatch/invoices</code></td><td>DISPATCH_BRIDGE_SECRET</td></tr>
+          <tr><td>GET/POST</td><td><code>/dispatch/webhook/whatsapp</code></td><td>Meta verify token</td></tr>
+          <tr><td>GET</td><td><code>/dispatch/tunnel-health</code></td><td>CEO</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="security">
+  <h2><span class="num">11</span> Security &amp; deployment</h2>
+
+  <div class="grid-2">
+    <div>
+      <h3>Auth model</h3>
+      <table>
+        <thead><tr><th>Surface</th><th>Auth</th></tr></thead>
+        <tbody>
+          <tr><td>Factory kiosk / dashboard (LAN)</td><td>None by default (LAN-trusted); optional <code>ASSET_UPLOAD_SECRET</code> on media uploads</td></tr>
+          <tr><td>Factory ingest (server→Worker)</td><td><code>X-Ingest-Secret</code> shared with Worker env</td></tr>
+          <tr><td>Factory catalog/roster PUT (admin)</td><td><code>X-Ingest-Secret</code> or <code>CATALOG_UPLOAD_PASS</code></td></tr>
+          <tr><td>Floor data export (CSV/JSON)</td><td><code>X-Export-Secret</code> = <code>FLOOR_EXPORT_SECRET</code> or fallback ingest secret</td></tr>
+          <tr><td>CEO dashboard (Worker)</td><td>Password login → JWT session (HttpOnly+Secure cookie) + refresh token rotation; <code>CEO_JWT_SECRET</code> signs</td></tr>
+          <tr><td>Worker→Worker bridge (dispatch)</td><td><code>DISPATCH_BRIDGE_SECRET</code></td></tr>
+          <tr><td>Network boundary</td><td>Tailscale mesh (WireGuard) preferred; Cloudflare Tunnel as legacy backup</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Deployment topology</h3>
+      <div class="mermaid" style="margin: 0">
+flowchart LR
+  subgraph OnPrem3["Factory / Office"]
+    direction TB
+    Tablet["Tablets"]
+    PC["Supervisor PCs"]
+    Host["Windows Host\nNode 20 + PM2 + portable .bin/"]
+    OfficeLaptop["Office Laptop\nTailscale + Watcher"]
+  end
+
+  subgraph Internet["Cloud"]
+    direction TB
+    CF3["Cloudflare Worker\n+ D1 + R2"]
+    TunnelL["Cloudflare Tunnel\n(legacy backup)"]
+  end
+
+  Tablet -->|"LAN HTTP/WS\nor Tailscale"| Host
+  PC -->|"LAN HTTP/WS"| Host
+  OfficeLaptop -->|"Tailscale mesh"| Host
+  Host -->|"HTTPS push\nNDJSON queue + retry"| CF3
+  Host -.->|"optional"| TunnelL
+  CEO["👔 CEO"] -->|"HTTPS only\nno install"| CF3
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="ops">
+  <h2><span class="num">12</span> Ops &amp; maintenance</h2>
+  <p>Day-to-day operating commands. The repo's <code>START HERE.txt</code> and <code>START-HERE-BUILD-INSTRUCTIONS.txt</code> walk through these.</p>
+
+  <div class="grid-2">
+    <div>
+      <h3>Install / launch</h3>
+      <ul>
+        <li><strong>First install:</strong> <code>install\INSTALL.bat</code> (or <code>yarn setup</code>) — Corepack, Yarn 4 PnP deps, .env bootstrap, Desktop shortcut. No PowerShell required for the install itself.</li>
+        <li><strong>Daily start (classic):</strong> <code>install\LAUNCH-ALL.bat</code> — optional Cloudflare tunnel, runtime picker (Node or Bun), server + watcher in separate consoles, auto-start at Windows logon.</li>
+        <li><strong>Always-on (PM2):</strong> <code>powershell -NoProfile -ExecutionPolicy Bypass -File install\SETUP-PM2-BOOT.ps1</code> once; then <code>pm2 status</code>, <code>pm2 logs abaya-server</code>, <code>pm2 reload all</code>.</li>
+        <li><strong>Electron GUI (optional):</strong> <code>tools/desktop-launcher</code> with <code>electron-updater</code> OTA from R2. Same processes, one window.</li>
+        <li><strong>Cloud deploy:</strong> <code>yarn deploy:all</code> or <code>install\DEPLOY-ALL.ps1</code> (Worker + Pages + tunnel).</li>
+        <li><strong>Single-EXE installer:</strong> <code>yarn package:installer:win</code> produces an NSIS installer under <code>dist/desktop-launcher/</code>.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Snapshots &amp; integrity</h3>
+      <ul>
+        <li><strong>Manual snapshot:</strong> <code>yarn snapshot:db</code> writes a fresh <code>abaya-snapshot-*.db</code>.</li>
+        <li><strong>Info:</strong> <code>yarn snapshot:info</code> shows metadata.</li>
+        <li><strong>Import to D1:</strong> <code>yarn snapshot:import --to-d1 [--remote]</code>.</li>
+        <li><strong>Tamper protection:</strong> set <code>SNAPSHOT_SIGNING_SECRET</code>, then <code>yarn snapshot:harden</code> (NTFS ACLs) and <code>yarn snapshot:verify</code> in a scheduled task.</li>
+        <li><strong>Tests:</strong> <code>yarn test</code> (unit), <code>yarn test:system</code> (smoke), <code>yarn test:offline-store</code>, <code>yarn qa:qc</code>, <code>yarn verify:employee-xlsx</code>.</li>
+        <li><strong>Live eval:</strong> <code>yarn evaluate:rollout</code> / <code>yarn evaluate:live</code>.</li>
+        <li><strong>CEO state check:</strong> <code>yarn verify:ceo</code>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="debt">
+  <h2><span class="num">13</span> Risks &amp; technical debt (worth knowing)</h2>
+  <p>From <code>docs/SYSTEM_DESIGN.md</code> §12 and a fresh scan of the source.</p>
+
+  <ul>
+    <li><strong>Monolith <code>server.js</code></strong> (3,712 lines). Easy to read, hard to unit-test. Routes, persistence, push, watchers, alerts all share one closure.</li>
+    <li><strong>No horizontal scale</strong> — single Node process, in-memory state. Adding a second node would require moving state out (Redis or always-on DB).</li>
+    <li><strong>OS power-cut window.</strong> The default 60s <code>persistOfflineDashboardReport</code> cadence can lose the last minute of work. The 48h restore window is generous but not infinite.</li>
+    <li><strong>No build pipeline for the client.</strong> <code>public/kiosk.js</code> and <code>public/dashboard.js</code> are loaded directly. No minification, no module bundling, no source maps.</li>
+    <li><strong>Factory socket/read APIs are unauthenticated by default.</strong> Security relies on the LAN boundary (or Tailscale). <code>CORS: *</code> is enabled.</li>
+    <li><strong>CEO token can land in query string</strong> (bootstrap via <code>?token=</code>). Reduces to cookie after the first 302, but the URL ends up in browser history and referer logs.</li>
+    <li><strong>No secret rotation or audit trail.</strong> Static <code>CF_INGEST_SECRET</code>, <code>CEO_JWT_SECRET</code>, <code>ASSET_UPLOAD_SECRET</code>.</li>
+    <li><strong>Multi-writer catalog</strong> (Watcher vs Excel vs Admin PUT) can race. Last-writer-wins by version timestamp; no CRDT.</li>
+    <li><strong>Domain constants duplicated</strong> across <code>public/data.js</code>, <code>cloudflare/src/domain/process.js</code>, <code>server.js</code>'s <code>DEFAULT_FACTORY_WORK_TYPES</code>, and <code>tools/catalog-watcher/config.json</code>. Drift risk.</li>
+    <li><strong><code>.env.example</code> has unresolved git merge markers</strong> at lines 123–139 (<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD</code> / <code>=======</code> / <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt; 10247c8...</code>) around the <code>ABAYA_UPDATE_MIRROR_BASE_URL</code> docs. Cosmetic but worth a clean resolve next time you touch that file.</li>
+    <li><strong>Stale <code>1</code> and <code>rows</code> files</strong> at the repo root (both 0 bytes) — leftover from a paste / Excel export. Not a bug, but they will show up in <code>git status</code>.</li>
+    <li><strong><code>items_export.xlsx</code> and other samples</strong> sit in the repo root; they're convenient for manual testing but probably shouldn't be tracked long-term.</li>
+  </ul>
+
+  <h3>Where the system shines</h3>
+  <ul>
+    <li><strong>Offline resilience.</strong> NDJSON queue + json snapshot + sqlite snapshot = three independent durability layers, plus a reconcile loop that pulls cloud truth into the factory.</li>
+    <li><strong>Local-first by design.</strong> Cloud outage never affects floor operations.</li>
+    <li><strong>Portable single-folder install.</strong> <code>install\LAUNCH-ALL.bat</code> downloads a portable Node 20, sets up deps, creates a Windows Startup shortcut — runs from a USB stick if you need it to.</li>
+    <li><strong>Defense in depth on persistence.</strong> Tamper-protected SQLite snapshots, NTFS ACL hardening, signed manifest, scheduled verification.</li>
+    <li><strong>Three independent deployment shapes:</strong> batch launcher (classic), PM2 (always-on), Electron (GUI with OTA updates).</li>
+  </ul>
+</section>
+
+<footer>
+  Generated from the v1.0.2 source tree. Diagrams rendered with Mermaid 10. Source: <code>docs/system-diagrams/index.html</code>.
+</footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: '#1c1530',
+      primaryTextColor: '#ffffff',
+      primaryBorderColor: '#6a5fc1',
+      lineColor: '#a78bfa',
+      secondaryColor: '#261b40',
+      tertiaryColor: '#0f0c1a',
+      background: '#181428',
+      clusterBkg: '#1c1530',
+      clusterBorder: '#6a5fc1',
+      fontFamily: 'Rubik, -apple-system, system-ui, sans-serif',
+      fontSize: '13px',
+    },
+    flowchart: {
+      curve: 'basis',
+      htmlLabels: true,
+      padding: 12,
+    },
+    sequence: {
+      actorMargin: 60,
+      boxMargin: 10,
+      messageMargin: 36,
+    },
+  });
+</script>
+</body>
+</html>

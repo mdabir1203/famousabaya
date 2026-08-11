@@ -1,0 +1,59 @@
+{
+  "name": "abaya-uninstaller",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone uninstaller for AbaYa Track. Detects the install, asks the operator what to keep/wipe/export, then performs the actions.",
+  "author": "Mohammad Abir Abbas",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "test": "node --test uninstaller-policy.test.cjs",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "packageManager": "yarn@4.13.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^34.2.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.abaya.track.uninstaller",
+    "productName": "AbaYa Track Uninstaller",
+    "directories": {
+      "output": "../../install"
+    },
+    "icon": "assets/uninstaller-icon.ico",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "uninstaller-policy.cjs",
+      "package.json",
+      "assets/**/*"
+    ],
+    "publish": null,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "AbaYa-Track-Uninstaller-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AbaYa Track Uninstaller",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false
+    }
+  }
+}

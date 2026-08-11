@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "savedAt": 1786294051039,
-  "windowStartMs": 1785084451039,
-  "windowEndMs": 1786294051039,
+  "savedAt": 1786404261675,
+  "windowStartMs": 0,
+  "windowEndMs": 1786404261675,
   "summary": {
     "completedSessionsInWindow": 0,
     "activeSessionsCount": 0
@@ -10,196 +10,175 @@
   "logs": [],
   "perf": [
     {
-      "id": "e_bc_00000109",
+      "id": "e1",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000110",
+      "id": "e2",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000111",
+      "id": "e3",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000112",
+      "id": "e4",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000113",
+      "id": "e5",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000114",
+      "id": "e6",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000115",
+      "id": "e7",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000116",
+      "id": "e8",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000117",
+      "id": "e9",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000118",
+      "id": "e10",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000119",
+      "id": "e11",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000120",
+      "id": "e12",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000121",
+      "id": "e13",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000122",
+      "id": "e14",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000123",
+      "id": "e15",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000124",
+      "id": "e16",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000125",
+      "id": "e17",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000128",
+      "id": "e19",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000129",
+      "id": "e20",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000130",
+      "id": "e21",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000131",
+      "id": "e22",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000132",
+      "id": "e23",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000133",
+      "id": "e24",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000134",
+      "id": "e25",
       "units": 0,
       "eff": 0,
       "act": 0,
       "idl": 0
     },
     {
-      "id": "e_bc_00000135",
-      "units": 0,
-      "eff": 0,
-      "act": 0,
-      "idl": 0
-    },
-    {
-      "id": "e_bc_00000999",
-      "units": 0,
-      "eff": 0,
-      "act": 0,
-      "idl": 0
-    },
-    {
-      "id": "e_bc_00000998",
-      "units": 0,
-      "eff": 0,
-      "act": 0,
-      "idl": 0
-    },
-    {
-      "id": "e_bc_dasdas",
+      "id": "e26",
       "units": 0,
       "eff": 0,
       "act": 0,

@@ -1,0 +1,8 @@
+version: 1.2.6
+files:
+  - url: AbaYa-Track-Launcher-Setup-1.2.6.exe
+    sha512: dummyhashfordryrunonly
+    size: 12345
+path: AbaYa-Track-Launcher-Setup-1.2.6.exe
+sha512: dummyhashfordryrunonly
+releaseDate: '2026-08-11T00:00:00.000Z'
