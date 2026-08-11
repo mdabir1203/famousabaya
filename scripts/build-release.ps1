@@ -27,6 +27,9 @@ New-Item -ItemType Directory -Path $staging -Force | Out-Null
 # Yarn PnP: .pnp.cjs, yarn.lock, and .yarn/cache ARE included so the client
 # PC can run "yarn install --immutable" without internet access (zero-install).
 # install/build state is regenerated locally and excluded to keep zip lean.
+# The prebuilt Electron app and its NSIS installer are dropped too — they
+# carry stale baked-in public/uploads resources and are not part of the source
+# bundle. The target PC builds the installer locally with `yarn dist:win`.
 $exclude = @(
   ".git",
   "dist",
@@ -39,7 +42,8 @@ $exclude = @(
   ".yarn\unplugged",
   "public\uploads",
   "data\desktop-launcher",
-  "data\offline-dashboard-reports"
+  "data\offline-dashboard-reports",
+  "install\win-unpacked"
 )
 $excludeFiles = @(
   ".env",
@@ -78,6 +82,7 @@ $purgeDirs = @(
   "public\uploads",
   "data\desktop-launcher",
   "data\offline-dashboard-reports",
+  "install\win-unpacked",
   "docs\design-flow-video\.yarn",
   "tools\catalog-watcher\.yarn\unplugged",
   "tools\desktop-launcher\.yarn\unplugged"
@@ -102,7 +107,10 @@ Get-ChildItem $staging -Recurse -Force -File -ErrorAction SilentlyContinue |
     $_.Name -like "*.log" -or
     $_.Name -eq "desktop.ini" -or
     $_.Name -eq "Thumbs.db" -or
-    $_.Name -eq ".DS_Store"
+    $_.Name -eq ".DS_Store" -or
+    $_.Name -like "AbaYa-Track-Launcher-Setup-*.exe" -or
+    $_.Name -like "*.exe.blockmap" -or
+    $_.Name -eq "latest.yml"
   } |
   Remove-Item -Force
 
