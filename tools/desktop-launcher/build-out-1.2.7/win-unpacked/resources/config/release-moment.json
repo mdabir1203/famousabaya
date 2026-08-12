@@ -1,0 +1,12 @@
+{
+  "_comment": "Outcome-first release moment. Sync copy: cloudflare/src/data/release-moment.json (CEO Worker). Bump momentId when copy changes.",
+  "enabled": true,
+  "momentId": "2026-05-evolution-1",
+  "eyebrow": "Just evolved",
+  "hook": "Your floor picture just got sharper.",
+  "outcome": "Less friction between scan and insight—so the day stays in flow.",
+  "ctaLabel": "Open the floor",
+  "ctaPath": "/kiosk.html",
+  "secondaryCtaLabel": "See the live board",
+  "secondaryCtaPath": "/dashboard.html"
+}

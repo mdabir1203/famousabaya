@@ -34,6 +34,7 @@ const RAW_RUNTIME_STATE =
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
           ["multer", "npm:2.1.1"],\
+          ["package", "npm:1.0.1"],\
           ["pm2", "npm:7.0.3"],\
           ["qrcode", "npm:1.5.4"],\
           ["sharp", "npm:0.33.5"],\
@@ -937,6 +938,7 @@ const RAW_RUNTIME_STATE =
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
           ["multer", "npm:2.1.1"],\
+          ["package", "npm:1.0.1"],\
           ["pm2", "npm:7.0.3"],\
           ["qrcode", "npm:1.5.4"],\
           ["sharp", "npm:0.33.5"],\
@@ -2557,6 +2559,15 @@ const RAW_RUNTIME_STATE =
           ["degenerator", "npm:5.0.1"],\
           ["netmask", "npm:2.1.1"],\
           ["pac-resolver", "npm:7.0.1"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["package", [\
+      ["npm:1.0.1", {\
+        "packageLocation": "./.yarn/cache/package-npm-1.0.1-61d3a5240e-aff729a3d6.zip/node_modules/package/",\
+        "packageDependencies": [\
+          ["package", "npm:1.0.1"]\
         ],\
         "linkType": "HARD"\
       }]\

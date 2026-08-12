@@ -218,6 +218,72 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 @media(prefers-reduced-motion:reduce){.abaya-release-moment--motion .abaya-release-moment__glow{animation:none!important}}
 #proc-split{max-height:220px;overflow-y:auto;padding-right:4px}
 @media(max-width:700px){.stat-row{grid-template-columns:1fr 1fr}.dash-row{grid-template-columns:1fr}}
+
+/* ─── Check Report (calendar + production report) ─────────────────────────
+ * Reuses the existing dark-purple palette and rep-panel / modal-overlay
+ * patterns so the new button looks like it has always belonged to the
+ * Executive Reports panel. No new visual language.
+ */
+.cr-wrap{display:flex;flex-direction:column;gap:14px}
+.cr-cal{background:var(--s2);border:1px solid var(--bd);border-radius:14px;padding:14px}
+.cr-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.cr-cal-title{font-family:var(--fn-display);font-size:15px;font-weight:700;color:var(--tx)}
+.cr-nav{display:flex;gap:6px}
+.cr-nav-btn{background:var(--s3);color:var(--tx2);border:1px solid var(--bd2);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fn)}
+.cr-nav-btn:hover{background:var(--bl);color:#fff;border-color:rgba(167,139,250,.5)}
+.cr-nav-btn:disabled{opacity:.4;cursor:not-allowed}
+.cr-weekdays,.cr-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cr-weekdays{margin-bottom:6px}
+.cr-wd{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;text-align:center;padding:4px 0;font-weight:600}
+.cr-cell{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:13px;font-weight:600;color:var(--tx2);background:var(--s1);border:1px solid var(--bd);cursor:pointer;transition:all .15s;position:relative;font-family:var(--fn)}
+.cr-cell:hover{border-color:var(--bl);color:var(--tx)}
+.cr-cell.muted{opacity:.3;cursor:default}
+.cr-cell.today{outline:1px solid var(--am);outline-offset:-2px}
+.cr-cell.selected{background:var(--bl);color:#fff;border-color:rgba(167,139,250,.7)}
+.cr-cell.in-range{background:rgba(106,95,193,.25);color:var(--tx);border-color:var(--bd2)}
+.cr-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--tx2);padding:8px 4px;border-top:1px solid var(--bd)}
+.cr-summary b{color:var(--tx)}
+.cr-factory-pick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cr-factory-pick select{padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2);font-family:var(--fn);font-size:12px}
+.cr-totals{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.cr-tot{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:10px;text-align:center}
+.cr-tot-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;font-weight:600}
+.cr-tot-val{font-size:20px;font-weight:800;color:var(--gr);font-family:var(--fn-display);letter-spacing:-.5px}
+.cr-tot-val.delivered{color:var(--gr)}
+.cr-tot-val.pending{color:var(--am)}
+.cr-tot-val.cancelled{color:var(--rd)}
+.cr-tot-val.abayas{color:var(--bl)}
+.cr-tot-val.invoices{color:var(--pu)}
+.cr-section{background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.cr-section-h{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--bd);font-size:12px;color:var(--tx2);font-weight:700;text-transform:uppercase;letter-spacing:.6px}
+.cr-section-h .cr-mini{font-size:10px;color:var(--tx3);font-weight:600;text-transform:none;letter-spacing:0}
+.cr-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px}
+.cr-row:last-child{border-bottom:0}
+.cr-factory-name{font-weight:700;color:var(--tx);font-size:13px}
+.cr-inv-name{font-weight:600;color:var(--tx2);font-family:var(--fn-mono);font-size:11px}
+.cr-abaya{font-family:var(--fn-mono);font-size:11px;color:var(--tx2);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.cr-status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.cr-status.delivered{color:var(--gr);background:rgba(194,239,78,.12);border:1px solid rgba(194,239,78,.3)}
+.cr-status.pending{color:var(--am);background:rgba(255,178,135,.12);border:1px solid rgba(255,178,135,.3)}
+.cr-status.cancelled{color:var(--rd);background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
+.cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
+.cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
+.cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
+.cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
+.cr-cancel-row .cr-when{color:var(--tx3);font-size:11px}
+.cr-form{display:flex;flex-direction:column;gap:10px}
+.cr-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--tx3);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.cr-form input,.cr-form select{padding:9px 11px;border-radius:9px;border:1px solid var(--bd2);background:var(--s1);color:var(--tx);font-family:var(--fn);font-size:13px}
+.cr-form input:focus,.cr-form select:focus{outline:none;border-color:var(--bl)}
+.cr-form-hint{font-size:11px;color:var(--tx3);line-height:1.5}
+.cr-msg{padding:8px 12px;border-radius:9px;font-size:12px;line-height:1.45;background:var(--s1);border:1px solid var(--bd);color:var(--tx2)}
+.cr-msg.warn{border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08);color:#fde68a}
+.cr-msg.error{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08);color:#fca5a5}
+.cr-msg.ok{border-color:rgba(194,239,78,.35);background:rgba(194,239,78,.08);color:#d9f99d}
+.cr-divider{height:1px;background:var(--bd);margin:8px 0}
+.cr-tag{display:inline-block;padding:2px 8px;border-radius:6px;background:rgba(106,95,193,.15);color:var(--bl);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-left:6px}
+.cr-scroll{max-height:300px;overflow-y:auto}
+@media(max-width:600px){.cr-totals{grid-template-columns:repeat(2,1fr)}.cr-row{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -269,6 +335,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
       <button class="rep-btn" onclick="openReport('weekly')">&#128196; Weekly Report</button>
       <button class="rep-btn" onclick="openReport('monthly')">&#128202; Monthly Report</button>
       <button class="rep-btn" onclick="openReport('yearly')">&#128200; Yearly Report</button>
+      <button class="rep-btn" id="cr-open" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.5)">&#128197; Check Report</button>
     </div>
   </div>
 
@@ -1907,7 +1974,452 @@ setInterval(function () {
   load();
   setInterval(load, 60000);
 })();
+
+/* ─── Check Report (Production Throughput) ───────────────────────────────────
+ * Reuses the same dark-purple palette. Server is on the same origin so the
+ * BASE constant from the surrounding dashboard script is reused directly. */
+(function initCheckReport() {
+  // fetchJsonSafe is not inlined in the dashboard helper bundle. Define a
+  // tiny local equivalent so the IIFE stays self-contained. Returns parsed
+  // JSON on 2xx, null on error (so the .then callback still gets a value).
+  function crFetchJson(url) {
+    return fetch(url, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .catch(function () { return null; });
+  }
+  const tz = 'Asia/Dubai';
+  const state = {
+    step: 'calendar',
+    config: null,
+    factory: '',
+    viewYear: 0,
+    viewMonth: 0,
+    todayYmd: '',
+    fromYmd: '',
+    toYmd: '',
+    report: null,
+  };
+
+  function ymdInTz(epochSec) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(epochSec * 1000));
+    } catch (_) { return ''; }
+  }
+  function ymdInTzMs(epochMs) { return ymdInTz(Math.floor(epochMs / 1000)); }
+  function longInTz(ymd) {
+    if (!ymd) return '';
+    const [y, m, d] = ymd.split('-').map((n) => parseInt(n, 10));
+    const noon = Date.UTC(y, m - 1, d, 12, 0, 0, 0);
+    return new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(noon));
+  }
+  function rangeLabel() {
+    if (!state.fromYmd) return 'No date selected';
+    if (state.fromYmd === state.toYmd) return longInTz(state.fromYmd);
+    return longInTz(state.fromYmd) + ' \u2192 ' + longInTz(state.toYmd);
+  }
+
+  function openCheckReport() {
+    const m = document.getElementById('modal-check');
+    if (!m) return;
+    m.classList.add('open');
+    state.step = 'calendar';
+    crFetchJson(BASE + '/api/check-report/config').then(function (j) {
+      if (j && j.ok) {
+        state.config = j;
+        state.factory = j.defaultFactory || '';
+        state.todayYmd = j.todayYmd || ymdInTzMs(Date.now());
+      } else {
+        state.todayYmd = ymdInTzMs(Date.now());
+      }
+      const p = state.todayYmd.split('-');
+      state.viewYear = parseInt(p[0], 10);
+      state.viewMonth = parseInt(p[1], 10) - 1;
+      state.fromYmd = state.todayYmd;
+      state.toYmd = state.todayYmd;
+      renderCalendar();
+    }).catch(function () {
+      state.todayYmd = ymdInTzMs(Date.now());
+      const p = state.todayYmd.split('-');
+      state.viewYear = parseInt(p[0], 10);
+      state.viewMonth = parseInt(p[1], 10) - 1;
+      state.fromYmd = state.todayYmd;
+      state.toYmd = state.todayYmd;
+      renderCalendar();
+    });
+  }
+  function closeCheckReport() {
+    const m = document.getElementById('modal-check');
+    if (m) m.classList.remove('open');
+  }
+  window.closeCheckReport = closeCheckReport;
+  window.openCheckReport = openCheckReport;
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escapeAttr(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function renderCalendar() {
+    const body = document.getElementById('cr-body');
+    const sub  = document.getElementById('cr-sub');
+    const acts = document.getElementById('cr-actions');
+    if (!body) return;
+    if (sub) sub.textContent = 'Pick a single date or a range. Production timezone: ' + tz + '.';
+    const year = state.viewYear;
+    const month = state.viewMonth;
+    const firstWd = new Date(Date.UTC(year, month, 1)).getUTCDay();
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    const prevMonthDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    let cells = '';
+    for (let i = firstWd - 1; i >= 0; i--) {
+      cells += '<div class="cr-cell muted">' + (prevMonthDays - i) + '</div>';
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ymd = year + '-' + pad2(month + 1) + '-' + pad2(d);
+      const cls = ['cr-cell'];
+      if (ymd === state.todayYmd) cls.push('today');
+      if (ymd === state.fromYmd || ymd === state.toYmd) cls.push('selected');
+      else if (state.fromYmd && state.toYmd && ymd >= state.fromYmd && ymd <= state.toYmd) cls.push('in-range');
+      cells += '<div class="' + cls.join(' ') + '" data-ymd="' + ymd + '" onclick="crSel(this.dataset.ymd)">' + d + '</div>';
+    }
+    const totalCells = firstWd + daysInMonth;
+    const trailing = (7 - (totalCells % 7)) % 7;
+    for (let i = 1; i <= trailing; i++) cells += '<div class="cr-cell muted">' + i + '</div>';
+
+    const monthName = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' })
+      .format(new Date(Date.UTC(year, month, 15)));
+    const factories = (state.config && state.config.factories) || ['Main Factory'];
+    const factoryOpts = factories.map(function (f) {
+      return '<option value="' + escapeAttr(f) + '"' + (f === state.factory ? ' selected' : '') + '>' + escapeHtml(f) + '</option>';
+    }).join('');
+
+    body.innerHTML =
+      '<div class="cr-cal">' +
+        '<div class="cr-cal-head">' +
+          '<div class="cr-nav"><button class="cr-nav-btn" onclick="crNav(-1)">&#9664; Prev</button></div>' +
+          '<div class="cr-cal-title">' + escapeHtml(monthName) + '</div>' +
+          '<div class="cr-nav">' +
+            '<button class="cr-nav-btn" onclick="crToday()">Today</button>' +
+            '<button class="cr-nav-btn" onclick="crNav(1)">Next &#9654;</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="cr-weekdays">' +
+          ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (w) { return '<div class="cr-wd">' + w + '</div>'; }).join('') +
+        '</div>' +
+        '<div class="cr-grid">' + cells + '</div>' +
+      '</div>' +
+      '<div class="cr-summary">' +
+        '<div class="cr-factory-pick">' +
+          '<span>Factory</span>' +
+          '<select id="cr-factory" onchange="CR_STATE_FACTORY=this.value">' + factoryOpts + '</select>' +
+        '</div>' +
+        '<div><b id="cr-range-label">' + escapeHtml(rangeLabel()) + '</b>' +
+          ' &middot; <span style="color:var(--tx3)">click one date for a single day, or two dates for a range</span></div>' +
+      '</div>';
+    if (acts) {
+      acts.innerHTML =
+        '<button class="btn-close" onclick="closeCheckReport()">Close</button>' +
+        '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="crSubmit()">&#128197; Check Report</button>';
+    }
+  }
+  // Expose a small bridge for the inline onchange so the factory select can
+  // update the state without a closure-routed setter.
+  window.CR_STATE_FACTORY = '';
+  Object.defineProperty(window, 'CR_STATE_FACTORY', {
+    get: function () { return state.factory; },
+    set: function (v) { state.factory = v; },
+  });
+
+  window.crNav = function (delta) {
+    let m = state.viewMonth + delta;
+    let y = state.viewYear;
+    while (m < 0) { m += 12; y -= 1; }
+    while (m > 11) { m -= 12; y += 1; }
+    state.viewYear = y; state.viewMonth = m;
+    renderCalendar();
+  };
+  window.crToday = function () {
+    const p = state.todayYmd.split('-');
+    state.viewYear = parseInt(p[0], 10);
+    state.viewMonth = parseInt(p[1], 10) - 1;
+    state.fromYmd = state.todayYmd;
+    state.toYmd = state.todayYmd;
+    renderCalendar();
+  };
+  window.crSel = function (ymd) {
+    if (!ymd) return;
+    if (!state.fromYmd) { state.fromYmd = ymd; state.toYmd = ymd; }
+    else if (state.fromYmd === state.toYmd) {
+      if (ymd !== state.fromYmd) {
+        if (ymd > state.fromYmd) state.toYmd = ymd;
+        else { state.toYmd = state.fromYmd; state.fromYmd = ymd; }
+      }
+    } else { state.fromYmd = ymd; state.toYmd = ymd; }
+    renderCalendar();
+  };
+  window.crSubmit = function () {
+    if (!state.fromYmd) { showToast('Pick a date first'); return; }
+    const params = new URLSearchParams();
+    params.set('from', state.fromYmd);
+    params.set('to', state.toYmd);
+    if (state.factory) params.set('factory', state.factory);
+    crFetchJson(BASE + '/api/check-report?' + params.toString()).then(function (j) {
+      if (!j || !j.ok) { showToast((j && j.error) || 'Could not load report'); return; }
+      state.report = j;
+      state.step = 'report';
+      renderReport();
+    }).catch(function () { showToast('Network error while loading report'); });
+  };
+
+  function statCard(label, val, kind) {
+    return '<div class="cr-tot"><div class="cr-tot-lbl">' + escapeHtml(label) +
+      '</div><div class="cr-tot-val ' + kind + '">' + Number(val || 0) + '</div></div>';
+  }
+  function miniStat(label, val, kind) {
+    return ' <span class="cr-status ' + kind + '">' + Number(val || 0) + ' ' + escapeHtml(label) + '</span>';
+  }
+  function abayaRowHtml(a) {
+    const when = a.timestamp ? new Date(a.timestamp).toLocaleString([], {
+      timeZone: tz, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    }) : '';
+    return '<div class="cr-abaya"><span>' + escapeHtml(a.code) +
+      (when ? ' <span style="color:var(--tx3);font-size:10px">&middot; ' + escapeHtml(when) + '</span>' : '') +
+      '</span><span class="cr-status ' + (a.status || '').toLowerCase() + '">' + escapeHtml(a.status || '\u2014') + '</span></div>';
+  }
+  function invoiceSection(inv) {
+    if (inv.synthetic) {
+      const rows = inv.abayas.map(abayaRowHtml).join('');
+      return '<div class="cr-row"><div><span class="cr-inv-name">(no invoice)</span>' +
+        '<span class="cr-tag">unassigned</span></div><div class="cr-mini">' +
+        miniStat('Abayas', inv.totals.abayas, 'abayas') +
+        miniStat('Delivered', inv.totals.delivered, 'delivered') +
+        miniStat('Pending', inv.totals.pending, 'pending') +
+        miniStat('Cancelled', inv.totals.cancelled, 'cancelled') +
+        '</div></div><div style="background:var(--s1);border-top:1px solid var(--bd);padding:6px 12px">' + rows + '</div>';
+    }
+    const rows = inv.abayas.map(abayaRowHtml).join('');
+    return '<div class="cr-row"><div><span class="cr-inv-name">' + escapeHtml(inv.no || '(no invoice)') + '</span>' +
+      '<span class="cr-mini"> &middot; ' + inv.totals.abayas + ' abaya(s)</span></div><div class="cr-mini">' +
+      miniStat('Delivered', inv.totals.delivered, 'delivered') +
+      miniStat('Pending', inv.totals.pending, 'pending') +
+      miniStat('Cancelled', inv.totals.cancelled, 'cancelled') +
+      '</div></div><div style="background:var(--s1);border-top:1px solid var(--bd);padding:6px 12px">' + rows + '</div>';
+  }
+  function factorySection(f) {
+    const head = '<div class="cr-section-h"><span>' + escapeHtml(f.name) +
+      '<span class="cr-mini"> &middot; ' + f.totals.invoices + ' invoice(s) &middot; ' + f.totals.abayas + ' abaya(s)</span></span>' +
+      '<span class="cr-mini">' +
+      miniStat('Delivered', f.totals.delivered, 'delivered') +
+      miniStat('Pending', f.totals.pending, 'pending') +
+      miniStat('Cancelled', f.totals.cancelled, 'cancelled') +
+      '</span></div>';
+    const rows = f.invoices.map(invoiceSection).join('');
+    return '<div class="cr-section">' + head + '<div class="cr-scroll">' + (rows || '<div class="cr-empty">No invoices</div>') + '</div></div>';
+  }
+  function cancelRowHtml(c) {
+    const when = c.cancelledAt ? new Date(c.cancelledAt).toLocaleString([], {
+      timeZone: tz, year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    }) : '';
+    const pieces = [];
+    if (c.invoiceNo) pieces.push('Invoice <b>' + escapeHtml(c.invoiceNo) + '</b>');
+    if (c.abayaCode) pieces.push('Abaya <b>' + escapeHtml(c.abayaCode) + '</b>');
+    if (c.factory)   pieces.push('Factory <b>' + escapeHtml(c.factory) + '</b>');
+    if (c.cancelledBy) pieces.push('By <b>' + escapeHtml(c.cancelledBy) + '</b>');
+    if (c.reason)    pieces.push('<span style="color:var(--tx3)">' + escapeHtml(c.reason) + '</span>');
+    return '<div class="cr-cancel-row"><div style="display:flex;flex-wrap:wrap;gap:8px">' +
+      pieces.join(' &middot; ') + '</div><span class="cr-when">' + escapeHtml(when) + '</span></div>';
+  }
+  function renderReport() {
+    const r = state.report; if (!r) return;
+    const body = document.getElementById('cr-body');
+    const sub  = document.getElementById('cr-sub');
+    const acts = document.getElementById('cr-actions');
+    const title = document.getElementById('cr-title');
+    title.textContent = r.dateRange.sameDay ? 'Production Report' : 'Production Report (range)';
+    sub.innerHTML = '<b>' + escapeHtml(r.dateRange.label) + '</b>' +
+      ' &middot; <span style="color:var(--tx3)">Generated in ' + escapeHtml(r.timezone) + '</span>';
+    const t = r.totals;
+    const totalsHtml = '<div class="cr-totals">' +
+      statCard('Invoices', t.invoices, 'invoices') +
+      statCard('Abayas', t.abayas, 'abayas') +
+      statCard('Delivered', t.delivered, 'delivered') +
+      statCard('Pending', t.pending, 'pending') +
+      statCard('Cancelled', t.cancelled, 'cancelled') +
+      '</div>';
+    const factoriesHtml = r.factories.length
+      ? r.factories.map(factorySection).join('')
+      : '<div class="cr-empty">No factory activity in this range.</div>';
+    const cancelHtml = r.cancellations.length
+      ? '<div class="cr-section"><div class="cr-section-h">Cancellations <span class="cr-mini">traceable to invoice / abaya code</span></div>' +
+        '<div class="cr-cancel-list">' + r.cancellations.map(cancelRowHtml).join('') + '</div></div>'
+      : '';
+    body.innerHTML = totalsHtml + factoriesHtml + cancelHtml;
+    acts.innerHTML =
+      '<button class="btn-close" onclick="crBack()">&#9664; Change Date</button>' +
+      '<button class="btn-close" onclick="openCancelModal()">+ Record Cancellation</button>' +
+      '<button class="btn-export" onclick="crWhatsApp()">&#128241; Send via WhatsApp</button>';
+  }
+  window.crBack = function () { state.step = 'calendar'; renderCalendar(); };
+
+  window.crWhatsApp = function () {
+    const r = state.report; if (!r) return;
+    const t = r.totals;
+    const lines = [];
+    lines.push('*AbaYa Track \u2014 Production Report*');
+    lines.push('_' + r.dateRange.label + '_');
+    lines.push('_Generated in ' + r.timezone + '_');
+    lines.push('');
+    lines.push('*Totals*');
+    lines.push('\u2022 Invoices: *' + t.invoices + '*');
+    lines.push('\u2022 Abayas: *' + t.abayas + '*');
+    lines.push('\u2022 Delivered: *' + t.delivered + '*');
+    lines.push('\u2022 Pending: *' + t.pending + '*');
+    lines.push('\u2022 Cancelled: *' + t.cancelled + '*');
+    lines.push('');
+    for (const f of r.factories) {
+      lines.push('*' + f.name + '*');
+      lines.push('  Invoices: ' + f.totals.invoices + ' \u2022 Abayas: ' + f.totals.abayas);
+      lines.push('  Delivered: ' + f.totals.delivered + ' \u2022 Pending: ' + f.totals.pending + ' \u2022 Cancelled: ' + f.totals.cancelled);
+      for (const inv of f.invoices) {
+        const label = inv.synthetic ? '(no invoice)' : (inv.no || '(no invoice)');
+        lines.push('   \u2022 ' + label + ' \u2014 ' + inv.totals.abayas + ' abaya(s)');
+        for (const a of inv.abayas) {
+          const when = a.timestamp ? new Date(a.timestamp).toLocaleString([], {
+            timeZone: r.timezone, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+          }) : '';
+          lines.push('       - ' + a.code + ' \u2014 ' + a.status + (when ? ' (' + when + ')' : ''));
+        }
+      }
+      lines.push('');
+    }
+    if (r.cancellations.length) {
+      lines.push('*Cancellations*');
+      for (const c of r.cancellations) {
+        const when = c.cancelledAt ? new Date(c.cancelledAt).toLocaleString([], {
+          timeZone: r.timezone, month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+        }) : '';
+        const parts = [];
+        if (c.invoiceNo) parts.push('Invoice ' + c.invoiceNo);
+        if (c.abayaCode) parts.push('Abaya ' + c.abayaCode);
+        if (c.factory)   parts.push('Factory ' + c.factory);
+        if (c.cancelledBy) parts.push('by ' + c.cancelledBy);
+        if (c.reason)    parts.push('\u2014 ' + c.reason);
+        lines.push('\u2022 ' + parts.join(' \u2022 ') + (when ? ' [' + when + ']' : ''));
+      }
+      lines.push('');
+    }
+    lines.push('_Sent from AbaYa Track CEO Dashboard_');
+    const text = lines.join('\n');
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    showToast('WhatsApp opened with the report');
+  };
+
+  function openCancelModal() {
+    const m = document.getElementById('modal-cancel');
+    if (!m) return;
+    const fac = document.getElementById('cn-factory');
+    if (fac) fac.value = state.factory || (state.config && state.config.defaultFactory) || '';
+    const msg = document.getElementById('cn-msg');
+    if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+    m.classList.add('open');
+    setTimeout(function () {
+      const inv = document.getElementById('cn-invoice');
+      if (inv) inv.focus();
+    }, 50);
+  }
+  window.openCancelModal = openCancelModal;
+  function closeCancelModal() {
+    const m = document.getElementById('modal-cancel');
+    if (m) m.classList.remove('open');
+  }
+  window.closeCancelModal = closeCancelModal;
+  window.submitCancellation = function () {
+    const factory = String(document.getElementById('cn-factory').value || '').trim();
+    const invoiceNo = String(document.getElementById('cn-invoice').value || '').trim();
+    const abayaCode = String(document.getElementById('cn-abaya').value || '').trim();
+    const reason = String(document.getElementById('cn-reason').value || '').trim();
+    const cancelledBy = String(document.getElementById('cn-by').value || '').trim();
+    const msg = document.getElementById('cn-msg');
+    function showMsg(kind, text) {
+      if (!msg) return;
+      msg.className = 'cr-msg ' + kind;
+      msg.textContent = text;
+      msg.style.display = 'block';
+    }
+    if (!invoiceNo && !abayaCode) {
+      showMsg('warn', 'Provide at least one of Invoice No or Abaya Code so the cancellation is traceable.');
+      return;
+    }
+    fetch(BASE + '/api/cancellations', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        factory: factory || undefined,
+        invoiceNo: invoiceNo || undefined,
+        abayaCode: abayaCode || undefined,
+        reason: reason || undefined,
+        cancelledBy: cancelledBy || undefined,
+      }),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok || !x.j || !x.j.ok) {
+          showMsg('error', (x.j && x.j.error) || 'Could not save the cancellation');
+          return;
+        }
+        showMsg('ok', 'Saved. Reloading the report\u2026');
+        window.crSubmit();
+        setTimeout(closeCancelModal, 800);
+      }).catch(function () { showMsg('error', 'Network error while saving'); });
+  };
+})();
 </script>
+
+<!-- Check Report modal: calendar + production report + record cancellation -->
+<div class="modal-overlay" id="modal-check" role="dialog" aria-modal="true" aria-labelledby="cr-title">
+  <div class="modal-box" style="max-width:780px">
+    <div class="modal-title" id="cr-title">Check Production Report</div>
+    <div class="modal-sub" id="cr-sub">Pick a single date or a range in the production timezone.</div>
+    <div id="cr-body" class="cr-wrap"></div>
+    <div class="modal-actions" id="cr-actions">
+      <button class="btn-close" onclick="closeCheckReport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-cancel" role="dialog" aria-modal="true" aria-labelledby="cn-title">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-title" id="cn-title">Record Cancellation</div>
+    <div class="modal-sub">Cancellation is a first-class operational state \u2014 a real record is required.</div>
+    <form class="cr-form" onsubmit="event.preventDefault(); submitCancellation();">
+      <label>Factory
+        <input id="cn-factory" placeholder="Main Factory" autocomplete="off">
+      </label>
+      <div class="cr-form-hint">At least one of <b>Invoice</b> or <b>Abaya Code</b> is required so the cancellation stays traceable.</div>
+      <label>Invoice No
+        <input id="cn-invoice" placeholder="e.g. INV-2026-00128" autocomplete="off">
+      </label>
+      <label>Abaya Code
+        <input id="cn-abaya" placeholder="e.g. ABY-00483" autocomplete="off">
+      </label>
+      <label>Reason
+        <input id="cn-reason" placeholder="material defect, customer change, ..." autocomplete="off">
+      </label>
+      <label>Cancelled by
+        <input id="cn-by" placeholder="e.g. Misbah" autocomplete="off">
+      </label>
+      <div id="cn-msg" class="cr-msg" style="display:none"></div>
+      <div class="modal-actions" style="margin-top:4px">
+        <button type="button" class="btn-close" onclick="closeCancelModal()">Cancel</button>
+        <button type="submit" class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)">Save Cancellation</button>
+      </div>
+    </form>
+  </div>
+</div>
 </body>
 </html>`;
 }

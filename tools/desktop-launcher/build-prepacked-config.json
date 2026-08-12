@@ -1,0 +1,32 @@
+﻿{
+  "appId": "com.abaya.track.launcher",
+  "productName": "AbaYa Track Launcher",
+  "directories": {
+    "output": "./build-prepacked-1.2.7"
+  },
+  "files": [
+    "index.html",
+    "main.js",
+    "update-policy.cjs",
+    "preload.js",
+    "renderer.js",
+    "start-electron.cjs",
+    "package.json",
+    "update-policy.cjs",
+    "README.md"
+  ],
+  "win": {
+    "target": [
+      { "target": "nsis", "arch": ["x64"] }
+    ],
+    "artifactName": "AbaYa-Track-Launcher-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "AbaYa Track Launcher"
+  }
+}

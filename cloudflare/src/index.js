@@ -19,6 +19,7 @@ import { mintCeoSessionPair, verifyRefreshToken } from './auth/ceo-jwt.js';
 import { getWorkingHoursConfig, saveWorkingHoursConfig } from './working-hours.js';
 import { handleIngest } from './handlers/ingest.js';
 import { handleState } from './handlers/state.js';
+import { handleHistory } from './handlers/history.js';
 import { handleReport } from './handlers/report.js';
 import { handleEmployeeDay } from './handlers/employee-day.js';
 import { handleAnalytics } from './handlers/analytics.js';
@@ -232,7 +233,10 @@ export default {
         // Roster endpoints authenticate with X-Ingest-Secret (factory server),
         // not the CEO cookie — same exemption the catalog already has.
         path !== '/api/employees' &&
-        path !== '/api/work-types');
+        path !== '/api/work-types' &&
+        // History hydration: factory server pulls last N days of sessions at
+        // boot. Uses X-Ingest-Secret like the other factory-callable routes.
+        path !== '/api/state/history');
 
     if (isCEORoute) {
       const token = extractCeoToken(request, url);
@@ -271,6 +275,9 @@ export default {
 
       if (path === '/api/state' && request.method === 'GET') {
         return handleState(env);
+      }
+      if (path === '/api/state/history' && request.method === 'GET') {
+        return await handleHistory(env, url);
       }
 
       if (path === '/api/report' && request.method === 'GET') {

@@ -1,0 +1,2866 @@
+'use strict';
+
+// Custom-range state for the Executive CEO Reports panel. Set by the
+// date pickers in dashboard.html, read by reportPeriodForType('Custom').
+let customReportRange = { fromYmd: '', toYmd: '' };
+
+const socket = io({
+  transports: ['websocket', 'polling'],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 30000,
+  randomizationFactor: 0.5,
+  timeout: 20000,
+});
+
+let STATE = { active: {}, logs: [], perf: [] };
+let fallbackPollTimer = null;
+let fallbackConsecutiveErrors = 0;
+let fallbackMode = false;
+
+// Employee lookup by id. Report/log rendering did EMPLOYEES.find() per row (O(n×m)
+// scans that got slow with a big roster + many rows). This memoizes an id→emp Map
+// and rebuilds it only when the EMPLOYEES array reference actually changes.
+let _empByIdCache = null;
+let _empByIdSrc = null;
+function empById(id) {
+  var src = typeof EMPLOYEES !== 'undefined' ? EMPLOYEES : [];
+  if (_empByIdSrc !== src) {
+    _empByIdSrc = src;
+    _empByIdCache = new Map((src || []).map(function (e) { return [e.id, e]; }));
+  }
+  return _empByIdCache.get(id);
+}
+
+/**
+ * Cached shift-window config (synced from server via /api/client-config).
+ * UI elapsed timers, hourly chart, and per-item totals all clamp to these windows so the
+ * dashboard never displays time the local server didn't actually count.
+ */
+const DEFAULT_CLIENT_WORKING_HOURS = {
+  profile: 'normal',
+  timezone: 'Asia/Dubai',
+  days: {
+    sat: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    sun: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    mon: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    tue: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    wed: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    thu: [['09:00', '13:30'], ['15:00', '20:00'], ['20:40', '23:30']],
+    fri: [['15:00', '20:00'], ['20:40', '23:30']],
+  },
+};
+let CLIENT_WORKING_HOURS = DEFAULT_CLIENT_WORKING_HOURS;
+const WH_WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+function whTimezone() {
+  return (CLIENT_WORKING_HOURS && CLIENT_WORKING_HOURS.timezone) || 'Asia/Dubai';
+}
+
+function ymdInTimezone(epochMs, timezone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(epochMs));
+  const y = (parts.find((p) => p.type === 'year') || {}).value || '0000';
+  const m = (parts.find((p) => p.type === 'month') || {}).value || '00';
+  const d = (parts.find((p) => p.type === 'day') || {}).value || '00';
+  return y + '-' + m + '-' + d;
+}
+
+function formatDateTimeTz(epochMs, opts) {
+  const o = opts || {};
+  return new Date(epochMs).toLocaleString([], {
+    timeZone: o.timeZone || whTimezone(),
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    weekday: o.weekday ? 'short' : undefined,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: o.seconds ? '2-digit' : undefined,
+    hour12: false,
+  });
+}
+
+function whParseHHMM(text) {
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(text || '').trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function whWeekdayKey(epochSec) {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: whTimezone(), weekday: 'short' })
+    .format(new Date(epochSec * 1000))
+    .toLowerCase()
+    .slice(0, 3);
+  return WH_WEEKDAY_KEYS.includes(wd) ? wd : 'sun';
+}
+
+function whMinuteOfDay(epochSec) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: whTimezone(),
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(epochSec * 1000));
+  const hh = Number((parts.find((p) => p.type === 'hour') || {}).value || 0);
+  const mm = Number((parts.find((p) => p.type === 'minute') || {}).value || 0);
+  return hh * 60 + mm;
+}
+
+function whWindowsForDay(weekdayKey) {
+  const cfg = CLIENT_WORKING_HOURS;
+  const arr = cfg && cfg.days && Array.isArray(cfg.days[weekdayKey]) ? cfg.days[weekdayKey] : [];
+  const out = [];
+  for (let i = 0; i < arr.length; i++) {
+    const w = arr[i] || [];
+    const s = whParseHHMM(w[0]);
+    const e = whParseHHMM(w[1]);
+    if (s == null || e == null || e <= s) continue;
+    out.push([s, e]);
+  }
+  out.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+function inWindowClient(epochSec) {
+  const k = whWeekdayKey(epochSec);
+  const minute = whMinuteOfDay(epochSec);
+  const windows = whWindowsForDay(k);
+  for (let i = 0; i < windows.length; i++) {
+    if (minute >= windows[i][0] && minute < windows[i][1]) return true;
+  }
+  return false;
+}
+
+/** Elapsed seconds since `startMs`, counting only seconds inside configured shift windows. */
+function activeSecondsWindowedFromMs(startMs) {
+  const st = Math.floor(Number(startMs || 0) / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(st) || now <= st) return 0;
+  let sec = 0;
+  for (let t = st; t < now; t += 60) {
+    const t2 = Math.min(now, t + 60);
+    if (inWindowClient(t)) sec += t2 - t;
+  }
+  return sec;
+}
+
+let renderAllRaf = null;
+let dashFloorCompletionTab = 'invoice';
+try {
+  var _sft = sessionStorage.getItem('dash-floor-tab');
+  if (_sft === 'checker' || _sft === 'invoice') dashFloorCompletionTab = _sft;
+} catch (e) {}
+function scheduleRenderAll() {
+  if (renderAllRaf != null) return;
+  renderAllRaf = requestAnimationFrame(function () {
+    renderAllRaf = null;
+    renderAll();
+  });
+}
+
+function setDashboardFloorTab(which) {
+  if (which !== 'invoice' && which !== 'checker') return;
+  dashFloorCompletionTab = which;
+  try {
+    sessionStorage.setItem('dash-floor-tab', which);
+  } catch (e) {}
+  syncDashboardFloorTabUi();
+}
+
+function syncDashboardFloorTabUi() {
+  const invBtn = document.getElementById('dash-tab-invoice');
+  const chkBtn = document.getElementById('dash-tab-checker');
+  const invPanel = document.getElementById('floor-tab-invoice');
+  const chkPanel = document.getElementById('floor-tab-checker');
+  if (!invBtn || !chkBtn || !invPanel || !chkPanel) return;
+  const showInv = dashFloorCompletionTab === 'invoice';
+  invBtn.classList.toggle('active', showInv);
+  chkBtn.classList.toggle('active', !showInv);
+  invBtn.setAttribute('aria-selected', showInv ? 'true' : 'false');
+  chkBtn.setAttribute('aria-selected', showInv ? 'false' : 'true');
+  invPanel.style.display = showInv ? '' : 'none';
+  chkPanel.style.display = showInv ? 'none' : '';
+  if (showInv) {
+    invPanel.removeAttribute('hidden');
+    chkPanel.setAttribute('hidden', '');
+  } else {
+    chkPanel.removeAttribute('hidden');
+    invPanel.setAttribute('hidden', '');
+  }
+}
+
+function checkerBarcodeCellHtml(l) {
+  const entered = l.checker_barcode != null && String(l.checker_barcode).trim() !== '';
+  const raw = entered ? String(l.checker_barcode).trim().replace(/,/g, ', ') : '';
+  const fallbackAb = ABAYAS.find((a) => a.id === l.abaya_id);
+  const fb = fallbackAb && fallbackAb.barcode ? String(fallbackAb.barcode) : '';
+  const display = entered ? raw : fb;
+  if (!display) return '<span style="color:var(--tx3)">\u2014</span>';
+  const esc = escapeHtml(display);
+  const title = escapeAttr(display.length > 180 ? display.slice(0, 180) + '\u2026' : display);
+  return '<span style="font-family:monospace;font-size:10px;line-height:1.35;word-break:break-word;color:var(--tx2)" title="' + title + '">' + esc + '</span>';
+}
+
+function updateOfflineRestoreBanner(state, cfg) {
+  const el = document.getElementById('offline-restore-banner');
+  if (!el) return;
+  const fromState = state && state.state_meta && state.state_meta.restored_from_offline_cache;
+  const fromCfg = cfg && cfg.offlineReportRestored === true;
+  el.style.display = fromState || fromCfg ? 'block' : 'none';
+}
+
+function setDbPanelClass(panel, badge, level, label) {
+  if (!panel || !badge) return;
+  panel.classList.remove('warn', 'bad');
+  badge.classList.remove('ok', 'warn', 'bad');
+  if (level === 'bad') {
+    panel.classList.add('bad');
+    badge.classList.add('bad');
+  } else if (level === 'warn') {
+    panel.classList.add('warn');
+    badge.classList.add('warn');
+  } else {
+    badge.classList.add('ok');
+  }
+  badge.textContent = label || level || 'ok';
+}
+
+function shortAge(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '-';
+  const ageMs = Math.max(0, Date.now() - n);
+  const sec = Math.floor(ageMs / 1000);
+  if (sec < 90) return sec + 's ago';
+  const min = Math.floor(sec / 60);
+  if (min < 90) return min + 'm ago';
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return hr + 'h ago';
+  return Math.floor(hr / 24) + 'd ago';
+}
+
+function updateDatabaseStatusPanel(cfg) {
+  const panel = document.getElementById('database-status-panel');
+  if (!panel) return;
+  const badge = document.getElementById('db-status-badge');
+  const sourceEl = document.getElementById('db-ui-source');
+  const cloudEl = document.getElementById('db-cloud-sync');
+  const reconcileEl = document.getElementById('db-reconcile');
+  const snapshotEl = document.getElementById('db-snapshot');
+  const db = cfg && cfg.database ? cfg.database : null;
+  const stateMeta = STATE && STATE.state_meta ? STATE.state_meta : {};
+
+  if (!db && !stateMeta) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  const syncMode = String((db && db.syncMode) || stateMeta.syncMode || 'unknown');
+  const pendingQueue = Number((db && db.pendingQueue) || stateMeta.pendingQueue || 0);
+  const reconcile = db && db.reconcile ? db.reconcile : null;
+  const reconcileLast = reconcile && reconcile.status ? reconcile.status.lastResult : null;
+  const snapshot = db && db.sqliteSnapshot ? db.sqliteSnapshot : null;
+  const rejected = db && db.rejectedQueue ? Number(db.rejectedQueue.lines) || 0 : 0;
+
+  const stateSource = String(stateMeta.source || (db && db.source) || 'local-memory');
+  const logsText = String((stateMeta.logs_returned != null ? stateMeta.logs_returned : (STATE.logs || []).length)) +
+    '/' + String(stateMeta.logs_total_in_memory != null ? stateMeta.logs_total_in_memory : (STATE.logs || []).length);
+  if (sourceEl) sourceEl.textContent = stateSource + ' · logs ' + logsText;
+
+  if (cloudEl) {
+    const cloudTag = db && db.cloudConfigured ? syncMode : 'local only';
+    cloudEl.textContent = cloudTag + ' · queue ' + pendingQueue + (rejected ? ' · rejected ' + rejected : '');
+  }
+
+  if (reconcileEl) {
+    if (!reconcile || !reconcile.enabled) {
+      reconcileEl.textContent = 'disabled';
+    } else if (!reconcileLast) {
+      reconcileEl.textContent = 'pending first run';
+    } else if (!reconcileLast.ok) {
+      reconcileEl.textContent = 'error · ' + String(reconcileLast.error || 'failed').slice(0, 48);
+    } else {
+      const replayed = Number(reconcileLast.replayed_finishes || 0) + Number(reconcileLast.replayed_starts || 0);
+      reconcileEl.textContent = 'ok · push ' + replayed + ' · conflicts ' + Number(reconcileLast.conflicts_resolved_local || 0);
+    }
+  }
+
+  if (snapshotEl) {
+    if (!snapshot || !snapshot.enabled) {
+      snapshotEl.textContent = 'disabled';
+    } else if (snapshot.lastErr) {
+      snapshotEl.textContent = 'error · ' + String(snapshot.lastErr.message || 'failed').slice(0, 48);
+    } else if (snapshot.lastOk && snapshot.lastOk.at) {
+      snapshotEl.textContent = 'ok · ' + shortAge(snapshot.lastOk.at);
+    } else {
+      snapshotEl.textContent = 'pending first write';
+    }
+  }
+
+  let level = 'ok';
+  let label = 'database ok';
+  if (syncMode === 'local-cache-fallback' || (snapshot && snapshot.lastErr) || (reconcileLast && !reconcileLast.ok)) {
+    level = 'bad';
+    label = 'needs attention';
+  } else if (pendingQueue > 0 || rejected > 0 || (stateMeta.logs_truncated === true) || (reconcileLast && reconcileLast.hard_failures > 0)) {
+    level = 'warn';
+    label = 'sync pending';
+  }
+  setDbPanelClass(panel, badge, level, label);
+}
+
+function applyFallbackState(state) {
+  if (!state || typeof state !== 'object') return;
+  if (state.workTypes && Array.isArray(state.workTypes) && state.workTypes.length) {
+    WORK_TYPES = state.workTypes.slice();
+    if (state.workTypesVersion != null) lastWorkTypesVersionSeen = String(state.workTypesVersion);
+  }
+  STATE = state;
+  updateOfflineRestoreBanner(state, null);
+  updateDatabaseStatusPanel(null);
+  scheduleRenderAll();
+}
+
+function fetchStateFallback() {
+  fetchJsonSafe('/api/state', { cache: 'no-store' })
+    .then((d) => {
+      if (!d || !d.okHttp || !d.j || !d.j.ok || !d.j.state) return;
+      fallbackConsecutiveErrors = 0;
+      applyFallbackState(d.j.state);
+    })
+    .catch(() => {
+      fallbackConsecutiveErrors += 1;
+      if (fallbackConsecutiveErrors % 3 === 0) {
+        showToast('Still trying to restore live connection...', 'info');
+      }
+    });
+}
+
+function startFallbackPolling() {
+  if (fallbackPollTimer) return;
+  fallbackMode = true;
+  fetchStateFallback();
+  fallbackPollTimer = setInterval(fetchStateFallback, 3000);
+}
+
+function stopFallbackPolling() {
+  fallbackMode = false;
+  fallbackConsecutiveErrors = 0;
+  if (fallbackPollTimer) {
+    clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+}
+
+// ─── CONNECTION ───────────────────────────────────────────────────────────────
+socket.on('connect', () => {
+  document.getElementById('conn-dot').classList.add('online');
+  document.getElementById('conn-label').textContent = 'Live';
+  if (fallbackMode) {
+    showToast('Live connection restored', 'success');
+  } else {
+    showToast('Dashboard connected', 'success');
+  }
+  stopFallbackPolling();
+});
+socket.on('disconnect', () => {
+  document.getElementById('conn-dot').classList.remove('online');
+  document.getElementById('conn-label').textContent = 'Fallback';
+  showToast('Live socket lost — switching to fallback sync...', 'error');
+  startFallbackPolling();
+});
+
+socket.on('connect_error', () => {
+  document.getElementById('conn-dot').classList.remove('online');
+  document.getElementById('conn-label').textContent = 'Fallback';
+  startFallbackPolling();
+});
+
+socket.io.on('reconnect_attempt', () => {
+  if (!fallbackPollTimer) startFallbackPolling();
+});
+
+AbayaClientCommon.installReconnectNudge(socket);
+
+socket.on('catalog_update', () => {
+  refreshDashboardAbayaCatalog();
+});
+
+socket.on('employees_update', () => {
+  loadEmployeesFromServer();
+});
+
+socket.on('work_types_update', (payload) => {
+  if (payload && Array.isArray(payload.workTypes) && payload.workTypes.length) {
+    WORK_TYPES = payload.workTypes.slice();
+    if (payload.version != null) lastWorkTypesVersionSeen = String(payload.version);
+    if (typeof renderAll === 'function') renderAll();
+  }
+});
+
+socket.on('sync_versions', () => {
+  pollClientConfig();
+});
+
+function loadEmployeesFromServer() {
+  AbayaClientCommon.fetchJsonNoStore('/api/employees')
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.employees)) return;
+      EMPLOYEES = d.employees;
+      renderAll();
+    })
+    .catch(() => {});
+}
+
+let lastCatalogVersionSeen = null;
+let lastEmployeesVersionSeen = null;
+let lastWorkTypesVersionSeen = null;
+
+function fetchJsonSafe(url, options) {
+  return fetch(url, options || {}).then((r) =>
+    r.json().then(
+      (j) => ({ okHttp: r.ok, status: r.status, j: j }),
+      () => ({ okHttp: r.ok, status: r.status, j: null })
+    )
+  );
+}
+
+function loadWorkTypesFromServer() {
+  AbayaClientCommon.fetchJsonNoStore('/api/work-types')
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.workTypes) || !d.workTypes.length) return;
+      WORK_TYPES = d.workTypes.slice();
+      if (d.version != null) lastWorkTypesVersionSeen = String(d.version);
+      if (typeof renderAll === 'function') renderAll();
+    })
+    .catch(() => {});
+}
+
+function openCatalogImportPicker() {
+  const el = document.getElementById('catalog-import-input');
+  if (!el) return;
+  el.value = '';
+  el.click();
+}
+
+function handleCatalogImportSelected(ev) {
+  const input = ev && ev.target ? ev.target : document.getElementById('catalog-import-input');
+  const file = input && input.files && input.files[0] ? input.files[0] : null;
+  if (!file) return;
+  const secret = window.prompt('Catalog ingest secret (X-Ingest-Secret):', '');
+  if (secret == null || String(secret).trim() === '') {
+    showToast('Import cancelled: missing secret', 'error');
+    return;
+  }
+  const fd = new FormData();
+  fd.append('file', file, file.name || 'items_export.xlsx');
+  fetch('/api/import/catalog-xlsx', {
+    method: 'POST',
+    headers: { 'X-Ingest-Secret': String(secret).trim() },
+    body: fd,
+  })
+    .then((r) => r.json().then((j) => ({ okHttp: r.ok, status: r.status, j: j })))
+    .then((x) => {
+      if (!x.okHttp || !x.j || !x.j.ok) {
+        const msg = x && x.j && x.j.error ? x.j.error : 'Import failed';
+        throw new Error(msg);
+      }
+      refreshDashboardAbayaCatalog();
+      showToast('Import complete: ' + String(x.j.count || 0) + ' catalog row(s)', 'success');
+    })
+    .catch((e) => {
+      showToast('Import failed: ' + String(e && e.message ? e.message : e), 'error');
+    });
+}
+
+function openFloorSessionsImportPicker() {
+  const el = document.getElementById('floor-sessions-import-input');
+  if (!el) return;
+  el.value = '';
+  el.click();
+}
+
+function handleFloorSessionsImportSelected(ev) {
+  const input = ev && ev.target ? ev.target : document.getElementById('floor-sessions-import-input');
+  const file = input && input.files && input.files[0] ? input.files[0] : null;
+  if (!file) return;
+  const secret = window.prompt('Usage import secret (X-Export-Secret):', '');
+  if (secret == null || String(secret).trim() === '') {
+    showToast('Import cancelled: missing secret', 'error');
+    return;
+  }
+  file.text()
+    .then((text) => {
+      let payload = null;
+      try {
+        payload = JSON.parse(text);
+      } catch (_) {
+        throw new Error('Invalid JSON file');
+      }
+      if (!payload || !Array.isArray(payload.sessions)) {
+        throw new Error('Invalid floor export file: missing sessions[]');
+      }
+      return fetch('/api/import/floor-sessions.json', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Export-Secret': String(secret).trim(),
+        },
+        body: JSON.stringify(payload),
+      });
+    })
+    .then((r) => r.json().then((j) => ({ okHttp: r.ok, status: r.status, j: j })))
+    .then((x) => {
+      if (!x.okHttp || !x.j || !x.j.ok) {
+        const msg = x && x.j && x.j.error ? x.j.error : 'Import failed';
+        throw new Error(msg);
+      }
+      renderAll();
+      showToast('Import complete: ' + String(x.j.imported || 0) + ' session row(s)', 'success');
+    })
+    .catch((e) => {
+      showToast('Import failed: ' + String(e && e.message ? e.message : e), 'error');
+    });
+}
+
+function applyClientConfig(cfg) {
+  if (!cfg || !cfg.ok) return;
+  if (cfg.working_hours && cfg.working_hours.days && typeof cfg.working_hours.days === 'object') {
+    CLIENT_WORKING_HOURS = cfg.working_hours;
+  }
+  const persistBanner = document.getElementById('persistence-health-banner');
+  const persistence = cfg.persistence || {};
+  if (persistBanner) {
+    const bad = persistence.offlineReportDirWritable === false || persistence.ceoQueueDirWritable === false;
+    persistBanner.style.display = bad ? 'block' : 'none';
+  }
+  const banner = document.getElementById('ceo-queue-banner');
+  const pendEl = document.getElementById('ceo-queue-pending');
+  if (banner && pendEl && cfg.ceoIngestCloud) {
+    const p = Number(cfg.ceoIngestPending) || 0;
+    if (p > 0) {
+      pendEl.textContent = String(p);
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+    }
+  } else if (banner) {
+    banner.style.display = 'none';
+  }
+
+  updateOfflineRestoreBanner(STATE, cfg);
+  updateDatabaseStatusPanel(cfg);
+
+  const sk = 'abaya_srv_boot';
+  const prevBoot = sessionStorage.getItem(sk);
+  const boot = String(cfg.serverStartedAt);
+  if (prevBoot && prevBoot !== boot) {
+    sessionStorage.setItem(sk, boot);
+    window.location.reload();
+    return;
+  }
+  sessionStorage.setItem(sk, boot);
+
+  const cv = String(cfg.catalogVersion);
+  if (lastCatalogVersionSeen !== null && cv !== lastCatalogVersionSeen) {
+    refreshDashboardAbayaCatalog();
+  }
+  lastCatalogVersionSeen = cv;
+
+  const ev = String(cfg.employeesVersion);
+  if (lastEmployeesVersionSeen !== null && ev !== lastEmployeesVersionSeen) {
+    loadEmployeesFromServer();
+  }
+  lastEmployeesVersionSeen = ev;
+
+  const wv = String(cfg.workTypesVersion != null ? cfg.workTypesVersion : '0');
+  if (cfg.workTypes && Array.isArray(cfg.workTypes) && cfg.workTypes.length) {
+    if (lastWorkTypesVersionSeen === null || wv !== lastWorkTypesVersionSeen) {
+      WORK_TYPES = cfg.workTypes.slice();
+      if (typeof renderAll === 'function') renderAll();
+    }
+  }
+  lastWorkTypesVersionSeen = wv;
+}
+
+function pollClientConfig() {
+  AbayaClientCommon.fetchJsonNoStore('/api/client-config')
+    .then(applyClientConfig)
+    .catch(() => {});
+}
+
+function normalizeDashboardAbayaRow(a) {
+  return {
+    id: String(a.id),
+    code: String(a.code),
+    barcode: String(a.barcode),
+    design: String(a.design != null ? a.design : ''),
+    process: String(a.process != null ? a.process : ''),
+    tier: a.tier != null ? String(a.tier) : '',
+    icon: a.icon != null ? String(a.icon) : '',
+    status: a.status || 'waiting',
+  };
+}
+
+/** Integer seconds from a completed log row (avoids float drift). */
+function logDurationSec(l) {
+  const n = Number(l && l.duration_sec);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * Per abaya_id: sum of completed segment seconds, in-progress seconds on the floor,
+ * and total = completed + active.
+ */
+function aggregateGarmentSeconds(logs, active, nowMs) {
+  const now = typeof nowMs === 'number' ? nowMs : Date.now();
+  const by = Object.create(null);
+  (logs || []).forEach(function (l) {
+    if (!l || l.abaya_id == null || l.abaya_id === '') return;
+    const k = String(l.abaya_id);
+    if (!by[k]) by[k] = { abaya_id: k, completedSec: 0, segments: 0 };
+    by[k].completedSec += logDurationSec(l);
+    by[k].segments += 1;
+  });
+  Object.keys(active || {}).forEach(function (empId) {
+    const sess = active[empId];
+    if (!sess || sess.abaya_id == null || sess.abaya_id === '') return;
+    const k = String(sess.abaya_id);
+    if (!by[k]) by[k] = { abaya_id: k, completedSec: 0, segments: 0 };
+    const started = Number(sess.started_at);
+    if (!Number.isFinite(started)) return;
+    const el = Math.max(0, activeSecondsWindowedFromMs(started));
+    by[k].activeSec = (by[k].activeSec || 0) + el;
+  });
+  Object.keys(by).forEach(function (k) {
+    const o = by[k];
+    o.activeSec = o.activeSec || 0;
+    o.totalSec = o.completedSec + o.activeSec;
+  });
+  return by;
+}
+
+function totalSecForGarment(aggMap, abaya_id) {
+  if (abaya_id == null || abaya_id === '') return 0;
+  const o = aggMap[String(abaya_id)];
+  return o && o.totalSec != null ? o.totalSec : 0;
+}
+
+function abayaCatalogRowForId(abaya_id) {
+  if (abaya_id == null || abaya_id === '') return null;
+  const id = String(abaya_id);
+  return ABAYAS.find(function (a) {
+    return a.id === id;
+  }) || null;
+}
+
+function dashTierBadge(tier) {
+  if (!tier) return '';
+  var slug = tier.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  var colors = {
+    'standard':    'background:#1e3a5f;color:#93c5fd',
+    'premium':     'background:#3b1f6b;color:#c4b5fd',
+    'luxury':      'background:#4a1a00;color:#fcd34d',
+    'plain-abaya': 'background:#1f2937;color:#9ca3af',
+  };
+  var style = colors[slug] || 'background:var(--s2);color:var(--tx2)';
+  return '<span style="display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:20px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;' + style + '">' + tier + '</span>';
+}
+
+function refreshDashboardAbayaCatalog() {
+  AbayaClientCommon.fetchJsonNoStore('/api/catalog/abayas')
+    .then((d) => {
+      if (!d.ok || !Array.isArray(d.abayas)) return;
+      ABAYAS = d.abayas.map(normalizeDashboardAbayaRow);
+      renderAll();
+    })
+    .catch(() => {});
+}
+
+// ─── REAL-TIME STATE ──────────────────────────────────────────────────────────
+socket.on('state_update', (data) => {
+  applyFallbackState(data);
+});
+
+function renderAll() {
+  renderKPIs();
+  renderLiveSessions();
+  renderAbayaItemTotals();
+  renderEmployeePerf();
+  renderHourlyChart();
+  renderPareto();
+  renderProcessEff();
+  renderRecentInvoiceLogsNode();
+  renderRecentCheckerLogsNode();
+  syncDashboardFloorTabUi();
+  updateClock();
+}
+
+// ─── KPIs ─────────────────────────────────────────────────────────────────────
+function renderKPIs() {
+  const logs = STATE.logs || [];
+  const active = STATE.active || {};
+  const actCount = Object.keys(active).length;
+  const tz = whTimezone();
+  const todayYmd = ymdInTimezone(Date.now(), tz);
+  const todayLogs = logs.filter(function (l) {
+    const end = Number(l && l.end);
+    return Number.isFinite(end) && ymdInTimezone(end, tz) === todayYmd;
+  });
+  const totalUnits = todayLogs.length;
+
+  document.getElementById('kpi-completed').textContent = totalUnits;
+  document.getElementById('kpi-active').textContent = actCount;
+  document.getElementById('kpi-inprog').textContent = actCount;
+
+  if (totalUnits > 0) {
+    const totalSec = todayLogs.reduce(function (s, l) {
+      return s + logDurationSec(l);
+    }, 0);
+    const avg = Math.round(totalSec / totalUnits);
+    document.getElementById('kpi-avg').textContent = fmtHMS(avg);
+  } else {
+    document.getElementById('kpi-avg').textContent = '—';
+  }
+}
+
+// ─── TOTAL TIME BY ITEM CODE (DASHBOARD TABLE) ───────────────────────────────
+function renderAbayaItemTotals() {
+  const el = document.getElementById('abaya-totals-table');
+  if (!el) return;
+  const logs = STATE.logs || [];
+  const active = STATE.active || {};
+  const agg = aggregateGarmentSeconds(logs, active, Date.now());
+  const keys = Object.keys(agg);
+  if (!keys.length) {
+    el.innerHTML =
+      '<div style="color:var(--tx3);font-size:13px;padding:16px;text-align:center">No garment sessions yet</div>';
+    return;
+  }
+  const rows = keys
+    .map(function (k) {
+      const o = agg[k];
+      const ab = abayaCatalogRowForId(o.abaya_id);
+      const code = ab ? ab.code : o.abaya_id;
+      const barcode = ab && ab.barcode ? ab.barcode : '';
+      return {
+        code: code,
+        barcode: barcode,
+        segments: o.segments,
+        completedSec: o.completedSec,
+        activeSec: o.activeSec,
+        totalSec: o.totalSec,
+        tier: ab && ab.tier ? ab.tier : '',
+      };
+    })
+    .sort(function (a, b) {
+      if (b.totalSec !== a.totalSec) return b.totalSec - a.totalSec;
+      return String(a.code).localeCompare(String(b.code));
+    });
+  const head =
+    '<div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,0.9fr) 52px 72px 72px 80px;gap:8px;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--tx3);align-items:center">' +
+    '<span>Item code</span><span>Item no.</span><span style="text-align:right">Steps</span>' +
+    '<span style="text-align:right">Done</span><span style="text-align:right">Active</span><span style="text-align:right">Total</span></div>';
+  const body = rows
+    .map(function (r) {
+      const tierHtml = r.tier ? ' ' + dashTierBadge(r.tier) : '';
+      return (
+        '<div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,0.9fr) 52px 72px 72px 80px;gap:8px;padding:9px 10px;border-bottom:1px solid rgba(54,45,89,.25);font-size:12px;align-items:center">' +
+        '<span style="font-weight:600;color:var(--tx2)">' +
+        escapeHtml(String(r.code)) +
+        tierHtml +
+        '</span>' +
+        '<span style="font-family:var(--fn-mono);font-size:11px;color:var(--am)">' +
+        (r.barcode ? escapeHtml(r.barcode) : '<span style="color:var(--tx3)">—</span>') +
+        '</span>' +
+        '<span style="text-align:right;color:var(--tx3)">' +
+        r.segments +
+        '</span>' +
+        '<span style="text-align:right;color:var(--tx2)">' +
+        fmtHMS(r.completedSec) +
+        '</span>' +
+        '<span style="text-align:right;color:var(--tx3)">' +
+        (r.activeSec > 0 ? fmtHMS(r.activeSec) : '—') +
+        '</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700">' +
+        fmtHMS(r.totalSec) +
+        '</span></div>'
+      );
+    })
+    .join('');
+  el.innerHTML =
+    '<div style="max-height:320px;overflow-y:auto;border:1px solid var(--bd);border-radius:12px;background:var(--s2)">' +
+    head +
+    body +
+    '</div>';
+}
+
+// ─── LIVE SESSIONS ────────────────────────────────────────────────────────────
+function renderLiveSessions() {
+  const el = document.getElementById('live-sessions');
+  const active = STATE.active || {};
+  const ids = Object.keys(active);
+  const agg = aggregateGarmentSeconds(STATE.logs || [], active, Date.now());
+
+  if (ids.length === 0) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">No active sessions right now</div>';
+    return;
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const tz = whTimezone();
+  const inShiftNow = inWindowClient(nowSec);
+
+  el.innerHTML = ids.map(id => {
+    const sess = active[id];
+    const emp = empById(id);
+    const ab = ABAYAS.find(a => a.id === sess.abaya_id);
+    if (!emp) return '';
+    const startedMs = Number(sess.started_at) || Date.now();
+    const elapsed = activeSecondsWindowedFromMs(startedMs);
+    const totalItem = totalSecForGarment(agg, sess.abaya_id);
+    const avHtml = employeeAvatarHtml(emp);
+    const sessionProcess = (sess.process || '').trim() || '—';  // use active session role only
+    const itemLabel = ab && ab.barcode ? escapeHtml(ab.barcode) : '—';
+
+    const startedAtSec = Math.floor(startedMs / 1000);
+    const startedLabel = formatDateTimeTz(startedMs, { timeZone: tz, weekday: true, seconds: true });
+    const startedFull = startedLabel;
+    const outOfShift = !inShiftNow || !inWindowClient(startedAtSec);
+    const outsideBadge = outOfShift
+      ? ' <span title="Time outside shift windows is not counted" style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
+      : '';
+    return '<div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--bd)">' +
+      '<div class="emp-av" style="background:' + (emp.photo ? 'transparent' : emp.color) + '">' + avHtml + '</div>' +
+      '<div style="flex:1">' +
+        '<div style="font-size:13px;font-weight:600">' + emp.name + outsideBadge + '</div>' +
+        '<div style="font-size:11px;color:var(--tx3);display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:2px">' +
+          'Emp: ' + emp.code + ' &middot; <span style="color:var(--tx2);font-weight:600">' + sessionProcess + '</span>' +
+          (ab ? ' &middot; ' + escapeHtml(ab.code) : '') +
+          (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') +
+        '</div>' +
+        '<div style="margin-top:8px">' +
+          '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Started</div>' +
+          '<div title="' + escapeAttr(startedFull) + '" style="font-size:15px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' +
+          escapeHtml(startedLabel) +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:10px;color:var(--tx3);margin-top:6px;line-height:1.45">' +
+          'Item No: <span style="color:var(--am);font-family:monospace;font-weight:600">' + itemLabel + '</span>' +
+          ' <span style="opacity:.55">&middot;</span> ' +
+          'Active in: <span style="color:var(--gr);font-weight:600">' + escapeHtml(sessionProcess) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="text-align:right">' +
+        '<div style="font-size:14px;font-weight:700;color:var(--gr)">' + fmtHMS(elapsed) + '</div>' +
+        '<div style="font-size:10px;color:var(--tx3)">this step (in shift)</div>' +
+        '<div style="font-size:11px;font-weight:700;color:var(--am);margin-top:4px">' + fmtHMS(totalItem) + '</div>' +
+        '<div style="font-size:10px;color:var(--tx3)">total on item</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ─── EMPLOYEE PERF BARS ───────────────────────────────────────────────────────
+function renderEmployeePerf() {
+  const logs = STATE.logs || [];
+  const active = STATE.active || {};
+  const el = document.getElementById('emp-perf');
+  if (!EMPLOYEES.length) {
+    el.innerHTML = '<div style="color:var(--tx3);font-size:13px;padding:16px;text-align:center">No employee roster yet</div>';
+    return;
+  }
+  const tz = whTimezone();
+  const todayYmd = ymdInTimezone(Date.now(), tz);
+  const todayLogs = logs.filter((l) => {
+    const end = Number(l && l.end);
+    return Number.isFinite(end) && ymdInTimezone(end, tz) === todayYmd;
+  });
+  const unitsByEmp = Object.create(null);
+  const latestProcByEmp = Object.create(null);
+  todayLogs.forEach((l) => {
+    const id = String(l.emp_id || '');
+    if (!id) return;
+    unitsByEmp[id] = (unitsByEmp[id] || 0) + 1;
+    const end = Number(l.end) || 0;
+    if (!latestProcByEmp[id] || end > latestProcByEmp[id].end) {
+      latestProcByEmp[id] = { end: end, process: logRowProcess(l) || l.process || '' };
+    }
+  });
+  const rows = EMPLOYEES.map((emp) => {
+    const units = unitsByEmp[emp.id] || 0;
+    const sess = active[emp.id];
+    const process = sess && sess.process
+      ? String(sess.process)
+      : (latestProcByEmp[emp.id] && latestProcByEmp[emp.id].process ? String(latestProcByEmp[emp.id].process) : 'No activity today');
+    return { emp: emp, units: units, process: process };
+  }).sort((a, b) => {
+    if (b.units !== a.units) return b.units - a.units;
+    return String(a.emp.name).localeCompare(String(b.emp.name));
+  });
+  const nonZeroRows = rows.filter((r) => r.units > 0);
+  const topN = nonZeroRows.length ? Math.max(1, Math.ceil(nonZeroRows.length * 0.2)) : 0;
+  const topIdSet = new Set(nonZeroRows.slice(0, topN).map((r) => r.emp.id));
+  const maxU = Math.max(1, rows.reduce((m, r) => Math.max(m, r.units), 0));
+  el.innerHTML = rows.map((r) => {
+    const emp = r.emp;
+    const w = r.units > 0 ? Math.max(2, Math.round((r.units / maxU) * 100)) : 0;
+    const isTop = topIdSet.has(emp.id);
+    const avHtml = employeeAvatarHtml(emp);
+    return '<div class="emp-row">' +
+      '<div class="emp-av" style="background:' + (emp.photo ? 'transparent' : emp.color) + '">' + avHtml + '</div>' +
+      '<div style="width:170px"><div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (isTop ? '&#11088; ' : '') + emp.name + '</div><div style="font-size:10px;color:var(--tx3)">' + escapeHtml(r.process) + '</div></div>' +
+      '<div class="bar-wrap"><div class="bar-fill" style="width:' + w + '%;background:linear-gradient(90deg,' + emp.color + ',' + emp.color + '88)"></div></div>' +
+      '<div style="width:56px;text-align:right;font-size:14px;font-weight:700">' + r.units + ' u</div>' +
+    '</div>';
+  }).join('');
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
+/** Resolve exactly one catalog item by id/code/barcode; otherwise null item. */
+function resolveUniqueCatalogItem(query) {
+  const q = String(query == null ? '' : query).trim();
+  if (!q) return { item: null, imageUrl: '', hasImage: false };
+  const hits = ABAYAS.filter(function (a) {
+    return a && (a.id === q || String(a.code) === q || String(a.barcode) === q);
+  });
+  if (hits.length !== 1) return { item: null, imageUrl: '', hasImage: false };
+  const item = hits[0];
+  const icon = item && item.icon != null ? String(item.icon).trim() : '';
+  const hasImage = /^uploads\//i.test(icon) && /\.(jpe?g|png|gif|webp)$/i.test(icon);
+  const safe = hasImage ? icon.replace(/^\/+/, '').replace(/"/g, '') : '';
+  return { item: item, imageUrl: safe ? '/' + safe : '', hasImage: hasImage };
+}
+
+/** Compact item picture block used in local analytics modals. */
+function renderModalItemPictureBlock(resolved, heading) {
+  if (!resolved || !resolved.item) return '';
+  const a = resolved.item;
+  const title = escapeHtml(String(heading || 'Item'));
+  const code = escapeHtml(String(a.code || a.id || '—'));
+  const barcode = escapeHtml(String(a.barcode || '—'));
+  const media = resolved.hasImage
+    ? '<img src="' + escapeAttr(resolved.imageUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block" class="hover-preview-thumb" data-fullsrc="' + escapeAttr(resolved.imageUrl) + '">'
+    : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--tx3);background:var(--s3);text-transform:uppercase;letter-spacing:.06em">No image</div>';
+  return (
+    '<div style="display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--bd);border-radius:10px;background:var(--s2);margin-bottom:12px">' +
+    '<div style="width:64px;height:64px;border-radius:8px;overflow:hidden;background:var(--s3);border:1px solid rgba(54,45,89,.35);flex-shrink:0">' +
+    media +
+    '</div>' +
+    '<div style="min-width:0">' +
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em">' +
+    title +
+    '</div>' +
+    '<div style="font-size:13px;font-weight:700;color:var(--tx2);margin-top:2px">' +
+    code +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--am);font-family:monospace;margin-top:2px;word-break:break-word">' +
+    barcode +
+    '</div>' +
+    '</div></div>'
+  );
+}
+
+/** Employee list avatar: initials or photo with fullscreen hover preview. */
+function employeeAvatarHtml(emp) {
+  if (!emp || !emp.photo) return emp.initials || '';
+  const safe = String(emp.photo).replace(/^\/+/, '').replace(/"/g, '');
+  return '<img src="/' + safe + '" data-fullsrc="/' + safe + '" alt="" class="hover-preview-thumb">';
+}
+
+function setFullscreenHoverPreview(src) {
+  const wrap = document.getElementById('fullscreen-hover-preview');
+  const img = document.getElementById('fullscreen-hover-preview-img');
+  if (!wrap || !img || !src) return;
+  img.src = src;
+  wrap.classList.add('show');
+}
+
+function hideFullscreenHoverPreview() {
+  const wrap = document.getElementById('fullscreen-hover-preview');
+  if (!wrap) return;
+  wrap.classList.remove('show');
+}
+
+function initDashboardHoverImagePreview() {
+  if (!document.body || document.body._dashHoverPreviewBound) return;
+  document.body._dashHoverPreviewBound = true;
+  document.body.addEventListener('mouseover', (ev) => {
+    const thumb = ev.target && ev.target.closest ? ev.target.closest('.hover-preview-thumb') : null;
+    if (!thumb) return;
+    setFullscreenHoverPreview(thumb.getAttribute('data-fullsrc') || thumb.getAttribute('src'));
+  });
+  document.body.addEventListener('mouseout', (ev) => {
+    const thumb = ev.target && ev.target.closest ? ev.target.closest('.hover-preview-thumb') : null;
+    if (!thumb) return;
+    const next = ev.relatedTarget;
+    if (next && thumb.contains && thumb.contains(next)) return;
+    hideFullscreenHoverPreview();
+  });
+}
+
+function logRowProcess(l) {
+  const emp = empById(l.emp_id);
+  return l.process || (emp ? emp.process : '') || '';
+}
+
+function formatProcessExtraCellHtml(l) {
+  const proc = logRowProcess(l);
+  if (proc === 'Invoice maker') {
+    if (l.invoice_count == null && !l.invoice_serial) {
+      return '<span style="color:var(--tx3)">\u2014</span>';
+    }
+    const ser = String(l.invoice_serial || '');
+    const fullAttr = escapeAttr(ser);
+    const preview = ser.length > 90 ? escapeHtml(ser.slice(0, 90)) + '\u2026' : escapeHtml(ser);
+    const n = l.invoice_count != null ? escapeHtml(String(l.invoice_count)) : '';
+    return (
+      '<div style="font-size:10px;line-height:1.35;color:var(--tx2);max-height:52px;overflow:hidden" title="' +
+      fullAttr +
+      '">' +
+      '<span style="color:#c2ef4e;font-weight:700">' +
+      n +
+      '</span> <span style="color:var(--tx3)">|</span> ' +
+      '<span style="font-family:monospace;word-break:break-word">' +
+      preview.replace(/,/g, ', ') +
+      '</span></div>'
+    );
+  }
+  if (proc === 'Checker') {
+    const qty = l.quantity != null && l.quantity !== '' ? escapeHtml(String(l.quantity)) : '';
+    if (!qty) return '<span style="color:var(--tx3)">\u2014</span>';
+    const enteredBc = l.checker_barcode != null && String(l.checker_barcode).trim() !== '';
+    const barcode = enteredBc
+      ? escapeHtml(String(l.checker_barcode).trim().replace(/,/g, ', '))
+      : (function () {
+          const ab = ABAYAS.find(a => a.id === l.abaya_id);
+          return ab && ab.barcode ? escapeHtml(String(ab.barcode)) : '';
+        })();
+    const barcodeHtml = barcode
+      ? '<div style="font-size:10px;color:var(--tx3);font-family:monospace;margin-top:2px">' + barcode + '</div>'
+      : '';
+    return (
+      '<div style="font-size:11px;line-height:1.35;color:var(--tx2)">' +
+      '<span style="color:#6a5fc1;font-weight:700">Qty: ' + qty + '</span>' +
+      barcodeHtml +
+      '</div>'
+    );
+  }
+  return '<span style="color:var(--tx3)">\u2014</span>';
+}
+
+function renderRecentInvoiceLogsNode() {
+  const el = document.getElementById('recent-invoice-logs');
+  if (!el) return;
+  const logs = (STATE.logs || []).slice().reverse();
+  const rows = logs.filter(function (l) {
+    return logRowProcess(l) === 'Invoice maker' && l.invoice_serial;
+  }).slice(0, 25);
+  if (!rows.length) {
+    el.innerHTML =
+      '<div style="color:var(--tx3);font-size:12px;text-align:center;padding:16px">No invoice-maker completions in memory yet.</div>';
+    return;
+  }
+  el.innerHTML = rows
+    .map(function (l) {
+      const t = formatDateTimeTz(l.end, { timeZone: whTimezone() });
+      const emp = empById(l.emp_id);
+      const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
+      const nums = escapeHtml(String(l.invoice_serial || '')).replace(/,/g, ', ');
+      const cnt =
+        l.invoice_count != null ? '<span style="color:#c2ef4e;font-weight:700">' + escapeHtml(String(l.invoice_count)) + '</span>' : '';
+      return (
+        '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 32px;gap:8px;padding:8px 0;border-bottom:1px solid rgba(54,45,89,.3);font-size:11px;align-items:start">' +
+        '<span style="color:var(--tx3)">' +
+        t +
+        '</span>' +
+        '<span style="word-break:break-word;font-family:monospace;font-size:10px;line-height:1.35;color:var(--tx2)">' +
+        nums +
+        '</span>' +
+        '<span style="text-align:right">' +
+        cnt +
+        '</span></div>'
+      );
+    })
+    .join('');
+}
+
+function renderRecentCheckerLogsNode() {
+  const el = document.getElementById('recent-checker-logs');
+  if (!el) return;
+  const logs = (STATE.logs || []).slice().reverse();
+  const rows = logs.filter(function (l) {
+    return logRowProcess(l) === 'Checker';
+  }).slice(0, 40);
+  if (!rows.length) {
+    el.innerHTML =
+      '<div style="color:var(--tx3);font-size:12px;text-align:center;padding:16px">No Checker completions in memory yet.</div>';
+    return;
+  }
+  const head =
+    '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) 72px 44px minmax(0,1.2fr);gap:8px;padding:8px 8px 10px;border-bottom:1px solid var(--bd);font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--tx3);align-items:end">' +
+    '<span>Time</span><span>Employee</span><span>Item</span><span style="text-align:right">Qty</span><span>Barcode(s)</span></div>';
+  const body = rows
+    .map(function (l) {
+      const t = formatDateTimeTz(l.end, { timeZone: whTimezone() });
+      const emp = empById(l.emp_id);
+      const ab = ABAYAS.find(function (a) {
+        return a.id === l.abaya_id;
+      });
+      const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
+      const code = ab ? escapeHtml(String(ab.code)) : '\u2014';
+      const qty =
+        l.quantity != null && l.quantity !== ''
+          ? '<span style="color:#6a5fc1;font-weight:800">' + escapeHtml(String(l.quantity)) + '</span>'
+          : '\u2014';
+      const tier = ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '';
+      return (
+        '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) 72px 44px minmax(0,1.2fr);gap:8px;padding:10px 8px;border-bottom:1px solid rgba(54,45,89,.28);font-size:11px;align-items:start">' +
+        '<span style="color:var(--tx3)">' +
+        escapeHtml(t) +
+        '</span>' +
+        '<span style="font-weight:600;color:var(--tx2)">' +
+        name +
+        '</span>' +
+        '<span style="font-family:monospace;font-size:10px;color:var(--am)">' +
+        code +
+        tier +
+        '</span>' +
+        '<span style="text-align:right">' +
+        qty +
+        '</span>' +
+        '<div>' +
+        checkerBarcodeCellHtml(l) +
+        '</div></div>'
+      );
+    })
+    .join('');
+  el.innerHTML =
+    '<div style="border:1px solid var(--bd);border-radius:12px;background:var(--s2);overflow:hidden">' + head + body + '</div>';
+}
+
+// ─── HOURLY CHART ─────────────────────────────────────────────────────────────
+function renderHourlyChart() {
+  const logs = STATE.logs || [];
+
+  // Only display hour buckets that overlap today's configured shift windows.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const todayKey = whWeekdayKey(nowSec);
+  const windows = whWindowsForDay(todayKey);
+
+  const hours = {};
+  if (windows.length > 0) {
+    for (let i = 0; i < windows.length; i++) {
+      const startH = Math.floor(windows[i][0] / 60);
+      const endMin = windows[i][1];
+      const endH = endMin % 60 === 0 ? Math.floor(endMin / 60) - 1 : Math.floor(endMin / 60);
+      for (let h = startH; h <= endH; h++) {
+        if (hours[h] == null) hours[h] = 0;
+      }
+    }
+  } else {
+    // Fallback (no shift today): show legacy 9-23 span so we don't render an empty chart.
+    const h0 = typeof FACTORY_HOURLY_START === 'number' ? FACTORY_HOURLY_START : 9;
+    const h1 = typeof FACTORY_HOURLY_END === 'number' ? FACTORY_HOURLY_END : 23;
+    for (let h = h0; h <= h1; h++) hours[h] = 0;
+  }
+
+  logs.forEach((l) => {
+    const h = new Date(l.end).getHours();
+    if (hours[h] != null) hours[h]++;
+  });
+
+  const sortedHours = Object.keys(hours).map(Number).sort((a, b) => a - b);
+  const vals = sortedHours.map((h) => hours[h]);
+  const max = Math.max.apply(null, vals.length ? vals : [1]);
+  const bar = document.getElementById('hourly');
+  const lbl = document.getElementById('hlbl');
+  bar.innerHTML = sortedHours
+    .map((h) => {
+      const v = hours[h] || 0;
+      const ht = Math.max(4, Math.round((v / Math.max(1, max)) * 76));
+      return (
+        '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">' +
+        '<div style="font-size:10px;color:var(--tx3)">' + (v > 0 ? v : '') + '</div>' +
+        '<div style="width:100%;height:' + ht + 'px;background:linear-gradient(180deg,var(--bl),var(--pu));border-radius:3px 3px 0 0;opacity:' + (v > 0 ? 1 : 0.15) + '"></div>' +
+        '</div>'
+      );
+    })
+    .join('');
+  lbl.innerHTML = sortedHours
+    .map((h) => '<div style="flex:1;font-size:9px;color:var(--tx3);text-align:center">' + h + '</div>')
+    .join('');
+
+  const sh = document.getElementById('shift-hint');
+  if (sh && typeof FACTORY_SHIFT_SCHEDULE_TEXT === 'string') {
+    sh.textContent = FACTORY_SHIFT_SCHEDULE_TEXT;
+  }
+}
+
+// ─── PARETO ───────────────────────────────────────────────────────────────────
+function renderPareto() {
+  const logs = STATE.logs || [];
+  const tz = whTimezone();
+  const todayYmd = ymdInTimezone(Date.now(), tz);
+  const byEmp = Object.create(null);
+  logs.forEach((l) => {
+    const end = Number(l && l.end);
+    if (!Number.isFinite(end) || ymdInTimezone(end, tz) !== todayYmd) return;
+    const id = String(l.emp_id || '');
+    if (!id) return;
+    byEmp[id] = (byEmp[id] || 0) + 1;
+  });
+  const perf = EMPLOYEES.map((e) => ({ id: e.id, units: byEmp[e.id] || 0 }))
+    .filter((p) => p.units > 0)
+    .sort((a, b) => b.units - a.units);
+  const topN = perf.length ? (Math.ceil(perf.length * 0.2) || 1) : 0;
+  const topUnits = perf.slice(0, topN).reduce((s, p) => s + p.units, 0);
+  const totalUnits = perf.reduce((s, p) => s + p.units, 0);
+  const pct = totalUnits > 0 ? Math.round((topUnits / totalUnits) * 100) : 0;
+  const el = document.getElementById('pareto-chart');
+  if (!perf.length) {
+    el.innerHTML = '<div style="color:var(--tx3);font-size:13px;text-align:center;padding:20px">No completed units today yet</div>';
+    return;
+  }
+  el.innerHTML = '<div style="text-align:center;margin-bottom:14px">' +
+    '<div style="font-size:36px;font-weight:800;color:var(--am)">' + pct + '%</div>' +
+    '<div style="font-size:12px;color:var(--tx2)">of output from top ' + topN + ' worker' + (topN > 1 ? 's' : '') + '</div>' +
+  '</div>' +
+  perf.slice(0, 5).map((p, i) => {
+    const emp = empById(p.id);
+    if (!emp) return '';
+    const pctEmp = totalUnits > 0 ? Math.round((p.units / totalUnits) * 100) : 0;
+    const avHtml = employeeAvatarHtml(emp);
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
+      '<div class="emp-av" style="background:' + (emp.photo ? 'transparent' : emp.color) + ';width:28px;height:28px;font-size:10px">' + avHtml + '</div>' +
+      '<div style="flex:1"><div style="font-size:11px;font-weight:600">' + emp.name + '</div>' +
+      '<div style="height:5px;background:var(--s3);border-radius:3px;margin-top:3px"><div style="height:100%;width:' + pctEmp + '%;background:' + emp.color + ';border-radius:3px"></div></div></div>' +
+      '<div style="font-size:12px;font-weight:700;color:var(--tx2)">' + p.units + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ─── PROCESS EFF ─────────────────────────────────────────────────────────────
+function canonicalLogProcess(l) {
+  var lp = l.process || (empById(l.emp_id) || {}).process || '';
+  if (lp === 'Cutting') return 'Tailor (01)';
+  if (lp === 'Cutting master') return 'Tailor (01)';
+  if (lp === 'Stitching') return 'Tailor (02)';
+  if (lp === 'Finishing') return 'Hand Work';
+  return lp;
+}
+
+function logMatchesWorkType(l, workType) {
+  return canonicalLogProcess(l) === workType;
+}
+
+function renderProcessEff() {
+  var procs = typeof WORK_TYPES !== 'undefined' ? WORK_TYPES : [];
+  var logs = STATE.logs || [];
+  var el = document.getElementById('proc-eff');
+  var colors = {
+    'Tailor (01)': 'var(--bl)',
+    'Cutting master': '#d946ef',
+    'Tailor (02)': '#8b5cf6',
+    'Hand Work': 'var(--gr)',
+    'Stone Work': 'var(--am)',
+    'Button': '#fa7faa',
+    'Embroidery': 'var(--pu)',
+    'Ari Work': '#14b8a6',
+    'Hand Designing': '#ffb287',
+    'Invoice maker': '#c2ef4e',
+    'Packaging': '#79628c',
+    'Checker': '#6a5fc1'
+  };
+  el.innerHTML = procs.map(function (proc) {
+    var procLogs = logs.filter(function (l) { return logMatchesWorkType(l, proc); });
+    var units = procLogs.length;
+    var avgSec = units > 0 ? Math.round(procLogs.reduce(function (s, l) { return s + l.duration_sec; }, 0) / units) : 0;
+    var target = 2700;
+    var eff = avgSec > 0 ? Math.min(100, Math.round((target / avgSec) * 100)) : 0;
+    var col = colors[proc] || 'var(--tx2)';
+    return '<div style="margin-bottom:12px">' +
+      '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">' +
+        '<span style="font-weight:600">' + proc + '</span>' +
+        '<span style="color:' + col + ';font-weight:700">' + eff + '% &middot; ' + units + ' units</span>' +
+      '</div>' +
+      '<div style="height:6px;background:var(--s3);border-radius:3px"><div style="height:100%;width:' + eff + '%;background:' + col + ';border-radius:3px;transition:width .5s"></div></div>' +
+    '</div>';
+  }).join('');
+}
+
+// ─── REPORTS ─────────────────────────────────────────────────────────────────
+let activeReportType = 'Daily';
+let reportEmployeeFilterId = 'all';
+let lastReportPeriod = null;
+
+function employeeIndexMap() {
+  const out = Object.create(null);
+  (EMPLOYEES || []).forEach(function (e) {
+    if (!e || !e.id) return;
+    out[String(e.id)] = e;
+  });
+  return out;
+}
+
+function normalizeLookupId(id) {
+  return String(id == null ? '' : id).trim();
+}
+
+function resolveEmployeeDisplay(empId, empById) {
+  const key = normalizeLookupId(empId);
+  const byId = empById || employeeIndexMap();
+  const emp = key ? byId[key] : null;
+  const name = emp && emp.name ? String(emp.name) : 'Unknown employee';
+  return { name: name, found: !!(emp && emp.name) };
+}
+
+function abayaIndexMap() {
+  const out = Object.create(null);
+  (ABAYAS || []).forEach(function (a) {
+    if (!a || !a.id) return;
+    out[String(a.id)] = a;
+  });
+  return out;
+}
+
+function summarizeLogsByEmployee(logs, empById) {
+  const by = Object.create(null);
+  (logs || []).forEach(function (l) {
+    if (!l || !l.emp_id) return;
+    const id = String(l.emp_id);
+    if (!by[id]) by[id] = { empId: id, empName: id, units: 0, totalSec: 0, avgSec: 0 };
+    const row = by[id];
+    const emp = empById[id];
+    row.empName = emp && emp.name ? String(emp.name) : id;
+    row.units += 1;
+    row.totalSec += logDurationSec(l);
+  });
+  const rows = Object.keys(by).map(function (id) {
+    const r = by[id];
+    r.avgSec = r.units > 0 ? Math.round(r.totalSec / r.units) : 0;
+    return r;
+  });
+  rows.sort(function (a, b) {
+    if (b.units !== a.units) return b.units - a.units;
+    if (a.avgSec !== b.avgSec) return a.avgSec - b.avgSec;
+    return String(a.empName).localeCompare(String(b.empName));
+  });
+  return rows;
+}
+
+function employeeFilterOptions(logs, empById) {
+  const seen = Object.create(null);
+  (logs || []).forEach(function (l) {
+    if (!l || !l.emp_id) return;
+    seen[String(l.emp_id)] = true;
+  });
+  return Object.keys(seen)
+    .map(function (id) {
+      const emp = empById[id];
+      return { id: id, name: emp && emp.name ? String(emp.name) : id };
+    })
+    .sort(function (a, b) {
+      return String(a.name).localeCompare(String(b.name));
+    });
+}
+
+function renderEmployeeSummaryCards(rows) {
+  if (!rows.length) {
+    return '<div style="padding:12px;color:var(--tx3);text-align:center">No employee summary for this period.</div>';
+  }
+  return rows
+    .map(function (r) {
+      return (
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr) 56px 88px 84px;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center">' +
+        '<span style="font-weight:600;color:var(--tx2)">' +
+        escapeHtml(r.empName) +
+        '</span>' +
+        '<span style="text-align:right;color:var(--tx3)">' +
+        r.units +
+        '</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700">' +
+        fmtHMS(r.totalSec) +
+        '</span>' +
+        '<span style="text-align:right;color:var(--am);font-weight:700">' +
+        fmtHMS(r.avgSec) +
+        '</span></div>'
+      );
+    })
+    .join('');
+}
+
+function setReportEmployeeFilter(empId) {
+  reportEmployeeFilterId = empId && String(empId).trim() ? String(empId).trim() : 'all';
+  openReport(activeReportType);
+}
+
+function pad2(n) {
+  return String(Number(n) || 0).padStart(2, '0');
+}
+
+function localYmd(tsMs) {
+  const d = new Date(Number(tsMs) || Date.now());
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
+function dateAtLocalMidnight(tsMs) {
+  const d = new Date(Number(tsMs) || Date.now());
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function reportPeriodForType(type, logs) {
+  const now = Date.now();
+  const todayStart = dateAtLocalMidnight(now).getTime();
+  const tomorrowStart = todayStart + 86400000;
+  const yesterdayStart = todayStart - 86400000;
+  const logsArr = Array.isArray(logs) ? logs : [];
+  const hasToday = logsArr.some(function (l) {
+    const end = Number(l && l.end);
+    return Number.isFinite(end) && end >= todayStart && end < tomorrowStart;
+  });
+  if (type === 'Daily') {
+    const useStart = hasToday ? todayStart : yesterdayStart;
+    const useEnd = useStart + 86400000;
+    return {
+      startMs: useStart,
+      endMs: useEnd,
+      startYmd: localYmd(useStart),
+      endYmd: localYmd(useStart),
+      effectiveDailyYmd: localYmd(useStart),
+      fallbackApplied: !hasToday,
+    };
+  }
+  if (type === 'Weekly') {
+    const end = dateAtLocalMidnight(now);
+    const wd = end.getDay();
+    const delta = wd === 0 ? 6 : wd - 1;
+    const start = new Date(end);
+    start.setDate(end.getDate() - delta);
+    return {
+      startMs: start.getTime(),
+      endMs: tomorrowStart,
+      startYmd: localYmd(start.getTime()),
+      endYmd: localYmd(now),
+      effectiveDailyYmd: '',
+      fallbackApplied: false,
+    };
+  }
+  if (type === 'Yearly') {
+    const yearStart = new Date(new Date(now).getFullYear(), 0, 1, 0, 0, 0, 0);
+    return {
+      startMs: yearStart.getTime(),
+      endMs: tomorrowStart,
+      startYmd: localYmd(yearStart.getTime()),
+      endYmd: localYmd(now),
+      effectiveDailyYmd: '',
+      fallbackApplied: false,
+    };
+  }
+  if (type === 'Custom') {
+    // Custom-range is driven by the date pickers. Fall back to "this
+    // month" if the pickers are empty so the user gets a report
+    // rather than an error.
+    const r = customReportRange || {};
+    if (r.fromYmd && r.toYmd) {
+      const a = parseYmdLocal(r.fromYmd);
+      const b = parseYmdLocal(r.toYmd);
+      if (a && b && a.getTime() <= b.getTime() + 86400000) {
+        return {
+          startMs: a.getTime(),
+          endMs: b.getTime() + 86400000,
+          startYmd: r.fromYmd,
+          endYmd: r.toYmd,
+          effectiveDailyYmd: '',
+          fallbackApplied: false,
+        };
+      }
+    }
+    const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1, 0, 0, 0, 0);
+    return {
+      startMs: monthStart.getTime(),
+      endMs: tomorrowStart,
+      startYmd: localYmd(monthStart.getTime()),
+      endYmd: localYmd(now),
+      effectiveDailyYmd: '',
+      fallbackApplied: true,
+    };
+  }
+  const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1, 0, 0, 0, 0);
+  return {
+    startMs: monthStart.getTime(),
+    endMs: tomorrowStart,
+    startYmd: localYmd(monthStart.getTime()),
+    endYmd: localYmd(now),
+    effectiveDailyYmd: '',
+    fallbackApplied: false,
+  };
+}
+
+/** Parse a YYYY-MM-DD string to a local-midnight Date. */
+function parseYmdLocal(ymd) {
+  if (!ymd || typeof ymd !== 'string') return null;
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]) - 1, d = Number(m[3]);
+  const dt = new Date(y, mo, d, 0, 0, 0, 0);
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function reportWindowLabel(type, period) {
+  if (!period) return '';
+  if (type === 'Daily') return period.startYmd;
+  if (type === 'Yearly') return 'Year ' + (period.startYmd || '').slice(0, 4);
+  return period.startYmd + ' to ' + period.endYmd;
+}
+
+function openReport(type) {
+  activeReportType = type;
+  const period = reportPeriodForType(type, STATE.logs || []);
+  lastReportPeriod = period;
+  const allLogs = getLogsForType(type, period);
+  const empById = employeeIndexMap();
+  const abById = abayaIndexMap();
+  const summaryRows = summarizeLogsByEmployee(allLogs, empById);
+  const options = employeeFilterOptions(allLogs, empById);
+  const allowedFilter = reportEmployeeFilterId === 'all' || options.some(function (o) {
+    return o.id === reportEmployeeFilterId;
+  });
+  if (!allowedFilter) reportEmployeeFilterId = 'all';
+  const logs = reportEmployeeFilterId === 'all'
+    ? allLogs
+    : allLogs.filter(function (l) {
+        return String(l.emp_id) === reportEmployeeFilterId;
+      });
+  const modal = document.getElementById('modal-report');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+
+  title.textContent = type + ' Production Report — ' + reportWindowLabel(type, period);
+  const tsMeta = document.getElementById('modal-ts');
+  if (tsMeta) {
+    const extra = period && period.fallbackApplied ? ' (auto-fallback: no logs today, showing yesterday)' : '';
+    tsMeta.textContent = 'Generated on ' + new Date().toLocaleString() + ' — Window: ' + reportWindowLabel(type, period) + extra;
+  }
+
+  const totalUnits = allLogs.length;
+  const totalSec = allLogs.reduce(function (s, l) {
+    return s + logDurationSec(l);
+  }, 0);
+  const avgCycle = totalUnits > 0 ? fmtHMS(Math.round(totalSec / totalUnits)) : '—';
+  const actCount = Object.keys(STATE.active || {}).length;
+
+  // Summary cards
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:18px">' +
+    statCard('Total Output', totalUnits + ' units', 'var(--gr)') +
+    statCard('Avg Cycle', avgCycle, 'var(--am)') +
+    statCard('Active Now', actCount, 'var(--bl)') +
+  '</div>';
+
+  const garmentAgg = aggregateGarmentSeconds(allLogs, {}, Date.now());
+  const garmentKeys = Object.keys(garmentAgg).filter(function (k) {
+    return garmentAgg[k].completedSec > 0 || garmentAgg[k].segments > 0;
+  });
+  if (garmentKeys.length) {
+    const gRows = garmentKeys
+      .map(function (k) {
+        const o = garmentAgg[k];
+        const ab = abById[String(o.abaya_id)] || null;
+        const label = ab ? ab.code : o.abaya_id;
+        return { label: label, totalSec: o.completedSec, segments: o.segments, tier: ab && ab.tier ? ab.tier : '' };
+      })
+      .sort(function (a, b) {
+        if (b.totalSec !== a.totalSec) return b.totalSec - a.totalSec;
+        return String(a.label).localeCompare(String(b.label));
+      });
+    html +=
+      '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);margin-bottom:8px">Total time by item code (this report window)</div>' +
+      '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:16px;max-height:200px;overflow-y:auto">' +
+      '<div style="display:grid;grid-template-columns:minmax(0,1fr) 52px 88px;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--tx3)">' +
+      '<span>Item</span><span style="text-align:right">Steps</span><span style="text-align:right">Total time</span></div>';
+    gRows.forEach(function (r) {
+      const tierHtml = r.tier ? ' ' + dashTierBadge(r.tier) : '';
+      html +=
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr) 52px 88px;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center">' +
+        '<span style="font-weight:600">' +
+        escapeHtml(String(r.label)) +
+        tierHtml +
+        '</span>' +
+        '<span style="text-align:right;color:var(--tx3)">' +
+        r.segments +
+        '</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700">' +
+        fmtHMS(r.totalSec) +
+        '</span></div>';
+    });
+    html += '</div>';
+  }
+
+  const filterSelect =
+    '<label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:8px;justify-content:flex-end">' +
+    '<span>Employee</span>' +
+    '<select onchange="setReportEmployeeFilter(this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2);font-family:var(--fn);font-size:11px;max-width:220px">' +
+    '<option value="all"' +
+    (reportEmployeeFilterId === 'all' ? ' selected' : '') +
+    '>All employees</option>' +
+    options
+      .map(function (o) {
+        return '<option value="' + escapeAttr(o.id) + '"' + (reportEmployeeFilterId === o.id ? ' selected' : '') + '>' + escapeHtml(o.name) + '</option>';
+      })
+      .join('') +
+    '</select></label>';
+
+  html +=
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">' +
+    '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3)">Per-employee summary (this report window)</div>' +
+    filterSelect +
+    '</div>' +
+    '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:16px">' +
+    '<div style="display:grid;grid-template-columns:minmax(0,1fr) 56px 88px 84px;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--tx3)">' +
+    '<span>Employee</span><span style="text-align:right">Units</span><span style="text-align:right">Total time</span><span style="text-align:right">Avg</span></div>' +
+    renderEmployeeSummaryCards(summaryRows) +
+    '</div>';
+
+  // Log table
+  html += '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden;margin-bottom:16px">' +
+    '<div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--tx3);padding:10px 12px;border-bottom:1px solid var(--bd);display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;align-items:center">' +
+      '<span>Time</span><span>Employee</span><span>Abaya</span><span>Process</span><span style="text-align:right">Duration</span><span>Invoices</span>' +
+    '</div>' +
+    '<div style="max-height:240px;overflow-y:auto">';
+
+  if (logs.length === 0) {
+    html += '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">No logs for this period</div>';
+  } else {
+    html += logs.slice().reverse().map(l => {
+      const emp = empById[String(l.emp_id)] || null;
+      const ab = abById[String(l.abaya_id)] || null;
+      const t = new Date(l.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // Use the process stored in the log (employee may have selected a different role)
+      const logProcess = l.process || (emp ? emp.process : '—');
+      return '<div style="display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:start">' +
+        '<span style="color:var(--tx3)">' + t + '</span>' +
+        '<span style="font-weight:600">' + (emp ? escapeHtml(emp.name) : '—') + '</span>' +
+        '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : '—') + (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') + '</span>' +
+        '<span style="color:var(--bl);font-weight:600">' + escapeHtml(String(logProcess)) + '</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(logDurationSec(l)) + '</span>' +
+        formatProcessExtraCellHtml(l) +
+      '</div>';
+    }).join('');
+  }
+  html += '</div></div>';
+
+  body.innerHTML = html;
+  modal.classList.add('open');
+}
+
+function statCard(label, val, color) {
+  return '<div style="background:var(--s2);border-radius:10px;padding:14px;text-align:center;border:1px solid var(--bd)">' +
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">' + label + '</div>' +
+    '<div style="font-size:22px;font-weight:800;color:' + color + '">' + val + '</div>' +
+  '</div>';
+}
+
+function getLogsForType(type, period) {
+  const logs = STATE.logs || [];
+  const p = period || reportPeriodForType(type, logs);
+  return logs.filter(function (l) {
+    const end = Number(l && l.end);
+    return Number.isFinite(end) && end >= p.startMs && end < p.endMs;
+  });
+}
+
+function closeReport() {
+  const modal = document.getElementById('modal-report');
+  modal.classList.remove('open');
+  // Reset overflow: openEveryEmployeeEveryTask sets maxHeight/overflowY
+  // so long lists stay scrollable; the next normal report should fill
+  // the modal instead.
+  const body = document.getElementById('modal-body');
+  if (body) { body.style.maxHeight = ''; body.style.overflowY = ''; }
+}
+
+/** Aggregate logs (same shape as socket logs) for bottleneck / leader UI */
+function computeLocalAnalytics(logs) {
+  const byProc = {};
+  const empProc = {};
+  const byEmp = {};
+  const procItems = {};
+  const empItems = {};
+  logs.forEach(function (l) {
+    const proc = l.process || '—';
+    const du = Number(l.duration_sec) || 0;
+    if (!byProc[proc]) byProc[proc] = { units: 0, totalSec: 0 };
+    byProc[proc].units += 1;
+    byProc[proc].totalSec += du;
+    const key = l.emp_id + '|' + proc;
+    if (!empProc[key]) empProc[key] = { emp_id: l.emp_id, process: proc, units: 0, totalSec: 0 };
+    empProc[key].units += 1;
+    empProc[key].totalSec += du;
+    if (!byEmp[l.emp_id]) byEmp[l.emp_id] = { units: 0, totalSec: 0 };
+    byEmp[l.emp_id].units += 1;
+    byEmp[l.emp_id].totalSec += du;
+    const abId = l.abaya_id != null && l.abaya_id !== '' ? String(l.abaya_id) : '';
+    if (abId) {
+      if (!procItems[proc]) procItems[proc] = {};
+      procItems[proc][abId] = (procItems[proc][abId] || 0) + 1;
+      if (!empItems[l.emp_id]) empItems[l.emp_id] = {};
+      empItems[l.emp_id][abId] = (empItems[l.emp_id][abId] || 0) + 1;
+    }
+  });
+  const by_process = Object.keys(byProc)
+    .map(function (p) {
+      const o = byProc[p];
+      const avg = o.units > 0 ? Math.round(o.totalSec / o.units) : 0;
+      return {
+        emp_process: p,
+        units: o.units,
+        avg_sec: avg,
+        min_sec: avg,
+        max_sec: avg,
+      };
+    })
+    .sort(function (a, b) {
+      return b.avg_sec - a.avg_sec;
+    });
+  const fastestMap = {};
+  Object.keys(empProc).forEach(function (k) {
+    const o = empProc[k];
+    if (o.units < 2) return;
+    const avg = Math.round(o.totalSec / o.units);
+    const p = o.process;
+    if (!fastestMap[p] || avg < fastestMap[p].avg_sec) {
+      const emp = empById(o.emp_id);
+      fastestMap[p] = {
+        emp_name: emp ? emp.name : o.emp_id,
+        emp_process: p,
+        units: o.units,
+        avg_sec: avg,
+      };
+    }
+  });
+  Object.keys(fastestMap).forEach(function (p) {
+    const ids = Object.keys(procItems[p] || {});
+    if (ids.length !== 1) return;
+    fastestMap[p].lead_abaya_id = ids[0];
+  });
+  const fastest_per_process = Object.values(fastestMap).sort(function (a, b) {
+    return String(a.emp_process).localeCompare(String(b.emp_process));
+  });
+  const speed_leaders = Object.keys(byEmp)
+    .map(function (id) {
+      const o = byEmp[id];
+      if (o.units < 2) return null;
+      const emp = empById(id);
+      return {
+        emp_id: id,
+        emp_name: emp ? emp.name : id,
+        emp_process: emp ? emp.process : '—',
+        units: o.units,
+        avg_sec: Math.round(o.totalSec / o.units),
+        lead_abaya_id: Object.keys(empItems[id] || {}).length === 1 ? Object.keys(empItems[id] || {})[0] : '',
+      };
+    })
+    .filter(Boolean)
+    .sort(function (a, b) {
+      return a.avg_sec - b.avg_sec;
+    })
+    .slice(0, 40);
+  return {
+    by_process: by_process,
+    fastest_per_process: fastest_per_process,
+    speed_leaders: speed_leaders,
+    log_count: logs.length,
+  };
+}
+
+function openLocalProcessAnalytics() {
+  const logs = STATE.logs || [];
+  const period = 'This server (session)';
+  const d = computeLocalAnalytics(logs);
+  activeReportType = 'LocalAnalytics';
+  document.getElementById('modal-title').textContent = 'Process analytics (local)';
+  document.getElementById('modal-ts').textContent = new Date().toLocaleString() + ' \u2014 ' + d.log_count + ' sessions';
+
+  let html =
+    '<p style="font-size:12px;color:var(--tx3);line-height:1.45;margin-bottom:12px">Bottleneck = highest average time per station. Leaders need 2+ sessions in the window.</p>';
+
+  html +=
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;margin-bottom:6px">Avg time by station</div><div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:14px;font-size:13px">';
+  if (!d.by_process.length) {
+    html += '<div style="padding:16px;text-align:center;color:var(--tx3)">No sessions yet</div>';
+  } else {
+    d.by_process.forEach(function (row) {
+      html +=
+        '<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.2)">' +
+        '<span style="font-weight:600">' +
+        escapeHtml(row.emp_process) +
+        '</span><span style="color:var(--gr);font-weight:700">' +
+        fmtHMS(row.avg_sec) +
+        '</span> <span style="color:var(--tx3)">(' +
+        row.units +
+        ')</span></div>';
+    });
+  }
+  html += '</div>';
+
+  html +=
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;margin-bottom:6px">Fastest per process (2+ samples)</div><div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;margin-bottom:14px;font-size:13px">';
+  if (!d.fastest_per_process.length) {
+    html += '<div style="padding:12px;color:var(--tx3)">Not enough split data</div>';
+  } else {
+    d.fastest_per_process.forEach(function (r) {
+      const leadItem = r.lead_abaya_id ? resolveUniqueCatalogItem(r.lead_abaya_id) : null;
+      const leadItemHtml = leadItem && leadItem.item ? renderModalItemPictureBlock(leadItem, 'Lead item') : '';
+      html +=
+        '<div style="padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.15)"><strong>' +
+        escapeHtml(r.emp_name) +
+        '</strong> \u2014 ' +
+        escapeHtml(r.emp_process) +
+        ' \u2014 ' +
+        fmtHMS(r.avg_sec) +
+        '</div>' +
+        leadItemHtml;
+    });
+  }
+  html += '</div>';
+
+  html +=
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;margin-bottom:6px">Speed leaders (2+ units)</div><div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;max-height:200px;overflow-y:auto;font-size:13px">';
+  if (!d.speed_leaders.length) {
+    html += '<div style="padding:12px;color:var(--tx3)">Not enough data</div>';
+  } else {
+    d.speed_leaders.forEach(function (r, i) {
+      const leadItem = r.lead_abaya_id ? resolveUniqueCatalogItem(r.lead_abaya_id) : null;
+      const leadItemHtml = leadItem && leadItem.item ? renderModalItemPictureBlock(leadItem, 'Lead item') : '';
+      html +=
+        '<div style="padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.15)">' +
+        (i + 1) +
+        '. <strong>' +
+        escapeHtml(r.emp_name) +
+        '</strong> \u2014 ' +
+        fmtHMS(r.avg_sec) +
+        ' (' +
+        r.units +
+        ' u)</div>' +
+        leadItemHtml;
+    });
+  }
+  html += '</div>';
+
+  document.getElementById('modal-body').innerHTML = html;
+  window._localAnalyticsExport = { period: period, data: d };
+  document.getElementById('modal-report').classList.add('open');
+}
+
+function openLocalTracePrompt() {
+  const q = window.prompt('Item code or abaya id (as in catalog):', '');
+  if (!q || !String(q).trim()) return;
+  openLocalGarmentTrace(String(q).trim());
+}
+
+function openLocalGarmentTrace(q) {
+  // #region agent log
+  fetch('http://127.0.0.1:7334/ingest/ec0dc368-e56e-4507-89de-39c8d0c8ba23',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d88364'},body:JSON.stringify({sessionId:'d88364',runId:'pre-fix',hypothesisId:'H1',location:'public/dashboard.js:openLocalGarmentTrace.entry',message:'local trace entry state',data:{q:String(q||''),employeesCount:Array.isArray(EMPLOYEES)?EMPLOYEES.length:-1,logsCount:Array.isArray(STATE&&STATE.logs)?STATE.logs.length:-1},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+  const resolvedDirect = resolveUniqueCatalogItem(q);
+  const logs = (STATE.logs || []).slice();
+  const matches = logs.filter(function (l) {
+    const ab = ABAYAS.find(function (a) {
+      return a.id === l.abaya_id;
+    });
+    if (!ab) return false;
+    return ab.id === q || String(ab.code) === q || String(ab.barcode) === q;
+  });
+  matches.sort(function (a, b) {
+    return (Number(a.end) || 0) - (Number(b.end) || 0);
+  });
+  const sumCompleted = matches.reduce(function (s, l) {
+    return s + logDurationSec(l);
+  }, 0);
+  // #region agent log
+  fetch('http://127.0.0.1:7334/ingest/ec0dc368-e56e-4507-89de-39c8d0c8ba23',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d88364'},body:JSON.stringify({sessionId:'d88364',runId:'pre-fix',hypothesisId:'H3',location:'public/dashboard.js:openLocalGarmentTrace.matches',message:'local trace matches computed',data:{q:String(q||''),matchesCount:matches.length,sampleEmpIds:matches.slice(0,5).map(function(m){return m&&m.emp_id;})},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+  let resolvedId = null;
+  if (matches.length) {
+    resolvedId = matches[0].abaya_id;
+  } else {
+    const abHit = resolvedDirect.item;
+    if (abHit) resolvedId = abHit.id;
+  }
+  let activeExtra = 0;
+  const active = STATE.active || {};
+  if (resolvedId != null) {
+    Object.keys(active).forEach(function (empId) {
+      const sess = active[empId];
+      if (!sess || String(sess.abaya_id) !== String(resolvedId)) return;
+      const started = Number(sess.started_at);
+      if (!Number.isFinite(started)) return;
+      activeExtra += Math.max(0, Math.floor((Date.now() - started) / 1000));
+    });
+  }
+  const sumTotal = sumCompleted + activeExtra;
+
+  activeReportType = 'LocalTrace';
+  document.getElementById('modal-title').textContent = 'Garment trace (local)';
+  document.getElementById('modal-ts').textContent =
+    matches.length +
+    ' finished step(s) \u2014 ' +
+    fmtHMS(sumCompleted) +
+    ' logged' +
+    (activeExtra > 0 ? ' + ' + fmtHMS(activeExtra) + ' in progress' : '') +
+    ' = ' +
+    fmtHMS(sumTotal) +
+    ' total on item';
+
+  let html =
+    '<p style="font-size:12px;color:var(--tx3)">Order is by completion time on this server.</p>';
+  if (resolvedId != null) {
+    const resolvedById = resolveUniqueCatalogItem(String(resolvedId));
+    if (resolvedById && resolvedById.item) {
+      html += renderModalItemPictureBlock(resolvedById, 'Resolved item');
+    }
+  }
+  if (!matches.length) {
+    html +=
+      '<div style="padding:20px;text-align:center;color:var(--tx3)">No sessions for <strong>' +
+      escapeHtml(q) +
+      '</strong></div>';
+  } else {
+    html +=
+      '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;font-size:13px">';
+    const empById = employeeIndexMap();
+    const traceDiag = { unresolvedCount: 0, totalRows: matches.length };
+    matches.forEach(function (l) {
+      const resolvedEmp = resolveEmployeeDisplay(l.emp_id, empById);
+      if (!resolvedEmp.found) {
+        traceDiag.unresolvedCount += 1;
+        // #region agent log
+        fetch('http://127.0.0.1:7334/ingest/ec0dc368-e56e-4507-89de-39c8d0c8ba23',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d88364'},body:JSON.stringify({sessionId:'d88364',runId:'pre-fix',hypothesisId:'H2',location:'public/dashboard.js:openLocalGarmentTrace.empFallback',message:'employee fallback to emp_id',data:{logEmpId:l&&l.emp_id,logEmpIdType:typeof (l&&l.emp_id),employeeIdsSample:Array.isArray(EMPLOYEES)?EMPLOYEES.slice(0,5).map(function(e){return e&&e.id;}):[],employeeIdsTypeSample:Array.isArray(EMPLOYEES)?EMPLOYEES.slice(0,5).map(function(e){return typeof (e&&e.id);}):[]},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+      }
+      const ab = ABAYAS.find(function (a) {
+        return a.id === l.abaya_id;
+      });
+      const t = new Date(l.end).toLocaleString();
+      html +=
+        '<div style="padding:8px 12px;border-bottom:1px solid rgba(54,45,89,.15)">' +
+        '<div style="font-size:11px;color:var(--tx3)">' +
+        escapeHtml(t) +
+        '</div><strong>' +
+        escapeHtml(resolvedEmp.name) +
+        '</strong> \u2014 ' +
+        escapeHtml(l.process || '') +
+        ' \u2014 ' +
+        fmtHMS(logDurationSec(l)) +
+        (ab ? ' \u2014 ' + escapeHtml(ab.code) : '') +
+        '</div>';
+    });
+    window._localTraceLookupDiag = traceDiag;
+    html += '</div>';
+  }
+  document.getElementById('modal-body').innerHTML = html;
+  window._localTraceExport = { q: q, matches: matches, sum: sumTotal, sumCompleted: sumCompleted, activeExtra: activeExtra };
+  document.getElementById('modal-report').classList.add('open');
+}
+
+function exportReport() {
+  if (activeReportType === 'LocalAnalytics' && window._localAnalyticsExport) {
+    const d = window._localAnalyticsExport.data;
+    let text = '*AbaYa Track — Floor analytics (this PC)*\n';
+    text += '_Sessions in memory: ' + d.log_count + '_\n\n';
+    text += '*Bottlenecks (slowest avg first)*\n';
+    d.by_process.forEach(function (r) {
+      text += '\u2022 ' + r.emp_process + ': ' + fmtHMS(r.avg_sec) + ' (' + r.units + ' u)\n';
+    });
+    text += '\n*Speed leaders*\n';
+    d.speed_leaders.slice(0, 20).forEach(function (r, i) {
+      text += (i + 1) + '. ' + r.emp_name + ' — ' + fmtHMS(r.avg_sec) + '\n';
+    });
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    closeReport();
+    return;
+  }
+  if (activeReportType === 'LocalTrace' && window._localTraceExport) {
+    const x = window._localTraceExport;
+    const empById = employeeIndexMap();
+    let text = '*Garment trace: ' + x.q + '*\n';
+    text +=
+      '_Finished steps: ' +
+      x.matches.length +
+      ' — logged ' +
+      fmtHMS(x.sumCompleted != null ? x.sumCompleted : x.sum) +
+      (x.activeExtra ? ' + in progress ' + fmtHMS(x.activeExtra) : '') +
+      ' = total ' +
+      fmtHMS(x.sum) +
+      '_\n\n';
+    x.matches.forEach(function (l) {
+      const resolvedEmp = resolveEmployeeDisplay(l.emp_id, empById);
+      text +=
+        '\u2022 ' +
+        resolvedEmp.name +
+        ' | ' +
+        (l.process || '') +
+        ' | ' +
+        fmtHMS(logDurationSec(l)) +
+        '\n';
+    });
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    closeReport();
+    return;
+  }
+  const period = lastReportPeriod || reportPeriodForType(activeReportType, STATE.logs || []);
+  const logs = getLogsForType(activeReportType, period);
+  const totalUnits = logs.length;
+  const totalSec = logs.reduce(function (s, l) {
+    return s + logDurationSec(l);
+  }, 0);
+  const avg = totalUnits > 0 ? fmtHMS(Math.round(totalSec / totalUnits)) : '0s';
+
+  let text = '\uD83D\uDCCA *AbaYa Track \u2014 ' + activeReportType + ' Report*\n';
+  text += '_Window: ' + reportWindowLabel(activeReportType, period) + (period.fallbackApplied ? ' (yesterday fallback)' : '') + '_\n';
+  text += '_Generated: ' + new Date().toLocaleString() + '_\n\n';
+  text += '\uD83D\uDC54 *Summary*\n';
+  text += '\u2022 Total Completed: *' + totalUnits + ' units*\n';
+  text += '\u2022 Avg Cycle Time: *' + avg + '*\n';
+  text += '\u2022 Active Workers: *' + Object.keys(STATE.active || {}).length + '*\n\n';
+  text += '\uD83D\uDCCB *Recent Sessions*\n';
+
+  logs.slice(-10).reverse().forEach(l => {
+    const emp = empById(l.emp_id);
+    const ab = ABAYAS.find(a => a.id === l.abaya_id);
+    const t = new Date(l.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const logProcess = l.process || (emp ? emp.process : '?');
+    text += '\u25FD ' + t + ' | ' + (emp ? emp.name : '?') + ' | ' + (ab ? ab.code : '?') + ' | ' + logProcess + ' (' + fmtHMS(logDurationSec(l)) + ')';
+    if (logProcess === 'Invoice maker' && l.invoice_serial) {
+      const ser = String(l.invoice_serial).replace(/,/g, ', ');
+      const short = ser.length > 80 ? ser.slice(0, 80) + '\u2026' : ser;
+      text += '\n   Invoices (' + (l.invoice_count != null ? l.invoice_count : '?') + '): ' + short;
+    } else if (logProcess === 'Checker' && l.quantity != null) {
+      text += '\n   Quantity: ' + l.quantity;
+      if (l.checker_barcode != null && String(l.checker_barcode).trim() !== '') {
+        text += '\n   Barcode: ' + String(l.checker_barcode).trim().replace(/,/g, ', ');
+      }
+    }
+    text += '\n';
+  });
+
+  text += '\n\u2705 _Sent from AbaYa Track CEO Dashboard_';
+
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  closeReport();
+}
+
+// ─── CLOCK ────────────────────────────────────────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('dash-date');
+  if (el) el.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) +
+    ' \u2014 ' + new Date().toLocaleTimeString();
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+function fmtHMS(sec) {
+  if (window.AbayaUiCommon && typeof window.AbayaUiCommon.fmtHMS === 'function') {
+    return window.AbayaUiCommon.fmtHMS(sec);
+  }
+  return '0s';
+}
+
+function showToast(msg, type) {
+  if (window.AbayaUiCommon && typeof window.AbayaUiCommon.showToast === 'function') {
+    window.AbayaUiCommon.showToast(msg, type);
+  }
+}
+
+function toggleDashboardGuide(forceOpen) {
+  const panel = document.getElementById('dash-guide-panel');
+  const btn = document.getElementById('guide-toggle');
+  if (!panel || !btn) return;
+  const next = forceOpen == null ? !panel.classList.contains('open') : !!forceOpen;
+  panel.classList.toggle('open', next);
+  panel.setAttribute('aria-hidden', next ? 'false' : 'true');
+  btn.setAttribute('aria-expanded', next ? 'true' : 'false');
+  btn.textContent = next ? 'Hide simple guide' : 'Show simple guide';
+  try {
+    localStorage.setItem('dash-guide-open', next ? '1' : '0');
+  } catch (e) {}
+}
+
+function initDashboardGuideToggle() {
+  let open = false;
+  try {
+    open = localStorage.getItem('dash-guide-open') === '1';
+  } catch (e) {}
+  toggleDashboardGuide(open);
+}
+
+// ─── FLOOR DATA EXPORT (CSV / JSON) ───────────────────────────────────────────
+function applyFloorExportPreset() {
+  const sel = document.getElementById('floor-export-preset');
+  const fromEl = document.getElementById('floor-export-from');
+  const toEl = document.getElementById('floor-export-to');
+  if (!sel || !fromEl || !toEl) return;
+  const custom = sel.value === 'custom';
+  fromEl.disabled = !custom;
+  toEl.disabled = !custom;
+  if (!custom) {
+    fromEl.value = '';
+    toEl.value = '';
+  }
+}
+
+function floorExportQueryParams(includeSummary) {
+  const presetEl = document.getElementById('floor-export-preset');
+  const preset = presetEl ? presetEl.value : 'all';
+  const p = new URLSearchParams();
+  const now = new Date();
+  if (preset === 'month') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    p.set('from', String(start.getTime()));
+    p.set('to', String(end.getTime()));
+  } else if (preset === 'year') {
+    const y = now.getFullYear();
+    const start = new Date(y, 0, 1, 0, 0, 0, 0);
+    const end = new Date(y, 11, 31, 23, 59, 59, 999);
+    p.set('from', String(start.getTime()));
+    p.set('to', String(end.getTime()));
+  } else if (preset === 'custom') {
+    const f = document.getElementById('floor-export-from');
+    const t = document.getElementById('floor-export-to');
+    const fv = f && f.value ? f.value : '';
+    const tv = t && t.value ? t.value : '';
+    if (fv) p.set('from', String(new Date(fv + 'T00:00:00').getTime()));
+    if (tv) p.set('to', String(new Date(tv + 'T23:59:59.999').getTime()));
+  }
+  const sumEl = document.getElementById('floor-export-summary');
+  if (includeSummary && sumEl && sumEl.checked) {
+    p.set('summary', '1');
+  }
+  return p;
+}
+
+function downloadFloorExport(fmt) {
+  const includeSummary = fmt === 'json';
+  const secret = window.prompt(
+    'X-Export-Secret (from .env: FLOOR_EXPORT_SECRET or CATALOG_INGEST_SECRET):'
+  );
+  if (secret == null || String(secret).trim() === '') {
+    showToast('Export cancelled', 'info');
+    return;
+  }
+  const params = floorExportQueryParams(includeSummary);
+  const url = '/api/export/floor-sessions.' + fmt + (params.toString() ? '?' + params.toString() : '');
+  fetch(url, { headers: { 'X-Export-Secret': String(secret).trim() }, cache: 'no-store' })
+    .then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          throw new Error(t ? t.slice(0, 200) : 'HTTP ' + r.status);
+        });
+      }
+      return r.blob();
+    })
+    .then(function (blob) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fmt === 'csv' ? 'floor-sessions.csv' : 'floor-sessions.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      showToast('Download started', 'success');
+    })
+    .catch(function (e) {
+      showToast('Export failed: ' + (e.message || e), 'error');
+    });
+}
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  updateClock();
+  initDashboardGuideToggle();
+  initDashboardHoverImagePreview();
+  applyFloorExportPreset();
+  loadEmployeesFromServer();
+  loadWorkTypesFromServer();
+  refreshDashboardAbayaCatalog();
+  pollClientConfig();
+  setInterval(pollClientConfig, 30000);
+  /** Clock ticks every second; heavy live DOM refreshes throttle to reduce INP / main-thread work */
+  setInterval(updateClock, 1000);
+  setInterval(renderLiveSessions, 2500);
+
+  // ── Custom-range + Every-Employee-Every-Task wiring ──────────────────────
+  const repCustomApply = document.getElementById('rep-custom-apply');
+  const repCustomFrom = document.getElementById('rep-custom-from');
+  const repCustomTo = document.getElementById('rep-custom-to');
+  const repEveryone = document.getElementById('rep-everyone');
+  if (repCustomFrom && repCustomTo) {
+    // Default the pickers to the current month so a user clicking the
+    // button without picking gets a sensible range.
+    const todayYmd = (function () {
+      const d = new Date();
+      return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    })();
+    const monthStartYmd = (function () {
+      const d = new Date();
+      return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-01';
+    })();
+    if (!repCustomFrom.value) repCustomFrom.value = monthStartYmd;
+    if (!repCustomTo.value) repCustomTo.value = todayYmd;
+  }
+  if (repCustomApply) {
+    repCustomApply.onclick = function () {
+      customReportRange = {
+        fromYmd: repCustomFrom ? repCustomFrom.value : '',
+        toYmd: repCustomTo ? repCustomTo.value : '',
+      };
+      openReport('Custom');
+    };
+  }
+  if (repEveryone) {
+    repEveryone.onclick = function () {
+      openEveryEmployeeEveryTask();
+    };
+  }
+});
+
+/**
+ * Every-Employee-Every-Task view: opens a modal with the full log list
+ * for the picked range, grouped by employee. Each row shows start time,
+ * abaya code, process, duration, and any task-specific fields
+ * (invoice serial, quantity, checker barcode).
+ *
+ * Driven by the same date pickers as Custom Range. Defaults to the
+ * current month.
+ */
+function openEveryEmployeeEveryTask() {
+  const repCustomFrom = document.getElementById('rep-custom-from');
+  const repCustomTo = document.getElementById('rep-custom-to');
+  const fromYmd = (repCustomFrom && repCustomFrom.value) || (function () {
+    const d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-01';
+  })();
+  const toYmd = (repCustomTo && repCustomTo.value) || (function () {
+    const d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  })();
+  customReportRange = { fromYmd: fromYmd, toYmd: toYmd };
+  const period = reportPeriodForType('Custom', STATE.logs || []);
+  const logs = (STATE.logs || []).filter(function (l) {
+    const end = Number(l && l.end);
+    return Number.isFinite(end) && end >= period.startMs && end < period.endMs;
+  });
+  const empById = employeeIndexMap();
+  const abById = abayaIndexMap();
+  // Group by employee, then by ymd.
+  const byEmp = new Map();
+  for (const l of logs) {
+    const empId = String(l.emp_id || '?');
+    if (!byEmp.has(empId)) byEmp.set(empId, []);
+    byEmp.get(empId).push(l);
+  }
+  // Sort each employee's logs newest first, and sort employees by total
+  // units desc (most active first).
+  const empRows = Array.from(byEmp.entries()).map(function (entry) {
+    const id = entry[0];
+    const items = entry[1].slice().sort(function (a, b) { return Number(b.end) - Number(a.end); });
+    const totalSec = items.reduce(function (s, l) { return s + (Number(l.duration_sec) || 0); }, 0);
+    return { id: id, items: items, totalSec: totalSec };
+  }).sort(function (a, b) { return b.items.length - a.items.length; });
+
+  const modal = document.getElementById('modal-report');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const tsMeta = document.getElementById('modal-ts');
+  if (!modal || !title || !body) return;
+
+  title.textContent = 'Every Employee Every Task — ' + period.startYmd + ' to ' + period.endYmd;
+  if (tsMeta) tsMeta.textContent = 'Range picked: ' + fromYmd + ' \u2192 ' + toYmd + ' \u2022 ' + empRows.length + ' employee(s) \u2022 ' + logs.length + ' task(s)';
+
+  // Build a single scrollable container; one section per employee.
+  const sections = [];
+  if (!empRows.length) {
+    sections.push('<div style="padding:20px;color:var(--tx3);text-align:center">No tasks in this range. Pick a wider range or check that the factory has been logging.</div>');
+  }
+  for (const row of empRows) {
+    const emp = empById[row.id] || { name: '(unknown)', code: row.id, initials: '?' };
+    const rows = row.items.map(function (l) {
+      const ab = abById[l.abaya_id] || {};
+      const abayaLabel = ab.code || l.abaya_id || '—';
+      const start = l.start ? new Date(l.start) : null;
+      const end = l.end ? new Date(l.end) : null;
+      const timeLabel = start ? pad2(start.getHours()) + ':' + pad2(start.getMinutes()) + '–' + (end ? pad2(end.getHours()) + ':' + pad2(end.getMinutes()) : '?') : '?';
+      const ymd = start ? start.getFullYear() + '-' + pad2(start.getMonth() + 1) + '-' + pad2(start.getDate()) : '';
+      const mins = Math.max(1, Math.round((Number(l.duration_sec) || 0) / 60));
+      let extra = '';
+      if (l.invoice_count) extra += ' &middot; <span style="color:var(--am)">' + escape(String(l.invoice_count)) + ' invoices</span>';
+      if (l.invoice_serial) extra += ' <span style="color:var(--tx3);font-family:monospace;font-size:10px">' + escape(String(l.invoice_serial)) + '</span>';
+      if (l.quantity) extra += ' &middot; <span style="color:var(--am)">qty ' + escape(String(l.quantity)) + '</span>';
+      if (l.checker_barcode) extra += ' <span style="color:var(--tx3);font-family:monospace;font-size:10px">' + escape(String(l.checker_barcode)) + '</span>';
+      return '<tr>' +
+        '<td style="padding:6px 8px;color:var(--tx3);font-family:monospace;font-size:11px;white-space:nowrap">' + escape(ymd) + '</td>' +
+        '<td style="padding:6px 8px;color:var(--tx3);font-family:monospace;font-size:11px;white-space:nowrap">' + escape(timeLabel) + '</td>' +
+        '<td style="padding:6px 8px;color:var(--label);font-family:monospace">' + escape(abayaLabel) + '</td>' +
+        '<td style="padding:6px 8px">' + escape(l.process || '—') + extra + '</td>' +
+        '<td style="padding:6px 8px;text-align:right;color:var(--gr);font-family:monospace">' + mins + 'm</td>' +
+        '</tr>';
+    }).join('');
+    sections.push(
+      '<div style="margin-bottom:18px;border:1px solid var(--bd);border-radius:12px;overflow:hidden">' +
+        '<div style="padding:8px 12px;background:var(--s2);display:flex;align-items:center;gap:10px">' +
+          '<div style="width:32px;height:32px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">' + escape(emp.initials || (emp.name || '?').slice(0, 2).toUpperCase()) + '</div>' +
+          '<div style="flex:1"><div style="font-weight:700">' + escape(emp.name || '(unknown)') + '</div>' +
+            '<div style="font-size:11px;color:var(--tx3)">' + escape(emp.code || row.id) + ' \u2022 ' + row.items.length + ' task(s) \u2022 ' + Math.round(row.totalSec / 60) + ' min</div>' +
+          '</div>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+          '<thead><tr style="background:var(--s1);color:var(--label);font-size:10px;text-transform:uppercase;letter-spacing:.06em">' +
+            '<th style="padding:6px 8px;text-align:left">Date</th><th style="padding:6px 8px;text-align:left">Time</th>' +
+            '<th style="padding:6px 8px;text-align:left">Abaya</th><th style="padding:6px 8px;text-align:left">Process</th>' +
+            '<th style="padding:6px 8px;text-align:right">Min</th>' +
+          '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '</div>'
+    );
+  }
+  body.innerHTML = sections.join('');
+  // Cap the body height so long lists don't push the close button off-screen.
+  body.style.maxHeight = '60vh';
+  body.style.overflowY = 'auto';
+  modal.classList.add('open');
+}
+
+// ─── CHECK REPORT ────────────────────────────────────────────────────────────
+// Single-screen flow: open the modal → pick a date or range on the calendar
+// → see the production report → optionally record a cancellation or share
+// via WhatsApp. The hard work lives in /api/check-report; this file only
+// orchestrates. All timezone math reads CLIENT_WORKING_HOURS.timezone so
+// the report stays anchored to the factory, not the browser.
+
+const CR_STATE = {
+  step: 'calendar',         // 'calendar' | 'report'
+  tz: 'Asia/Dubai',
+  viewYear: 0,              // year of the month currently shown
+  viewMonth: 0,            // 0-indexed month currently shown
+  todayYmd: '',
+  config: null,            // { timezone, defaultFactory, factories, todayYmd }
+  factory: '',             // factory filter (empty = all)
+  fromYmd: '',
+  toYmd: '',
+  report: null,            // last server response
+};
+
+function crFactory() { return CR_STATE.config && CR_STATE.config.defaultFactory || 'Main Factory'; }
+function crFactories() { return (CR_STATE.config && CR_STATE.config.factories) || [crFactory()]; }
+
+function openCheckReport() {
+  const modal = document.getElementById('modal-check');
+  if (!modal) return;
+  modal.classList.add('open');
+  CR_STATE.step = 'calendar';
+  // Pull config (timezone + factory list + today) once, then render.
+  AbayaClientCommon.fetchJsonNoStore('/api/check-report/config')
+    .then(function (j) {
+      if (j && j.ok) {
+        CR_STATE.config = j;
+        CR_STATE.tz = j.timezone || 'Asia/Dubai';
+        CR_STATE.todayYmd = j.todayYmd || ymdInTimezone(Date.now(), CR_STATE.tz);
+        CR_STATE.factory = j.defaultFactory || '';
+      } else {
+        CR_STATE.tz = whTimezone();
+        CR_STATE.todayYmd = ymdInTimezone(Date.now(), CR_STATE.tz);
+      }
+      // Open the calendar on today's month.
+      const parts = CR_STATE.todayYmd.split('-');
+      CR_STATE.viewYear = parseInt(parts[0], 10);
+      CR_STATE.viewMonth = parseInt(parts[1], 10) - 1;
+      // Pre-select today so the user only has to click "Check Report".
+      CR_STATE.fromYmd = CR_STATE.todayYmd;
+      CR_STATE.toYmd = CR_STATE.todayYmd;
+      renderCrCalendar();
+    })
+    .catch(function () {
+      CR_STATE.tz = whTimezone();
+      CR_STATE.todayYmd = ymdInTimezone(Date.now(), CR_STATE.tz);
+      const parts = CR_STATE.todayYmd.split('-');
+      CR_STATE.viewYear = parseInt(parts[0], 10);
+      CR_STATE.viewMonth = parseInt(parts[1], 10) - 1;
+      CR_STATE.fromYmd = CR_STATE.todayYmd;
+      CR_STATE.toYmd = CR_STATE.todayYmd;
+      renderCrCalendar();
+      showToast('Could not load report config — using default timezone', 'error');
+    });
+}
+
+function closeCheckReport() {
+  const modal = document.getElementById('modal-check');
+  if (modal) modal.classList.remove('open');
+  CR_STATE.step = 'calendar';
+  CR_STATE.report = null;
+}
+
+function crWeekdayInTz(ymd, tz) {
+  const [y, m, d] = ymd.split('-').map(function (n) { return parseInt(n, 10); });
+  if (!y) return '';
+  // Use noon UTC to dodge the DST "fall back" hour.
+  const noon = Date.UTC(y, m - 1, d, 12, 0, 0, 0);
+  return new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(new Date(noon));
+}
+
+function crLongInTz(ymd, tz) {
+  const [y, m, d] = ymd.split('-').map(function (n) { return parseInt(n, 10); });
+  if (!y) return ymd;
+  const noon = Date.UTC(y, m - 1, d, 12, 0, 0, 0);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  }).format(new Date(noon));
+}
+
+function crPad2(n) { return String(n).padStart(2, '0'); }
+
+function crIsSameDay(a, b) { return a && b && a === b; }
+function crIsInRange(ymd, from, to) {
+  return ymd && from && to && ymd >= from && ymd <= to;
+}
+
+function renderCrCalendar() {
+  const body = document.getElementById('cr-body');
+  const sub  = document.getElementById('cr-sub');
+  const acts = document.getElementById('cr-actions');
+  if (!body) return;
+  sub.textContent = 'Pick a single date or a range. Production timezone: ' + CR_STATE.tz + '.';
+  // 6-row grid covers any month (some months span 6 weeks).
+  const year = CR_STATE.viewYear;
+  const month = CR_STATE.viewMonth;
+  const firstWd = new Date(Date.UTC(year, month, 1)).getUTCDay(); // 0 = Sun
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const prevMonthDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  // Header
+  const monthName = new Intl.DateTimeFormat('en-US', {
+    timeZone: CR_STATE.tz, month: 'long', year: 'numeric',
+  }).format(new Date(Date.UTC(year, month, 15)));
+  let cells = '';
+  // Leading muted cells from the previous month
+  for (let i = firstWd - 1; i >= 0; i--) {
+    const d = prevMonthDays - i;
+    cells += '<div class="cr-cell muted">' + d + '</div>';
+  }
+  // Real cells
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ymd = year + '-' + crPad2(month + 1) + '-' + crPad2(d);
+    const classes = ['cr-cell'];
+    if (crIsSameDay(ymd, CR_STATE.todayYmd)) classes.push('today');
+    if (crIsSameDay(ymd, CR_STATE.fromYmd) || crIsSameDay(ymd, CR_STATE.toYmd)) classes.push('selected');
+    else if (crIsInRange(ymd, CR_STATE.fromYmd, CR_STATE.toYmd)) classes.push('in-range');
+    cells += '<div class="' + classes.join(' ') + '" data-ymd="' + ymd + '" onclick="crSelectYmd(this.dataset.ymd)">' + d + '</div>';
+  }
+  // Trailing muted cells to fill the last week
+  const totalCells = firstWd + daysInMonth;
+  const trailing = (7 - (totalCells % 7)) % 7;
+  for (let i = 1; i <= trailing; i++) {
+    cells += '<div class="cr-cell muted">' + i + '</div>';
+  }
+
+  const factories = crFactories();
+  const factoryOpts = factories.map(function (f) {
+    return '<option value="' + escapeAttr(f) + '"' + (f === CR_STATE.factory ? ' selected' : '') + '>' + escapeHtml(f) + '</option>';
+  }).join('');
+
+  body.innerHTML =
+    '<div class="cr-cal">' +
+      '<div class="cr-cal-head">' +
+        '<div class="cr-nav"><button class="cr-nav-btn" onclick="crNavMonth(-1)">&#9664; Prev</button></div>' +
+        '<div class="cr-cal-title">' + escapeHtml(monthName) + '</div>' +
+        '<div class="cr-nav">' +
+          '<button class="cr-nav-btn" onclick="crToday()">Today</button>' +
+          '<button class="cr-nav-btn" onclick="crNavMonth(1)">Next &#9654;</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="cr-weekdays">' +
+        ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (w) {
+          return '<div class="cr-wd">' + w + '</div>';
+        }).join('') +
+      '</div>' +
+      '<div class="cr-grid">' + cells + '</div>' +
+    '</div>' +
+    '<div class="cr-summary">' +
+      '<div class="cr-factory-pick">' +
+        '<span>Factory</span>' +
+        '<select id="cr-factory" onchange="CR_STATE.factory=this.value">' + factoryOpts + '</select>' +
+      '</div>' +
+      '<div>' +
+        '<b id="cr-range-label">' + escapeHtml(crRangeLabel()) + '</b>' +
+        ' &middot; <span style="color:var(--tx3)">click one date for a single day, or two dates for a range</span>' +
+      '</div>' +
+    '</div>';
+
+  // Actions: Check Report + Close
+  acts.innerHTML =
+    '<button class="btn-close" onclick="closeCheckReport()">Close</button>' +
+    '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="crSubmit()">&#128197; Check Report</button>';
+}
+
+function crRangeLabel() {
+  if (!CR_STATE.fromYmd) return 'No date selected';
+  if (crIsSameDay(CR_STATE.fromYmd, CR_STATE.toYmd)) {
+    return crLongInTz(CR_STATE.fromYmd, CR_STATE.tz);
+  }
+  // Multi-day range: show weekday + day for each side
+  return crLongInTz(CR_STATE.fromYmd, CR_STATE.tz) + ' &rarr; ' + crLongInTz(CR_STATE.toYmd, CR_STATE.tz);
+}
+
+function crNavMonth(delta) {
+  let m = CR_STATE.viewMonth + delta;
+  let y = CR_STATE.viewYear;
+  while (m < 0) { m += 12; y -= 1; }
+  while (m > 11) { m -= 12; y += 1; }
+  CR_STATE.viewYear = y;
+  CR_STATE.viewMonth = m;
+  renderCrCalendar();
+}
+
+function crToday() {
+  const ymd = CR_STATE.todayYmd;
+  const parts = ymd.split('-').map(function (n) { return parseInt(n, 10); });
+  CR_STATE.viewYear = parts[0];
+  CR_STATE.viewMonth = parts[1] - 1;
+  CR_STATE.fromYmd = ymd;
+  CR_STATE.toYmd = ymd;
+  renderCrCalendar();
+}
+
+/**
+ * Click handler for a calendar day. Click 1 = set start, click 2 = set end
+ * (if after the start, otherwise restart from a new single day), click 3+ =
+ * always restart from a new single day.
+ */
+function crSelectYmd(ymd) {
+  if (!ymd) return;
+  if (!CR_STATE.fromYmd) {
+    CR_STATE.fromYmd = ymd;
+    CR_STATE.toYmd = ymd;
+  } else if (crIsSameDay(CR_STATE.fromYmd, CR_STATE.toYmd)) {
+    if (crIsSameDay(ymd, CR_STATE.fromYmd)) {
+      // Click on the same day twice — leave as a single day.
+    } else if (ymd > CR_STATE.fromYmd) {
+      CR_STATE.toYmd = ymd;
+    } else {
+      // User picked a date earlier than the start — flip the range.
+      CR_STATE.toYmd = CR_STATE.fromYmd;
+      CR_STATE.fromYmd = ymd;
+    }
+  } else {
+    // Already a range — start a fresh single-day pick.
+    CR_STATE.fromYmd = ymd;
+    CR_STATE.toYmd = ymd;
+  }
+  renderCrCalendar();
+}
+
+function crSubmit() {
+  if (!CR_STATE.fromYmd) {
+    showToast('Pick a date first', 'error');
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set('from', CR_STATE.fromYmd);
+  params.set('to', CR_STATE.toYmd);
+  if (CR_STATE.factory) params.set('factory', CR_STATE.factory);
+  AbayaClientCommon.fetchJsonNoStore('/api/check-report?' + params.toString())
+    .then(function (j) {
+      if (!j || !j.ok) {
+        showToast((j && j.error) || 'Could not load report', 'error');
+        return;
+      }
+      CR_STATE.report = j;
+      CR_STATE.step = 'report';
+      renderCrReport();
+    })
+    .catch(function () { showToast('Network error while loading report', 'error'); });
+}
+
+function renderCrReport() {
+  const r = CR_STATE.report;
+  if (!r) return;
+  const body = document.getElementById('cr-body');
+  const sub  = document.getElementById('cr-sub');
+  const acts = document.getElementById('cr-actions');
+  const titleEl = document.getElementById('cr-title');
+  titleEl.textContent = r.dateRange.sameDay ? 'Production Report' : 'Production Report (range)';
+  sub.innerHTML = '<b>' + escapeHtml(r.dateRange.label) + '</b>'
+    + ' &middot; <span style="color:var(--tx3)">Generated in ' + escapeHtml(r.timezone) + '</span>';
+
+  // Totals row — keep the same five metrics the spec asks for.
+  const t = r.totals;
+  const totalsHtml =
+    '<div class="cr-totals">' +
+      crTot('Invoices',  t.invoices,  'invoices') +
+      crTot('Abayas',    t.abayas,    'abayas') +
+      crTot('Delivered', t.delivered, 'delivered') +
+      crTot('Pending',   t.pending,   'pending') +
+      crTot('Cancelled', t.cancelled, 'cancelled') +
+    '</div>';
+
+  // Factory breakdown
+  const factoriesHtml = r.factories.length
+    ? r.factories.map(crRenderFactory).join('')
+    : '<div class="cr-empty">No factory activity in this range.</div>';
+
+  // Cancellation drilldown — only when there's at least one.
+  const cancelHtml = r.cancellations.length
+    ? '<div class="cr-section">' +
+        '<div class="cr-section-h">Cancellations <span class="cr-mini">traceable to invoice / abaya code</span></div>' +
+        '<div class="cr-cancel-list">' +
+          r.cancellations.map(crRenderCancelRow).join('') +
+        '</div>' +
+      '</div>'
+    : '';
+
+  body.innerHTML = totalsHtml + factoriesHtml + cancelHtml;
+
+  acts.innerHTML =
+    '<button class="btn-close" onclick="crBackToCalendar()">&#9664; Change Date</button>' +
+    '<button class="btn-close" onclick="openCancelModal()">+ Record Cancellation</button>' +
+    '<button class="btn-export" onclick="crExportWhatsApp()">&#128241; Send via WhatsApp</button>';
+}
+
+function crTot(label, val, kind) {
+  return '<div class="cr-tot"><div class="cr-tot-lbl">' + escapeHtml(label) +
+    '</div><div class="cr-tot-val ' + kind + '">' + Number(val || 0) + '</div></div>';
+}
+
+function crRenderFactory(f) {
+  const head =
+    '<div class="cr-section-h">' +
+      '<span>' + escapeHtml(f.name) +
+        '<span class="cr-mini"> &middot; ' + f.totals.invoices + ' invoice(s) &middot; ' + f.totals.abayas + ' abaya(s)</span>' +
+      '</span>' +
+      '<span class="cr-mini">' +
+        crMiniStat('Delivered', f.totals.delivered, 'delivered') +
+        crMiniStat('Pending',   f.totals.pending,   'pending') +
+        crMiniStat('Cancelled', f.totals.cancelled, 'cancelled') +
+      '</span>' +
+    '</div>';
+  const rows = f.invoices.map(function (inv) {
+    if (inv.synthetic) {
+      // No-invoice bucket — group the orphan abayas (cancelled/pending that
+      // never reached an invoice maker) so the factory total still adds up.
+      const abayaRows = inv.abayas.map(crRenderAbayaRow).join('');
+      return '<div class="cr-row"><div>' +
+        '<span class="cr-inv-name">(no invoice)</span>' +
+        '<span class="cr-tag">unassigned</span>' +
+        '</div><div class="cr-mini">' +
+        crMiniStat('Abayas', inv.totals.abayas, 'abayas') +
+        crMiniStat('Delivered', inv.totals.delivered, 'delivered') +
+        crMiniStat('Pending',   inv.totals.pending,   'pending') +
+        crMiniStat('Cancelled', inv.totals.cancelled, 'cancelled') +
+        '</div></div>' +
+        '<div style="background:var(--s1);border-top:1px solid var(--bd);padding:6px 12px">' + abayaRows + '</div>';
+    }
+    const abayaRows = inv.abayas.map(crRenderAbayaRow).join('');
+    return '<div class="cr-row"><div>' +
+      '<span class="cr-inv-name">' + escapeHtml(inv.no || '(no invoice)') + '</span>' +
+      '<span class="cr-mini"> &middot; ' + inv.totals.abayas + ' abaya(s)</span>' +
+      '</div><div class="cr-mini">' +
+      crMiniStat('Delivered', inv.totals.delivered, 'delivered') +
+      crMiniStat('Pending',   inv.totals.pending,   'pending') +
+      crMiniStat('Cancelled', inv.totals.cancelled, 'cancelled') +
+      '</div></div>' +
+      '<div style="background:var(--s1);border-top:1px solid var(--bd);padding:6px 12px">' + abayaRows + '</div>';
+  }).join('');
+  return '<div class="cr-section">' + head +
+    '<div class="cr-scroll">' + (rows || '<div class="cr-empty">No invoices</div>') + '</div>' +
+    '</div>';
+}
+
+function crMiniStat(label, val, kind) {
+  return ' <span class="cr-status ' + kind + '">' + Number(val || 0) + ' ' + escapeHtml(label) + '</span>';
+}
+
+function crRenderAbayaRow(a) {
+  const when = a.timestamp
+    ? new Date(a.timestamp).toLocaleString([], {
+        timeZone: CR_STATE.tz, month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      })
+    : '';
+  return '<div class="cr-abaya">' +
+    '<span>' + escapeHtml(a.code) + (when ? ' <span style="color:var(--tx3);font-size:10px">&middot; ' + escapeHtml(when) + '</span>' : '') + '</span>' +
+    '<span class="cr-status ' + (a.status || '').toLowerCase() + '">' + escapeHtml(a.status || '—') + '</span>' +
+  '</div>';
+}
+
+function crRenderCancelRow(c) {
+  const when = c.cancelledAt
+    ? new Date(c.cancelledAt).toLocaleString([], {
+        timeZone: CR_STATE.tz, year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      })
+    : '';
+  const pieces = [];
+  if (c.invoiceNo) pieces.push('Invoice <b>' + escapeHtml(c.invoiceNo) + '</b>');
+  if (c.abayaCode) pieces.push('Abaya <b>' + escapeHtml(c.abayaCode) + '</b>');
+  if (c.factory)   pieces.push('Factory <b>' + escapeHtml(c.factory) + '</b>');
+  if (c.cancelledBy) pieces.push('By <b>' + escapeHtml(c.cancelledBy) + '</b>');
+  if (c.reason)    pieces.push('<span style="color:var(--tx3)">' + escapeHtml(c.reason) + '</span>');
+  return '<div class="cr-cancel-row">' +
+    '<div style="display:flex;flex-wrap:wrap;gap:8px">' + pieces.join(' &middot; ') + '</div>' +
+    '<span class="cr-when">' + escapeHtml(when) + '</span>' +
+  '</div>';
+}
+
+function crBackToCalendar() {
+  CR_STATE.step = 'calendar';
+  renderCrCalendar();
+}
+
+function crExportWhatsApp() {
+  const r = CR_STATE.report;
+  if (!r) return;
+  const t = r.totals;
+  const lines = [];
+  lines.push('*AbaYa Track — Production Report*');
+  lines.push('_' + r.dateRange.label + '_');
+  lines.push('_Generated in ' + r.timezone + '_');
+  lines.push('');
+  lines.push('*Totals*');
+  lines.push('• Invoices: *' + t.invoices + '*');
+  lines.push('• Abayas: *' + t.abayas + '*');
+  lines.push('• Delivered: *' + t.delivered + '*');
+  lines.push('• Pending: *' + t.pending + '*');
+  lines.push('• Cancelled: *' + t.cancelled + '*');
+  lines.push('');
+  for (const f of r.factories) {
+    lines.push('*' + f.name + '*');
+    lines.push('  Invoices: ' + f.totals.invoices + ' • Abayas: ' + f.totals.abayas);
+    lines.push('  Delivered: ' + f.totals.delivered + ' • Pending: ' + f.totals.pending + ' • Cancelled: ' + f.totals.cancelled);
+    for (const inv of f.invoices) {
+      const label = inv.synthetic ? '(no invoice)' : (inv.no || '(no invoice)');
+      lines.push('   • ' + label + ' — ' + inv.totals.abayas + ' abaya(s)');
+      for (const a of inv.abayas) {
+        const when = a.timestamp
+          ? new Date(a.timestamp).toLocaleString([], {
+              timeZone: r.timezone, month: 'short', day: '2-digit',
+              hour: '2-digit', minute: '2-digit', hour12: false,
+            })
+          : '';
+        lines.push('       - ' + a.code + ' — ' + a.status + (when ? ' (' + when + ')' : ''));
+      }
+    }
+    lines.push('');
+  }
+  if (r.cancellations.length) {
+    lines.push('*Cancellations*');
+    for (const c of r.cancellations) {
+      const when = c.cancelledAt
+        ? new Date(c.cancelledAt).toLocaleString([], {
+            timeZone: r.timezone, month: 'short', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+          })
+        : '';
+      const parts = [];
+      if (c.invoiceNo) parts.push('Invoice ' + c.invoiceNo);
+      if (c.abayaCode) parts.push('Abaya ' + c.abayaCode);
+      if (c.factory)   parts.push('Factory ' + c.factory);
+      if (c.cancelledBy) parts.push('by ' + c.cancelledBy);
+      if (c.reason)    parts.push('— ' + c.reason);
+      lines.push('• ' + parts.join(' • ') + (when ? ' [' + when + ']' : ''));
+    }
+    lines.push('');
+  }
+  lines.push('_Sent from AbaYa Track CEO Dashboard_');
+  const text = lines.join('\n');
+  window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  showToast('WhatsApp opened with the report', 'success');
+}
+
+// ─── Cancellation recording (modal) ───────────────────────────────────────
+
+function openCancelModal() {
+  const modal = document.getElementById('modal-cancel');
+  if (!modal) return;
+  // Pre-fill the factory from the current report context
+  const facEl = document.getElementById('cn-factory');
+  const listEl = document.getElementById('cn-factory-list');
+  if (facEl) facEl.value = CR_STATE.factory || (CR_STATE.config && CR_STATE.config.defaultFactory) || '';
+  if (listEl) {
+    listEl.innerHTML = crFactories().map(function (f) {
+      return '<option value="' + escapeAttr(f) + '"></option>';
+    }).join('');
+  }
+  // Reset message area
+  const msg = document.getElementById('cn-msg');
+  if (msg) { msg.style.display = 'none'; msg.textContent = ''; }
+  modal.classList.add('open');
+  setTimeout(function () {
+    const inv = document.getElementById('cn-invoice');
+    if (inv) inv.focus();
+  }, 50);
+}
+
+function closeCancelModal() {
+  const modal = document.getElementById('modal-cancel');
+  if (modal) modal.classList.remove('open');
+}
+
+function submitCancellation() {
+  const factory   = String(document.getElementById('cn-factory').value || '').trim();
+  const invoiceNo = String(document.getElementById('cn-invoice').value || '').trim();
+  const abayaCode = String(document.getElementById('cn-abaya').value || '').trim();
+  const reason    = String(document.getElementById('cn-reason').value || '').trim();
+  const cancelledBy = String(document.getElementById('cn-by').value || '').trim();
+  const msg = document.getElementById('cn-msg');
+  function show(kind, text) {
+    if (!msg) return;
+    msg.className = 'cr-msg ' + kind;
+    msg.textContent = text;
+    msg.style.display = 'block';
+  }
+  if (!invoiceNo && !abayaCode) {
+    show('warn', 'Provide at least one of Invoice No or Abaya Code so the cancellation is traceable.');
+    return;
+  }
+  const body = JSON.stringify({
+    factory: factory || undefined,
+    invoiceNo: invoiceNo || undefined,
+    abayaCode: abayaCode || undefined,
+    reason: reason || undefined,
+    cancelledBy: cancelledBy || undefined,
+  });
+  fetch('/api/cancellations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body,
+  })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) {
+      if (!x.ok || !x.j || !x.j.ok) {
+        show('error', (x.j && x.j.error) || 'Could not save the cancellation');
+        return;
+      }
+      show('ok', 'Saved. Reloading the report…');
+      // Re-run the current report so the new cancellation shows up immediately.
+      crSubmit();
+      setTimeout(closeCancelModal, 800);
+    })
+    .catch(function () { show('error', 'Network error while saving'); });
+}
+

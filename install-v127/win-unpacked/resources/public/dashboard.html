@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbaYa Track — CEO Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet"></noscript>
+<style>
+:root {
+  --bg:#1f1633; --s1:#150f23; --s2:#241a38; --s3:#362d59;
+  --bd:rgba(54,45,89,0.5); --bd2:rgba(106,95,193,0.3);
+  --tx:#ffffff; --tx2:#e5e7eb; --tx3:#9c98b0;
+  --gr:#c2ef4e; --grb:rgba(194,239,78,0.12);
+  --rd:#ef4444; --rdb:rgba(239,68,68,0.12);
+  --bl:#6a5fc1; --blb:rgba(106,95,193,0.15);
+  --am:#ffb287; --amb:rgba(255,178,135,0.12);
+  --pu:#a78bfa; --pub:rgba(167,139,250,0.12);
+  --lime:#c2ef4e; --pink:#fa7faa;
+  --fn:'Rubik',-apple-system,system-ui,'Segoe UI',Helvetica,Arial,sans-serif;
+  --fn-display:'Sora','Rubik',sans-serif;
+  --fn-mono:Monaco,Menlo,'Ubuntu Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh;-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+button,.rep-btn,.dash-tab,.btn-close,.btn-export,input,select{user-select:none;-webkit-user-select:none}
+
+/* Top Bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:11px 18px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:200}
+.tb-brand{display:flex;align-items:center;gap:10px}
+.tb-logo{width:32px;height:32px;background:linear-gradient(135deg,#6a5fc1,#422082);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.tb-name{font-size:15px;font-weight:600;letter-spacing:-.3px}
+.tb-sub{font-size:11px;color:var(--tx3)}
+.live-badge{display:flex;align-items:center;gap:5px;background:var(--rdb);color:var(--rd);padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2px}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--rd);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--am);transition:background .3s;margin-right:5px}
+.conn-dot.online{background:var(--gr);animation:pdot 2s infinite}
+@keyframes pdot{0%,100%{box-shadow:0 0 0 0 rgba(194,239,78,.4)}70%{box-shadow:0 0 0 5px rgba(194,239,78,0)}}
+
+/* Release moment (outcome-first banner) */
+.release-moment-wrap{max-width:1200px;margin:0 auto;padding:0 18px 14px}
+.abaya-release-moment{position:relative;border-radius:20px;border:1px solid rgba(167,139,250,.38);background:linear-gradient(125deg,rgba(106,95,193,.22),rgba(21,15,35,.92));box-shadow:0 20px 56px rgba(4,2,10,.38);overflow:hidden}
+.abaya-release-moment__glow{position:absolute;inset:-40%;background:radial-gradient(closest-side,rgba(167,139,250,.25),transparent 70%);opacity:.9;pointer-events:none}
+.abaya-release-moment--motion .abaya-release-moment__glow{animation:armGlow 14s ease-in-out infinite alternate}
+@keyframes armGlow{from{transform:translate(-4%,-2%) scale(1)}to{transform:translate(4%,3%) scale(1.06)}}
+.abaya-release-moment__inner{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 20px;flex-wrap:wrap}
+.abaya-release-moment__eyebrow{font-size:10px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--pu);margin-bottom:8px}
+.abaya-release-moment__hook{font-family:var(--fn-display);font-size:clamp(20px,2.4vw,26px);font-weight:800;letter-spacing:-.03em;line-height:1.15;margin:0 0 8px}
+.abaya-release-moment__outcome{font-size:14px;color:var(--tx2);line-height:1.45;max-width:52ch;margin:0}
+.abaya-release-moment__actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+.abaya-release-moment__btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 18px;border-radius:14px;font-size:13px;font-weight:700;font-family:var(--fn);text-decoration:none;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.abaya-release-moment__btn--primary{background:linear-gradient(135deg,#8e6cff,#6f58d9);color:#fff;border:1px solid rgba(181,159,255,.55);box-shadow:0 10px 28px rgba(88,64,169,.45)}
+.abaya-release-moment__btn--primary:hover{transform:translateY(-1px)}
+.abaya-release-moment__btn--ghost{background:rgba(255,255,255,.06);color:var(--tx2);border:1px solid var(--bd2)}
+.abaya-release-moment__btn--ghost:hover{border-color:rgba(167,139,250,.45);color:var(--tx)}
+.abaya-release-moment__dismiss{background:transparent;border:none;color:var(--tx3);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline;padding:8px 4px;font-family:var(--fn)}
+.abaya-release-moment__dismiss:hover{color:var(--tx2)}
+@media(prefers-reduced-motion:reduce){.abaya-release-moment--motion .abaya-release-moment__glow{animation:none!important}}
+
+/* Layout */
+.dash{padding:18px;max-width:1200px;margin:0 auto}
+.dh{font-family:var(--fn-display);font-size:22px;font-weight:700;margin-bottom:4px}
+.ds{font-size:13px;color:var(--tx3);margin-bottom:20px}
+
+/* KPI */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.stat-card{background:rgba(255,255,255,0.08);border:1px solid var(--bd);border-radius:16px;padding:20px;backdrop-filter:blur(18px) saturate(180%);transition:all .3s;box-shadow:rgba(22,15,36,0.4) 0px 2px 8px}
+.stat-card:hover{transform:translateY(-2px);border-color:var(--bd2)}
+.stat-lbl{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.stat-val{font-size:32px;font-weight:800;letter-spacing:-1px;margin:8px 0 2px}
+.stat-sub{font-size:12px;color:var(--tx3)}
+
+/* Cards */
+.dash-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.dash-card{background:rgba(255,255,255,0.08);border:1px solid var(--bd);border-radius:16px;padding:20px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,0.4) 0px 2px 8px}
+.dash-card-title{font-size:12px;font-weight:600;margin-bottom:14px;color:var(--tx2);text-transform:uppercase;letter-spacing:.8px}
+
+/* Emp rows */
+.emp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid rgba(54,45,89,0.3);border-radius:8px;transition:background .15s}
+.emp-row:hover{background:rgba(106,95,193,0.08)}
+.emp-av{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden}
+.emp-av img{width:100%;height:100%;object-fit:cover}
+.bar-wrap{flex:1;height:6px;background:var(--s3);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+
+/* Reports */
+.rep-panel{background:linear-gradient(135deg,rgba(106,95,193,.12),rgba(167,139,250,.08));border:1px solid rgba(106,95,193,.3);border-radius:14px;padding:18px;margin-bottom:16px}
+.rep-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.rep-btn{display:flex;align-items:center;gap:6px;padding:10px 18px;border-radius:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #584674;background:#79628c;color:#fff;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px;box-shadow:rgba(0,0,0,0.1) 0px 1px 3px 0px inset}
+.rep-btn:hover{box-shadow:rgba(0,0,0,0.18) 0px 0.5rem 1.5rem;transform:translateY(-1px)}
+
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(21,15,35,0.85);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:640px;margin:auto;box-shadow:rgba(22,15,36,0.9) 0px 24px 80px;animation:pop .25s ease}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.modal-title{font-family:var(--fn-display);font-size:20px;font-weight:700;margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--tx2);margin-bottom:18px}
+.modal-actions{display:flex;gap:10px;margin-top:16px}
+.btn-export{flex:1;padding:14px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:700;border:none;border-radius:13px;font-size:14px;cursor:pointer;transition:all .2s;font-family:var(--fn);text-transform:uppercase;letter-spacing:0.2px}
+.btn-export:hover{transform:scale(1.01);opacity:.9}
+.btn-close{padding:14px 24px;background:var(--s2);color:var(--tx2);font-weight:600;border:1px solid var(--bd2);border-radius:13px;font-size:14px;cursor:pointer;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px}
+.btn-close:hover{background:var(--s3);color:var(--tx)}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;padding:12px 20px;font-size:13px;font-weight:500;z-index:1000;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap;max-width:90vw;text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0)}
+.toast.success{border-color:rgba(194,239,78,.4);background:rgba(194,239,78,.1);color:var(--gr)}
+.toast.error{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:var(--rd)}
+.toast.info{border-color:rgba(106,95,193,.4);background:rgba(106,95,193,.1);color:var(--bl)}
+
+.hover-preview-thumb{display:block;width:100%;height:100%;object-fit:cover}
+.fullscreen-hover-preview{position:fixed;inset:0;background:rgba(12,8,24,.92);display:none;align-items:center;justify-content:center;z-index:2500;pointer-events:none}
+.fullscreen-hover-preview.show{display:flex}
+.fullscreen-hover-preview img{max-width:min(92vw,1500px);max-height:92vh;object-fit:contain;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+
+.ceo-queue-banner{display:none;padding:8px 18px;background:rgba(251,191,36,.12);border-bottom:1px solid rgba(251,191,36,.35);font-size:12px;color:#fcd34d;text-align:center}
+.ceo-queue-banner strong{font-weight:700;color:#fde68a}
+
+.offline-restore-banner{display:none;padding:8px 18px;background:rgba(56,189,248,.1);border-bottom:1px solid rgba(56,189,248,.35);font-size:12px;color:#7dd3fc;text-align:center}
+.offline-restore-banner strong{font-weight:700;color:#bae6fd}
+
+.db-status-panel{display:none;margin:0 18px 12px;padding:12px;border:1px solid rgba(106,95,193,.3);border-radius:14px;background:rgba(255,255,255,.06);box-shadow:rgba(22,15,36,.22) 0 2px 8px}
+.db-status-panel.warn{border-color:rgba(251,191,36,.42);background:rgba(251,191,36,.08)}
+.db-status-panel.bad{border-color:rgba(239,68,68,.42);background:rgba(239,68,68,.08)}
+.db-status-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:12px;color:var(--tx2);font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.db-status-badge{font-size:10px;padding:4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);font-family:var(--fn-mono);color:var(--tx2)}
+.db-status-badge.ok{color:var(--gr);border-color:rgba(194,239,78,.35);background:rgba(194,239,78,.12)}
+.db-status-badge.warn{color:#fcd34d;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.12)}
+.db-status-badge.bad{color:var(--rd);border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.12)}
+.db-status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.db-status-cell{border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:9px;background:rgba(21,15,35,.35);min-width:0}
+.db-status-cell .k{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}
+.db-status-cell .v{font-size:12px;color:var(--tx2);font-family:var(--fn-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.dash-tab-bar{display:flex;gap:6px;margin-bottom:0;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.dash-tab{padding:10px 16px;border-radius:12px 12px 0 0;border:1px solid transparent;background:transparent;color:var(--tx3);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fn);transition:background .15s,color .15s;margin-bottom:-1px}
+.dash-tab:hover{color:var(--tx2);background:rgba(106,95,193,.08)}
+.dash-tab.active{background:var(--s2);border-color:var(--bd);border-bottom-color:var(--s2);color:var(--bl)}
+.dash-tab-panel{padding-top:12px}
+.guide-toggle{padding:8px 14px;border-radius:10px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx2);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fn)}
+.guide-toggle:hover{background:var(--s3);color:var(--tx)}
+.guide-panel{display:none;background:rgba(255,255,255,0.07);border:1px solid var(--bd);border-radius:14px;padding:14px;margin:10px 0 16px}
+.guide-panel.open{display:block}
+.guide-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.guide-block{background:var(--s2);border:1px solid rgba(54,45,89,.32);border-radius:10px;padding:10px}
+.guide-block h4{font-size:12px;color:var(--tx2);margin-bottom:6px}
+.guide-block p,.guide-block li{font-size:11px;color:var(--tx3);line-height:1.5}
+.guide-block ul{padding-left:16px}
+.guide-note{margin-top:10px;font-size:11px;color:var(--tx3)}
+
+@media(max-width:768px){
+  .stat-row{grid-template-columns:1fr 1fr}
+  .dash-row{grid-template-columns:1fr}
+  .rep-btns{flex-direction:column}
+  .rep-btn{justify-content:center}
+  .guide-grid{grid-template-columns:1fr}
+  .db-status-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:480px){
+  .stat-row{grid-template-columns:1fr 1fr}
+  .stat-val{font-size:24px}
+}
+
+/* ─── Check Report (calendar + production report) ───────────────────────────
+ * Lives inside the existing rep-panel and modal patterns — same color
+ * tokens, same border radius, same typography. Nothing new visually.
+ */
+.cr-wrap{display:flex;flex-direction:column;gap:14px}
+.cr-cal{background:var(--s2);border:1px solid var(--bd);border-radius:14px;padding:14px}
+.cr-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.cr-cal-title{font-family:var(--fn-display);font-size:15px;font-weight:700;color:var(--tx)}
+.cr-nav{display:flex;gap:6px}
+.cr-nav-btn{background:var(--s3);color:var(--tx2);border:1px solid var(--bd2);border-radius:8px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--fn)}
+.cr-nav-btn:hover{background:var(--bl);color:#fff;border-color:rgba(167,139,250,.5)}
+.cr-nav-btn:disabled{opacity:.4;cursor:not-allowed}
+.cr-weekdays,.cr-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cr-weekdays{margin-bottom:6px}
+.cr-wd{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;text-align:center;padding:4px 0;font-weight:600}
+.cr-cell{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;border-radius:10px;font-size:13px;font-weight:600;color:var(--tx2);background:var(--s1);border:1px solid var(--bd);cursor:pointer;transition:all .15s;position:relative;font-family:var(--fn)}
+.cr-cell:hover{border-color:var(--bl);color:var(--tx)}
+.cr-cell.muted{opacity:.3;cursor:default}
+.cr-cell.today{outline:1px solid var(--am);outline-offset:-2px}
+.cr-cell.selected{background:var(--bl);color:#fff;border-color:rgba(167,139,250,.7)}
+.cr-cell.in-range{background:rgba(106,95,193,.25);color:var(--tx);border-color:var(--bd2)}
+.cr-cell .cr-dot{position:absolute;bottom:4px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:var(--am)}
+.cr-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--tx2);padding:8px 4px;border-top:1px solid var(--bd)}
+.cr-summary b{color:var(--tx)}
+.cr-factory-pick{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cr-factory-pick select{padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2);font-family:var(--fn);font-size:12px}
+.cr-totals{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.cr-tot{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:10px;text-align:center}
+.cr-tot-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;font-weight:600}
+.cr-tot-val{font-size:20px;font-weight:800;color:var(--gr);font-family:var(--fn-display);letter-spacing:-.5px}
+.cr-tot-val.delivered{color:var(--gr)}
+.cr-tot-val.pending{color:var(--am)}
+.cr-tot-val.cancelled{color:var(--rd)}
+.cr-tot-val.abayas{color:var(--bl)}
+.cr-tot-val.invoices{color:var(--pu)}
+.cr-section{background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.cr-section-h{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--bd);font-size:12px;color:var(--tx2);font-weight:700;text-transform:uppercase;letter-spacing:.6px}
+.cr-section-h .cr-mini{font-size:10px;color:var(--tx3);font-weight:600;text-transform:none;letter-spacing:0}
+.cr-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px}
+.cr-row:last-child{border-bottom:0}
+.cr-factory-name{font-weight:700;color:var(--tx);font-size:13px}
+.cr-inv-name{font-weight:600;color:var(--tx2);font-family:var(--fn-mono);font-size:11px}
+.cr-abaya{font-family:var(--fn-mono);font-size:11px;color:var(--tx2);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.cr-status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+.cr-status.delivered{color:var(--gr);background:rgba(194,239,78,.12);border:1px solid rgba(194,239,78,.3)}
+.cr-status.pending{color:var(--am);background:rgba(255,178,135,.12);border:1px solid rgba(255,178,135,.3)}
+.cr-status.cancelled{color:var(--rd);background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
+.cr-status.synthetic{color:var(--tx3);background:transparent;border:1px dashed var(--bd2)}
+.cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
+.cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
+.cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
+.cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
+.cr-cancel-row .cr-when{color:var(--tx3);font-size:11px}
+.cr-form{display:flex;flex-direction:column;gap:10px}
+.cr-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--tx3);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.cr-form input,.cr-form select{padding:9px 11px;border-radius:9px;border:1px solid var(--bd2);background:var(--s1);color:var(--tx);font-family:var(--fn);font-size:13px}
+.cr-form input:focus,.cr-form select:focus{outline:none;border-color:var(--bl)}
+.cr-form-hint{font-size:11px;color:var(--tx3);line-height:1.5}
+.cr-divider{height:1px;background:var(--bd);margin:8px 0}
+.cr-tag{display:inline-block;padding:2px 8px;border-radius:6px;background:rgba(106,95,193,.15);color:var(--bl);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-left:6px}
+.cr-scroll{max-height:300px;overflow-y:auto}
+.cr-msg{padding:8px 12px;border-radius:9px;font-size:12px;line-height:1.45;background:var(--s1);border:1px solid var(--bd);color:var(--tx2)}
+.cr-msg.warn{border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08);color:#fde68a}
+.cr-msg.error{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08);color:#fca5a5}
+.cr-msg.ok{border-color:rgba(194,239,78,.35);background:rgba(194,239,78,.08);color:#d9f99d}
+@media(max-width:600px){
+  .cr-totals{grid-template-columns:repeat(2,1fr)}
+  .cr-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="tb-brand">
+    <div class="tb-logo">&#129525;</div>
+    <div>
+      <div class="tb-name">AbaYa Track</div>
+      <div class="tb-sub">CEO Dashboard</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <a href="/asset-upload.html" target="_blank" rel="noopener" style="font-size:12px;color:var(--label);text-decoration:underline">Media upload</a>
+    <button type="button" onclick="openCatalogImportPicker()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx2);cursor:pointer">Import catalog data</button>
+    <input id="catalog-import-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" onchange="handleCatalogImportSelected(event)">
+    <button type="button" onclick="openFloorSessionsImportPicker()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx2);cursor:pointer">Import usage data</button>
+    <input id="floor-sessions-import-input" type="file" accept=".json,application/json" style="display:none" onchange="handleFloorSessionsImportSelected(event)">
+    <div style="font-size:12px;color:var(--tx3);display:flex;align-items:center">
+      <span class="conn-dot" id="conn-dot"></span>
+      <span id="conn-label">Connecting...</span>
+    </div>
+    <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+  </div>
+</div>
+<div id="releaseMomentMount" class="release-moment-wrap"></div>
+<div id="ceo-queue-banner" class="ceo-queue-banner" role="status">
+  Cloud CEO sync is offline or backed up: <strong id="ceo-queue-pending">0</strong> session event(s) on disk — they send automatically when the link is back.
+</div>
+<div id="offline-restore-banner" class="offline-restore-banner" role="status">
+  <strong>Restored summary:</strong> floor data was loaded from saved JSON on this PC. Live updates apply on top.
+</div>
+<div id="persistence-health-banner" class="offline-restore-banner" role="status" style="display:none">
+  <strong>Storage warning:</strong> local data path is not writable. Check `.env` `OFFLINE_REPORT_DIR` / `CEO_INGEST_QUEUE_DIR`.
+</div>
+
+<div class="dash">
+
+  <section id="database-status-panel" class="db-status-panel" role="status" aria-live="polite">
+    <div class="db-status-title">
+      <span>Database Reflection</span>
+      <span id="db-status-badge" class="db-status-badge">checking</span>
+    </div>
+    <div class="db-status-grid">
+      <div class="db-status-cell"><div class="k">UI Source</div><div class="v" id="db-ui-source">-</div></div>
+      <div class="db-status-cell"><div class="k">Cloud Sync</div><div class="v" id="db-cloud-sync">-</div></div>
+      <div class="db-status-cell"><div class="k">Reconcile</div><div class="v" id="db-reconcile">-</div></div>
+      <div class="db-status-cell"><div class="k">Snapshot DB</div><div class="v" id="db-snapshot">-</div></div>
+    </div>
+  </section>
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;margin-top:4px">
+    <div class="dh">Production Dashboard</div>
+    <button type="button" id="guide-toggle" class="guide-toggle" aria-expanded="false" onclick="toggleDashboardGuide()">Show simple guide</button>
+  </div>
+  <div class="ds" id="dash-date">Loading...</div>
+  <div id="dash-guide-panel" class="guide-panel" aria-hidden="true">
+    <div class="guide-grid">
+      <div class="guide-block">
+        <h4>Start Here</h4>
+        <p>This screen shows what happened today on the floor. One unit means one finished station session.</p>
+        <ul>
+          <li>Green numbers: done work.</li>
+          <li>Blue rows: active right now.</li>
+          <li>Reports/export: share details to WhatsApp or files.</li>
+        </ul>
+      </div>
+      <div class="guide-block">
+        <h4>Today&rsquo;s Performance</h4>
+        <p>Shows every roster employee, including zero. Number is finished units on today&rsquo;s factory date only.</p>
+        <ul>
+          <li>Process line = what they are doing today.</li>
+          <li>If active now, shows live process.</li>
+          <li>If no activity today, shows No activity today.</li>
+        </ul>
+      </div>
+      <div class="guide-block">
+        <h4>Owner Questions</h4>
+        <ul>
+          <li>Why zero? No finished session today yet.</li>
+          <li>Why process changed? Worker moved stations.</li>
+          <li>Why fallback banner? Socket dropped, polling backup is active.</li>
+        </ul>
+      </div>
+      <div class="guide-block">
+        <h4>Supervisor Questions</h4>
+        <ul>
+          <li>Live session start times include date and time.</li>
+          <li>Station completions tabs show newest completions first.</li>
+          <li>iPad copy works: long-press text to select and copy.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="guide-note">Data scope note: dashboard uses recent server state window. If server window is shorter than factory day, early-day totals may be incomplete.</div>
+  </div>
+
+  <!-- CEO Reports Panel -->
+  <div class="rep-panel">
+    <div style="font-size:15px;font-weight:700;color:var(--bl);display:flex;align-items:center;gap:8px">
+      <span>&#128274;</span> Executive CEO Reports
+    </div>
+    <div style="font-size:11px;color:var(--tx2);margin-top:4px">Real-time data &mdash; view report then export directly to WhatsApp</div>
+    <div class="rep-btns">
+      <button class="rep-btn" onclick="openReport('Daily')" id="rep-daily">&#128241; Daily Report</button>
+      <button class="rep-btn" onclick="openReport('Weekly')" id="rep-weekly">&#128196; Weekly Report</button>
+      <button class="rep-btn" onclick="openReport('Monthly')" id="rep-monthly">&#128202; Monthly Report</button>
+      <button class="rep-btn" onclick="openReport('Yearly')" id="rep-yearly">&#128197; Yearly Report</button>
+      <button class="rep-btn" id="rep-check" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.5)">&#128197; Check Report</button>
+    </div>
+    <div class="rep-btns" style="margin-top:10px;align-items:center;flex-wrap:wrap">
+      <label style="font-size:12px;color:var(--label);font-weight:600">Custom range</label>
+      <label style="font-size:11px;color:var(--tx3);display:inline-flex;align-items:center;gap:4px">
+        From
+        <input type="date" id="rep-custom-from" style="padding:5px 8px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx2);font-family:var(--fn)">
+      </label>
+      <label style="font-size:11px;color:var(--tx3);display:inline-flex;align-items:center;gap:4px">
+        To
+        <input type="date" id="rep-custom-to" style="padding:5px 8px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx2);font-family:var(--fn)">
+      </label>
+      <button class="rep-btn" type="button" id="rep-custom-apply">&#128197; Custom Range Report</button>
+      <button class="rep-btn" type="button" id="rep-everyone" style="background:linear-gradient(135deg,#79628c,#422082)">&#128101; Every Employee Every Task</button>
+    </div>
+  </div>
+
+  <div class="rep-panel" style="margin-top:12px">
+    <div style="font-size:15px;font-weight:700;color:var(--am)">&#128200; Floor analytics (this PC)</div>
+    <div style="font-size:11px;color:var(--tx2);margin-top:4px">Uses sessions stored on this factory server since restart. For full history use the cloud CEO dashboard (D1).</div>
+    <div class="rep-btns" style="margin-top:12px">
+      <button class="rep-btn" type="button" onclick="openLocalProcessAnalytics()">Process times &amp; leaders</button>
+      <button class="rep-btn" type="button" onclick="openLocalTracePrompt()">&#128269; Trace item</button>
+    </div>
+  </div>
+
+  <div class="rep-panel" style="margin-top:12px">
+    <div style="font-size:15px;font-weight:700;color:var(--tx2)">&#128229; Export floor data (CSV / JSON)</div>
+    <div style="font-size:11px;color:var(--tx2);margin-top:4px">Sessions held in server memory on this PC. Requires <strong>X-Export-Secret</strong> from <code style="font-size:10px">.env</code> (<code style="font-size:10px">FLOOR_EXPORT_SECRET</code> or catalog ingest secret). Optional: include year/month summary in JSON.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px">
+      <label style="font-size:12px;color:var(--tx3)">Range
+        <select id="floor-export-preset" style="margin-left:6px;padding:6px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2);font-family:var(--fn)" onchange="applyFloorExportPreset()">
+          <option value="all">All on server</option>
+          <option value="month">This calendar month</option>
+          <option value="year">This calendar year</option>
+          <option value="custom">Custom dates</option>
+        </select>
+      </label>
+      <label style="font-size:12px;color:var(--tx3)">From
+        <input type="date" id="floor-export-from" disabled style="margin-left:6px;padding:6px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2)">
+      </label>
+      <label style="font-size:12px;color:var(--tx3)">To
+        <input type="date" id="floor-export-to" disabled style="margin-left:6px;padding:6px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx2)">
+      </label>
+      <label style="font-size:12px;color:var(--tx3);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="floor-export-summary"> JSON summary by month
+      </label>
+    </div>
+    <div class="rep-btns" style="margin-top:12px">
+      <button class="rep-btn" type="button" onclick="downloadFloorExport('json')">Download JSON</button>
+      <button class="rep-btn" type="button" onclick="downloadFloorExport('csv')">Download CSV</button>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-lbl">Completed Today</div>
+      <div class="stat-val" id="kpi-completed" style="color:var(--gr)">0</div>
+      <div class="stat-sub">&#8593; Real-time tracking</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Active Workers</div>
+      <div class="stat-val" id="kpi-active" style="color:var(--bl)">0</div>
+      <div class="stat-sub">on the floor now</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Avg Cycle Time</div>
+      <div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div>
+      <div class="stat-sub">per abaya unit</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">In Progress</div>
+      <div class="stat-val" id="kpi-inprog">0</div>
+      <div class="stat-sub">abayas on floor</div>
+    </div>
+  </div>
+
+  <!-- Row: Pareto + Process Efficiency -->
+  <div class="dash-row">
+    <div class="dash-card">
+      <div class="dash-card-title">&#127919; Pareto — Top 20% Workers</div>
+      <div id="pareto-chart"><div style="color:var(--tx3);font-size:13px;text-align:center;padding:20px">No data yet</div></div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-title">Process Efficiency</div>
+      <div id="proc-eff"><div style="color:var(--tx3);font-size:13px;padding:10px">No data yet</div></div>
+    </div>
+  </div>
+
+  <!-- All Employees Performance -->
+  <div class="dash-card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="dash-card-title" style="margin-bottom:0">All Employees — Today&rsquo;s Performance</div>
+      <div style="font-size:11px;color:var(--tx3)">&#11088; = Top 20% (Pareto)</div>
+    </div>
+    <div id="emp-perf"><div style="color:var(--tx3);font-size:13px;padding:16px;text-align:center">No sessions recorded yet</div></div>
+  </div>
+
+  <!-- Hourly Output -->
+  <div class="dash-card" style="margin-bottom:16px">
+    <div class="dash-card-title">Total time by abaya item code</div>
+    <div style="font-size:11px;color:var(--tx2);margin-bottom:10px;line-height:1.4">Each row is one garment: all finished station times summed, plus any active work still on the floor for that same item.</div>
+    <div id="abaya-totals-table"><div style="color:var(--tx3);font-size:13px;padding:16px;text-align:center">No garment sessions yet</div></div>
+  </div>
+
+  <div class="dash-row">
+    <div class="dash-card">
+      <div class="dash-card-title">Hourly output (9am–11pm, factory shift window)</div>
+      <div style="font-size:10px;color:var(--tx3);margin-top:-8px;margin-bottom:8px;line-height:1.4" id="shift-hint"></div>
+      <div id="hourly" style="display:flex;align-items:flex-end;gap:3px;height:80px;margin-top:6px"></div>
+      <div id="hlbl" style="display:flex;gap:3px;margin-top:4px"></div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-title">Live Active Sessions</div>
+      <div id="live-sessions">
+        <div style="font-size:12px;color:var(--tx3);text-align:center;padding:20px">No active sessions</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dash-card" style="margin-bottom:16px">
+    <div class="dash-card-title">Station completions</div>
+    <div style="font-size:11px;color:var(--tx2);margin-bottom:8px;line-height:1.45">Recent completions from this server memory (newest first). Switch tabs for invoice batches vs Checker QC.</div>
+    <div class="dash-tab-bar" role="tablist" aria-label="Completion type">
+      <button type="button" class="dash-tab active" role="tab" id="dash-tab-invoice" aria-selected="true" aria-controls="floor-tab-invoice" onclick="setDashboardFloorTab('invoice')">Invoice maker</button>
+      <button type="button" class="dash-tab" role="tab" id="dash-tab-checker" aria-selected="false" aria-controls="floor-tab-checker" onclick="setDashboardFloorTab('checker')">Checker</button>
+    </div>
+    <div id="floor-tab-invoice" class="dash-tab-panel" role="tabpanel" aria-labelledby="dash-tab-invoice">
+      <div id="recent-invoice-logs" style="max-height:280px;overflow-y:auto"></div>
+    </div>
+    <div id="floor-tab-checker" class="dash-tab-panel" style="display:none" role="tabpanel" aria-labelledby="dash-tab-checker" hidden>
+      <div id="recent-checker-logs" style="max-height:320px;overflow-y:auto"></div>
+    </div>
+  </div>
+
+</div><!-- .dash -->
+
+<!-- REPORT MODAL -->
+<div class="modal-overlay" id="modal-report">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-title">Report</div>
+    <div class="modal-sub" id="modal-sub"><span id="modal-ts"></span></div>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn-export" onclick="exportReport()">&#128241; Send via WhatsApp</button>
+      <button class="btn-close" onclick="closeReport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="alert" aria-live="polite"></div>
+<div class="fullscreen-hover-preview" id="fullscreen-hover-preview" aria-hidden="true">
+  <img id="fullscreen-hover-preview-img" alt="Preview">
+</div>
+
+<!-- ─── Check Report modal (calendar + production report) ──────────────────
+     Same overlay + box classes as the existing report modal; the body swaps
+     between a calendar view and a report view depending on the step. -->
+<div class="modal-overlay" id="modal-check" role="dialog" aria-modal="true" aria-labelledby="cr-title">
+  <div class="modal-box" style="max-width:780px">
+    <div class="modal-title" id="cr-title">Check Production Report</div>
+    <div class="modal-sub" id="cr-sub">Pick a single date or a range in the production timezone.</div>
+    <div id="cr-body" class="cr-wrap"></div>
+    <div class="modal-actions" id="cr-actions">
+      <button class="btn-close" onclick="closeCheckReport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Record-cancellation modal — minimal form, posts to /api/cancellations -->
+<div class="modal-overlay" id="modal-cancel" role="dialog" aria-modal="true" aria-labelledby="cn-title">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-title" id="cn-title">Record Cancellation</div>
+    <div class="modal-sub">Cancellation is a first-class operational state — a real record is required.</div>
+    <form id="cr-cancel-form" class="cr-form" onsubmit="event.preventDefault(); submitCancellation();">
+      <label>Factory
+        <input name="factory" id="cn-factory" placeholder="Main Factory" list="cn-factory-list" autocomplete="off">
+        <datalist id="cn-factory-list"></datalist>
+      </label>
+      <div class="cr-form-hint">At least one of <b>Invoice</b> or <b>Abaya Code</b> is required so the cancellation stays traceable.</div>
+      <label>Invoice No
+        <input name="invoiceNo" id="cn-invoice" placeholder="e.g. INV-2026-00128" autocomplete="off">
+      </label>
+      <label>Abaya Code
+        <input name="abayaCode" id="cn-abaya" placeholder="e.g. ABY-00483" autocomplete="off">
+      </label>
+      <label>Reason
+        <input name="reason" id="cn-reason" placeholder="material defect, customer change, ..." autocomplete="off">
+      </label>
+      <label>Cancelled by
+        <input name="cancelledBy" id="cn-by" placeholder="e.g. Misbah" autocomplete="off">
+      </label>
+      <div id="cn-msg" class="cr-msg" style="display:none"></div>
+      <div class="modal-actions" style="margin-top:4px">
+        <button type="button" class="btn-close" onclick="closeCancelModal()">Cancel</button>
+        <button type="submit" class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)">Save Cancellation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/release-moment.js"></script>
+<script>
+  if (window.AbaYaReleaseMoment) {
+    AbaYaReleaseMoment.init({ surface: 'lan-dashboard' });
+  }
+</script>
+<script src="/data.js"></script>
+<script src="/ui-common.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/client-common.js"></script>
+<script src="/dashboard.js"></script>
+</body>
+</html>

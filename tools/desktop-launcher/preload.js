@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
     ipcRenderer.removeAllListeners('proc-log');
     ipcRenderer.on('proc-log', (_e, payload) => fn(payload));
   },
+  onProcLogBatch(fn) {
+    ipcRenderer.removeAllListeners('proc-log-batch');
+    ipcRenderer.on('proc-log-batch', (_e, payload) => fn(payload));
+  },
   onUpdateStatus(fn) {
     ipcRenderer.removeAllListeners('update-status');
     ipcRenderer.on('update-status', (_e, payload) => fn(payload));

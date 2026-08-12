@@ -547,7 +547,7 @@
     main {
       min-height: 0;
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
       gap: 10px;
       padding: 12px 18px;
     }
@@ -587,6 +587,7 @@
       color: #ddd6ef;
       white-space: pre-wrap;
       word-break: break-word;
+      overflow-wrap: anywhere;
     }
     footer {
       font-size: 11px;
@@ -734,6 +735,10 @@
       <div class='log-wrap'>
         <div class='log-head'><span>Watcher Log</span><span id='watcherDot' class='dot'></span></div>
         <pre id='watcherLog'></pre>
+      </div>
+      <div class='log-wrap' id='dispatchWrap' hidden>
+        <div class='log-head'><span>Dispatch Log</span><span id='dispatchDot' class='dot'></span></div>
+        <pre id='dispatch'></pre>
       </div>
     </main>
 

@@ -1,12 +1,12 @@
 {
   "name": "abaya-desktop-launcher",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "private": true,
   "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
   "author": "Mohammad Abir Abbas",
   "main": "main.js",
   "scripts": {
-    "start": "node -r ./.pnp.cjs ./start-electron.cjs",
+    "start": "node ./start-electron.cjs",
     "dist:win": "electron-builder --win nsis --x64",
     "release:gh": "electron-builder --win nsis --x64 --publish always"
   },

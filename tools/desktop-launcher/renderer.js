@@ -2,6 +2,11 @@
 
 const srvEl = document.getElementById('serverLog');
 const watchEl = document.getElementById('watcherLog');
+// Dispatch pane: populated by onProcLogBatch when the main process streams
+// a `which: 'dispatch'` chunk. The element is hidden by default and only
+// shown when there's actually something to display (see applyProcLog).
+const dispatchEl = document.getElementById('dispatch');
+const dispatchWrap = document.getElementById('dispatchWrap');
 const badge = document.getElementById('statusBadge');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
@@ -65,6 +70,16 @@ let closeConfirmAudioCtx = null;
 
 function append(which, text) {
   const el = which === 'watcher' ? watchEl : srvEl;
+  appendRaw(el, text);
+}
+
+/**
+ * Batched append: many text chunks in one DOM write + one layout pass.
+ * Caller is responsible for grouping the chunks; this just writes the
+ * concatenated string and updates scroll position once.
+ */
+function appendRaw(el, text) {
+  if (!el || !text) return;
   el.textContent += text;
   if (el.textContent.length > MAX_CHARS) {
     el.textContent = el.textContent.slice(-MAX_CHARS);
@@ -740,9 +755,36 @@ function showCloseConfirm() {
     };
   }
 
+  // Single-event log channel (one-off messages from main process). The
+  // batched channel below carries the bulk of child process output.
   window.abayaLauncher.onProcLog(function (p) {
     append(p.which === 'watcher' ? 'watcher' : 'server', p.text);
   });
+  // Batched channel: main process coalesces ~100 ms of stdout/stderr
+  // chunks and ships them as a single array. We group by which to avoid
+  // interleaved DOM writes; one textContent update per which per flush.
+  if (window.abayaLauncher.onProcLogBatch) {
+    window.abayaLauncher.onProcLogBatch(function (batch) {
+      if (!Array.isArray(batch) || !batch.length) return;
+      let server = '', watcher = '', dispatch = '';
+      for (let i = 0; i < batch.length; i++) {
+        const item = batch[i];
+        if (item.which === 'watcher') watcher += item.text;
+        else if (item.which === 'dispatch') dispatch += item.text;
+        else server += item.text;
+      }
+      // Batched path: append all the text for each which in one DOM write.
+      if (server) appendRaw(srvEl, server);
+      if (watcher) appendRaw(watchEl, watcher);
+      if (dispatch && dispatchEl) {
+        appendRaw(dispatchEl, dispatch);
+        // Reveal the dispatch pane the first time we get a chunk for it.
+        // Keep the wrap element reference locally so we don't add another
+        // getElementById call on every batch.
+        if (dispatchWrap && dispatchWrap.hidden) dispatchWrap.hidden = false;
+      }
+    });
+  }
   window.abayaLauncher.onUpdateStatus(function (st) {
     applyUpdateStatus(st);
   });

@@ -961,9 +961,60 @@ function setupAutoUpdates() {
   })();
 }
 
-function sendLog(which, text) {
+/**
+ * Load .env values into process.env so the autoUpdater (and any other
+ * env-gated code) can see them at startup. The .env is sourced from
+ * FACTORY_ENV_FILE (set by the launcher for the packaged install) or
+ * from REPO_ROOT/.env (dev runs). Only keys that affect the autoUpdater
+ * are injected — process.env shouldn't be polluted wholesale.
+ *
+ * Critical for the GitHub feed: without a token, electron-updater's
+ * `releases.atom` endpoint returns 404 (GitHub deprecated anonymous
+ * access in 2024). Setting GH_TOKEN/GITHUB_TOKEN before setupAutoUpdates
+ * makes the feed work again.
+ */
+function loadDotenvIntoProcessEnv(repoRoot) {
+  const map = readDotenvMap(repoRoot);
+  // Whitelist of keys the autoUpdater / updater mirror resolution read.
+  // The factory server reads its own .env via dotenv at boot; we only
+  // mirror what the updater chain needs.
+  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'ABAYA_UPDATE_MIRROR_BASE_URL', 'CSC_LINK', 'CSC_KEY_PASSWORD'];
+  let injected = 0;
+  for (const k of keys) {
+    if (process.env[k]) continue; // env already wins
+    const v = String(map[k] || '').trim();
+    if (!v) continue;
+    process.env[k] = v;
+    injected += 1;
+  }
+  appendUpdateAudit('dotenv-injected', { injected: injected, keys: keys.filter(function (k) { return !!process.env[k]; }) });
+}
+
+// ── Log IPC batching ─────────────────────────────────────────────────────────
+// Chatty factory server output would otherwise flood the renderer one
+// chunk per stdout `data` event. Coalesce into ~100 ms windows (or a
+// hard cap of 50 items) so the renderer pays one DOM update per flush.
+const LOG_BATCH_INTERVAL_MS = 100;
+const LOG_BATCH_MAX_ITEMS = 50;
+let logBuffer = [];
+let logFlushTimer = null;
+
+function flushPendingLogs() {
+  if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null; }
+  if (!logBuffer.length) return;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('proc-log', { which, text });
+    mainWindow.webContents.send('proc-log-batch', logBuffer);
+  }
+  logBuffer = [];
+}
+
+function sendLog(which, text) {
+  if (!text) return;
+  logBuffer.push({ which, text });
+  if (logBuffer.length >= LOG_BATCH_MAX_ITEMS) {
+    flushPendingLogs();
+  } else if (!logFlushTimer) {
+    logFlushTimer = setTimeout(flushPendingLogs, LOG_BATCH_INTERVAL_MS);
   }
 }
 
@@ -1362,10 +1413,10 @@ function createWindow() {
   allowWindowClose = false;
   Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
-    width: 980,
-    height: 640,
-    minWidth: 640,
-    minHeight: 400,
+    width: 1180,
+    height: 760,
+    minWidth: 720,
+    minHeight: 480,
     backgroundColor: '#1f1633',
     title: 'AbaYa Track',
     autoHideMenuBar: true,
@@ -1409,8 +1460,12 @@ function shouldAutoStartSilently() {
 app.whenReady().then(function () {
   pendingUpdateApplyResult = readAndConsumePendingUpdateSuccess();
   createWindow();
-  setupAutoUpdates();
+  // Order matters: seed .env first, then load its values into process.env,
+  // THEN setupAutoUpdates — so the GitHub feed setFeedURL picks up the token
+  // and the LAN mirror URL is sourced from the freshly-created .env.
   ensureRuntimeSeedFiles();
+  loadDotenvIntoProcessEnv(REPO_ROOT);
+  setupAutoUpdates();
   if (shouldAutoStartSilently()) {
     setTimeout(function () {
       startAllServers().catch(function (err) {
@@ -1424,6 +1479,7 @@ app.whenReady().then(function () {
 });
 
 app.on('window-all-closed', function () {
+  flushPendingLogs();
   if (updateCheckTimer) {
     clearTimeout(updateCheckTimer);
     updateCheckTimer = null;
@@ -1433,6 +1489,7 @@ app.on('window-all-closed', function () {
 });
 
 app.on('before-quit', function () {
+  flushPendingLogs();
   stopAllProcs();
 });
 
