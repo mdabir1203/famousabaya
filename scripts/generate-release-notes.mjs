@@ -80,11 +80,25 @@ function main() {
   const tag = args.tag || process.env.GITHUB_REF_NAME || '';
   const version = args.version || process.env.RELEASE_VERSION || (tag ? tag.replace(/^v/, '') : 'next');
   const outputPath = args.output || path.join(root, 'release-notes.md');
+
+  // If a hand-written notes file is committed under docs/releases/v<version>.md,
+  // prefer it. The workflow verifies it exists before reaching this point, so
+  // a missing file here is a hard error and the release is aborted.
+  const committed = path.join(root, 'docs', 'releases', `v${version}.md`);
+  if (fs.existsSync(committed)) {
+    const content = fs.readFileSync(committed, 'utf8');
+    fs.writeFileSync(outputPath, content, 'utf8');
+    process.stdout.write(content + '\n');
+    process.stderr.write(`[release-notes] using committed ${path.relative(root, committed)}\n`);
+    return;
+  }
+
   const previousTag = getPreviousTag(tag);
   const commits = getCommitList(previousTag, tag);
   const notes = buildReleaseNotes({ tag, version, previousTag, commits });
   fs.writeFileSync(outputPath, notes, 'utf8');
   process.stdout.write(notes + '\n');
+  process.stderr.write(`[release-notes] no docs/releases/v${version}.md found — using auto-generated notes\n`);
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
