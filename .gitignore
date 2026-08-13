@@ -97,6 +97,11 @@ install/latest.yml
 install/win-unpacked/
 install/*.zip
 
+# Build output staging directories (electron-builder --prepackaged or alternate output)
+tools/desktop-launcher/build-out*/
+tools/desktop-launcher/build-prepacked*/
+install-v127/
+
 # Local runtime state and generated database snapshots
 data/desktop-launcher/
 data/pm2-home/

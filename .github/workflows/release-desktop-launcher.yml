@@ -104,24 +104,35 @@ jobs:
 
 
       # ----------------------------------------------------------
-      # GENERATE UNIQUE RELEASE VERSION
+      # READ CANONICAL VERSION FROM package.json
+      # Single source of truth: tools/desktop-launcher/package.json
+      # Releases always tag exactly that version (e.g. v1.2.7) — no
+      # timestamped variants. This keeps auto-update `latest.yml`
+      # aligned with the actual built EXE and prevents version drift.
       # ----------------------------------------------------------
 
-      - name: 🏷️ Generate Unique Release Version
+      - name: 🏷️ Read Canonical Launcher Version
         id: version
-        shell: bash
+        shell: pwsh
         run: |
-          DATE=$(date -u +"%Y.%m.%d")
-          TIME=$(date -u +"%H%M%S")
+          $pkg = Get-Content `
+            "$env:GITHUB_WORKSPACE/tools/desktop-launcher/package.json" `
+            -Raw | ConvertFrom-Json
 
-          VERSION="v${DATE}-${TIME}"
+          $raw = $pkg.version.Trim()
+          if ([string]::IsNullOrWhiteSpace($raw)) {
+            Write-Error "tools/desktop-launcher/package.json is missing a 'version' field"
+            exit 1
+          }
 
-          echo "=========================================="
-          echo "Generated Release Version: $VERSION"
-          echo "=========================================="
+          $tag = "v$raw"
+          Write-Host "=========================================="
+          Write-Host "Canonical launcher version: $raw"
+          Write-Host "Release tag:               $tag"
+          Write-Host "=========================================="
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+          "version=$raw"   | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append -NoNewline
+          "tag=$tag"       | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append -NoNewline
 
 
       # ----------------------------------------------------------
@@ -194,7 +205,7 @@ jobs:
       # BUILD ELECTRON WINDOWS LAUNCHER
       # ----------------------------------------------------------
 
-      - name: 🛠️ Build & Publish Signed Launcher
+      - name: 🛠️ Build Signed Launcher (no auto-publish)
         working-directory: tools/desktop-launcher
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
@@ -226,48 +237,34 @@ jobs:
         shell: pwsh
         run: |
 
+          $VERSION = "${{ steps.version.outputs.version }}"
           Write-Host "=========================================="
-          Write-Host "Verifying release artifacts..."
+          Write-Host "Verifying release artifacts for $VERSION ..."
           Write-Host "=========================================="
 
           $requiredFiles = @(
             "release-notes.md",
-            "dist/AbaYa-Track-v${{ steps.version.outputs.version }}.zip"
+            "dist/AbaYa-Track-v${VERSION}.zip",
+            "install/AbaYa-Track-Launcher-Setup-${VERSION}.exe",
+            "install/AbaYa-Track-Launcher-Setup-${VERSION}.exe.blockmap",
+            "install/latest.yml"
           )
 
           foreach ($file in $requiredFiles) {
-
             if (!(Test-Path $file)) {
               Write-Error "Required artifact missing: $file"
               exit 1
             }
-
             Write-Host "✓ Found: $file"
           }
 
-          $exeFiles = Get-ChildItem `
-            "dist/desktop-launcher" `
-            -Filter "*.exe" `
-            -ErrorAction SilentlyContinue
-
-          if (!$exeFiles) {
-            Write-Error "No Windows EXE found in dist/desktop-launcher."
+          # Sanity: the latest.yml should reference this exact version
+          $yml = Get-Content 'install/latest.yml' -Raw
+          if ($yml -notmatch "version: $([regex]::Escape($VERSION))") {
+            Write-Error "install/latest.yml does not reference version $VERSION"
             exit 1
           }
-
-          Write-Host "✓ Windows EXE found."
-
-          $ymlFiles = Get-ChildItem `
-            "dist/desktop-launcher" `
-            -Filter "*.yml" `
-            -ErrorAction SilentlyContinue
-
-          if (!$ymlFiles) {
-            Write-Error "No update metadata (.yml) found."
-            exit 1
-          }
-
-          Write-Host "✓ Update metadata found."
+          Write-Host "✓ latest.yml references version $VERSION"
 
           Write-Host ""
           Write-Host "All release artifacts verified successfully."
@@ -293,14 +290,23 @@ jobs:
           echo "Commit:  $GITHUB_SHA"
           echo "=========================================="
 
+          # electron-builder writes to install/ (per directories.output).
+          # The portable ZIP lives at dist/AbaYa-Track-v<version>.zip.
+          # If a release with this tag already exists (re-run after a
+          # failed first run), we replace its assets in place.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — replacing assets"
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+
           gh release create "$TAG" \
             --title "AbaYa Track Launcher $VERSION" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
             --latest \
-            "dist/desktop-launcher/"*.exe \
-            "dist/desktop-launcher/"*.yml \
-            "dist/desktop-launcher/"*.blockmap \
+            "install/AbaYa-Track-Launcher-Setup-${VERSION}.exe" \
+            "install/AbaYa-Track-Launcher-Setup-${VERSION}.exe.blockmap" \
+            "install/latest.yml" \
             "dist/AbaYa-Track-v${VERSION}.zip"
 
 

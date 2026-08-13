@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node ./start-electron.cjs",
     "dist:win": "electron-builder --win nsis --x64",
-    "release:gh": "electron-builder --win nsis --x64 --publish always"
+    "release:gh": "electron-builder --win nsis --x64 --publish never"
   },
   "packageManager": "yarn@4.13.0",
   "engines": {

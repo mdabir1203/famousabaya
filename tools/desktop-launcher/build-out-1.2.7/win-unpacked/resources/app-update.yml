@@ -1,9 +1,0 @@
-# dev-app-update.yml — used by electron-updater when running from source
-# (app.isPackaged === false). The runtime URL is selected by main.js at
-# runtime: it prefers ABAYA_UPDATE_MIRROR_BASE_URL from .env / process env
-# and falls back to this file only when that env var is empty. Keep this
-# generic on purpose — changing the channel here is an alternative to the
-# ring-based logic in setupAutoUpdates() and should be left alone.
-provider: generic
-url: http://127.0.0.1:3000/updates/stable/
-channel: latest
