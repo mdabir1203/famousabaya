@@ -1,0 +1,7 @@
+﻿{
+    "endpoint":  "/api/state?days=1",
+    "logs":  70,
+    "status":  200,
+    "responseBytes":  31724,
+    "logsWindowDays":  1
+}

@@ -1,0 +1,5 @@
+﻿"daysParam","status","responseBytes","topLevelLogsWindowDays","topLevelIngestLagMs","topLevelLogsFromYmd","topLevelLogsToYmd","stateMetaLagMode","logsCount","activeCount","perfCount"
+"1","200","26004","1","262317","2026-08-17","2026-08-17","warm","34","12","13"
+"7","200","57015","7","263060","2026-08-11","2026-08-17","warm","100","12","13"
+"30","200","57017","30","263672","2026-07-19","2026-08-17","warm","100","12","13"
+"90","200","57017","90","264320","2026-05-20","2026-08-17","warm","100","12","13"

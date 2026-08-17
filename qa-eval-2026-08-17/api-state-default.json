@@ -1,0 +1,25 @@
+﻿{
+    "logsSinceMs":  1752411921501,
+    "responseBytes":  2188167,
+    "d1Hydration":  {
+                        "completed":  true,
+                        "hydrated":  true,
+                        "count":  5104,
+                        "days":  90,
+                        "truncated":  false,
+                        "fromYmd":  "2026-05-20",
+                        "toYmd":  "2026-08-17",
+                        "reason":  "pending",
+                        "error":  "",
+                        "ms":  2080
+                    },
+    "topLevelIngestLagMs_present":  false,
+    "topLevelDbSnapshotTs_present":  false,
+    "logsWindowDays":  400,
+    "logs":  5104,
+    "truncated":  false,
+    "restoredFromOfflineCache":  true,
+    "logsTotalInMem":  5104,
+    "status":  200,
+    "endpoint":  "/api/state (default)"
+}

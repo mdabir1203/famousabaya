@@ -1,0 +1,6 @@
+﻿"daysParam","status","responseBytes","logsReturned","logsWindowDays","logsTruncated"
+"1","200","31724","70","1","False"
+"7","200","72247","165","7","False"
+"30","200","631283","1472","30","False"
+"90","200","2188166","5104","90","False"
+"400","200","2188167","5104","400","False"
