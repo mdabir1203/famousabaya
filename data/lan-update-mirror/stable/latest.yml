@@ -1,8 +1,8 @@
-﻿version: 1.2.7
+version: 1.2.8
 files:
-  - url: AbaYa-Track-Launcher-Setup-1.2.7.exe
-    sha512: 18j3W2u04DKRWduPK3mL+9IjQf80AGeWaUjOk3pFxhz509FK0invxjQZbJKcMC1xG266pdYIskNRduUXr4I1Ig==
-    size: 95890123
-path: AbaYa-Track-Launcher-Setup-1.2.7.exe
-sha512: 18j3W2u04DKRWduPK3mL+9IjQf80AGeWaUjOk3pFxhz509FK0invxjQZbJKcMC1xG266pdYIskNRduUXr4I1Ig==
-releaseDate: '2026-08-12T18:04:00.166Z'
+  - url: AbaYa-Track-Launcher-Setup-1.2.8.exe
+    sha512: ZmuE7p44nCuA5gLeFUNyA9mPTQ9DLnNmNmd319DBS2TD0TspdPu1llg+dzrRe5SWEU1C0sG1jHvIOT+m7F1l/A==
+    size: 96060746
+path: AbaYa-Track-Launcher-Setup-1.2.8.exe
+sha512: ZmuE7p44nCuA5gLeFUNyA9mPTQ9DLnNmNmd319DBS2TD0TspdPu1llg+dzrRe5SWEU1C0sG1jHvIOT+m7F1l/A==
+releaseDate: '2026-08-14T16:36:04.232Z'

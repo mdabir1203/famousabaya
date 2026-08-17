@@ -88,11 +88,22 @@ function ensureLauncherRuntimeDirs() {
     fs.mkdirSync(LAUNCHER_CACHE_DIR, { recursive: true });
     fs.mkdirSync(LAUNCHER_GPU_CACHE_DIR, { recursive: true });
     fs.mkdirSync(FACTORY_DATA_DIR, { recursive: true });
-    // First run of the packaged app: seed the stable .env from the bundled example
-    // so the factory server has a config file to edit (and cloud creds persist).
+    // First run of the packaged app: seed the stable .env so the factory server
+    // has a config file (cloud creds + LAN update mirror URL) and updates work
+    // out of the box. Priority:
+    //   1. install/.env.production  (the developer's real values, bundled in the
+    //      installer — gives the new install correct CF_INGEST_SECRET and
+    //      ABAYA_UPDATE_MIRROR_BASE_URL on day 1)
+    //   2. .env.example              (only has commented placeholders; the install
+    //      would start with a 401 cloud auth until someone edits the file)
     if (app && app.isPackaged && !fs.existsSync(FACTORY_ENV_FILE)) {
+      const prod = path.join(REPO_ROOT, '.env.production');
       const example = path.join(REPO_ROOT, '.env.example');
-      if (fs.existsSync(example)) fs.copyFileSync(example, FACTORY_ENV_FILE);
+      if (fs.existsSync(prod)) {
+        fs.copyFileSync(prod, FACTORY_ENV_FILE);
+      } else if (fs.existsSync(example)) {
+        fs.copyFileSync(example, FACTORY_ENV_FILE);
+      }
     }
   } catch (_) {}
 }

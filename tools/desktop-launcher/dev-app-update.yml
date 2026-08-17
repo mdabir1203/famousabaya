@@ -4,6 +4,7 @@
 # and falls back to this file only when that env var is empty. Keep this
 # generic on purpose — changing the channel here is an alternative to the
 # ring-based logic in setupAutoUpdates() and should be left alone.
+# Port matches .env / .env.example PORT=3111.
 provider: generic
-url: http://127.0.0.1:3000/updates/stable/
+url: http://127.0.0.1:3111/updates/stable/
 channel: latest

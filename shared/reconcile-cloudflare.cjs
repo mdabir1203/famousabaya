@@ -81,7 +81,7 @@ async function fetchCloudState(cfUrl, cfSecret, timeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(new Error('timeout')), timeoutMs || DEFAULT_FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(base + '/api/state', {
+    const res = await fetch(base + '/api/state?days=400&limit=5000', {
       method: 'GET',
       headers: cfSecret
         ? {

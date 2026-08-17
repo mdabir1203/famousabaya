@@ -241,7 +241,17 @@ export default {
     if (isCEORoute) {
       const token = extractCeoToken(request, url);
       const authed = token && (await isCeoAuthenticated(request, env, url));
-      if (!authed) {
+      // Factory server (reconcile loop, manual snapshots, ops scripts) uses the
+      // shared ingest secret to read the same state without needing a CEO
+      // session. Restricted to GET on state-shaped endpoints so a leaked
+      // INGEST_SECRET still can't push or mutate data.
+      const ingestSecret = (request.headers.get('X-Ingest-Secret') || '').trim();
+      const ingestOk =
+        request.method === 'GET' &&
+        ingestSecret &&
+        ingestSecret === (env.INGEST_SECRET || '').trim() &&
+        (path === '/api/state' || path === '/api/state/history');
+      if (!authed && !ingestOk) {
         if (path.startsWith('/api/')) {
           return errRes('Session expired. Please sign in again.', 401);
         }
@@ -274,7 +284,7 @@ export default {
       }
 
       if (path === '/api/state' && request.method === 'GET') {
-        return handleState(env);
+        return handleState(env, url);
       }
       if (path === '/api/state/history' && request.method === 'GET') {
         return await handleHistory(env, url);

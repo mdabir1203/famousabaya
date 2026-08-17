@@ -74,12 +74,29 @@ export async function handleReport(env, url) {
       FROM sessions ${dayFilter}
     `).bind(...activeDayBinds),
       env.DB.prepare(`
-      SELECT emp_id, MAX(emp_name) as emp_name, MAX(emp_process) as emp_process, MAX(emp_code) as emp_code,
-        COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec, COALESCE(SUM(duration_sec), 0) as active_time_sec,
-        MIN(started_at) as min_started_at, MAX(ended_at) as max_ended_at
-      FROM sessions ${dayFilter}
-      GROUP BY emp_id ORDER BY units DESC
-    `).bind(...activeDayBinds),
+      WITH agg AS (
+        SELECT emp_id, COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec,
+               COALESCE(SUM(duration_sec), 0) as active_time_sec,
+               MIN(started_at) as min_started_at, MAX(ended_at) as max_ended_at
+        FROM sessions ${dayFilter}
+        GROUP BY emp_id
+      ),
+      latest AS (
+        SELECT s.emp_id, s.emp_name, s.emp_process, s.emp_code, s.emp_color, s.emp_initials
+        FROM sessions s
+        JOIN (
+          SELECT emp_id, MAX(ended_at) AS last_end
+          FROM sessions ${dayFilter}
+          GROUP BY emp_id
+        ) m ON m.emp_id = s.emp_id AND m.last_end = s.ended_at
+      )
+      SELECT agg.emp_id, latest.emp_name, latest.emp_process, latest.emp_code,
+             latest.emp_color, latest.emp_initials,
+             agg.units, agg.avg_sec, agg.active_time_sec,
+             agg.min_started_at, agg.max_ended_at
+      FROM agg JOIN latest ON latest.emp_id = agg.emp_id
+      ORDER BY agg.units DESC
+    `).bind(...activeDayBinds, ...activeDayBinds),
       env.DB.prepare(`
       SELECT emp_process, COUNT(*) as units, ROUND(AVG(duration_sec)) as avg_sec, COALESCE(SUM(duration_sec), 0) as active_time_sec,
         MIN(started_at) as min_started_at, MAX(ended_at) as max_ended_at

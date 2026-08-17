@@ -345,6 +345,39 @@ function fetchStateFallback() {
     });
 }
 
+/**
+ * One-shot extended-history fetch used on first paint and on every socket
+ * (re)connect. The realtime socket bundle (state_update) already carries the
+ * configured lookback window (now 400 days by default), but a slow first
+ * state_update or a freshly-reconnected socket can leave STATE.logs too
+ * short for the report panel. Asking for ?days=400 from the HTTP endpoint
+ * guarantees the report panel has the full history it needs from the first
+ * render — without bloating the 3-second fallback poll (which still uses
+ * fetchStateFallback and the bundled default).
+ */
+function fetchStateExtendedHistory() {
+  // ?days=400 alone isn't enough: the worker's default cap is 100 unless
+  // ?days>=7 (which now bumps the cap to 5000) or ?limit= is set explicitly.
+  // Pass limit=5000 too so we get the full 400-day bundle in one round trip
+  // — the report panel needs every row in STATE.logs to render monthly,
+  // weekly, yearly, and custom-range correctly.
+  //
+  // Response shape: the worker returns a flat object (ok, ts, logs, perf,
+  // daily, ...). The local server (used on LAN) wraps the same fields in
+  // `.state`. Handle both so the extended history works against either.
+  fetchJsonSafe('/api/state?days=400&limit=5000', { cache: 'no-store' })
+    .then((d) => {
+      if (!d || !d.okHttp || !d.j || !d.j.ok) return;
+      const payload = d.j.state || d.j; // worker = flat, server = {state: {...}}
+      if (!payload || !payload.logs) return;
+      applyFallbackState(payload);
+    })
+    .catch(() => {
+      // Non-fatal: realtime socket is the primary path. The report panel
+      // will still work once a state_update arrives with the extended bundle.
+    });
+}
+
 function startFallbackPolling() {
   if (fallbackPollTimer) return;
   fallbackMode = true;
@@ -371,6 +404,10 @@ socket.on('connect', () => {
     showToast('Dashboard connected', 'success');
   }
   stopFallbackPolling();
+  // Pull an extended-history bundle on every (re)connect so the report
+  // panel has the full lookback the moment the socket is back. Cheap on
+  // the server: a single D1 (cloud) or in-memory (LAN) query.
+  fetchStateExtendedHistory();
 });
 socket.on('disconnect', () => {
   document.getElementById('conn-dot').classList.remove('online');
@@ -2593,6 +2630,10 @@ window.addEventListener('load', () => {
   refreshDashboardAbayaCatalog();
   pollClientConfig();
   setInterval(pollClientConfig, 30000);
+  // First-paint extended history so the report panel has year-long
+  // context before the first state_update lands (or right away if the
+  // socket never connects).
+  fetchStateExtendedHistory();
   /** Clock ticks every second; heavy live DOM refreshes throttle to reduce INP / main-thread work */
   setInterval(updateClock, 1000);
   setInterval(renderLiveSessions, 2500);

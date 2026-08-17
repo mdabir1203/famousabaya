@@ -51,12 +51,20 @@ export function dailyStatsColumnForProcess(proc) {
 }
 
 export function canonicalEmpProcess(raw) {
-  if (raw === 'Cutting') return 'Tailor (01)';
-  if (raw === 'Cutting master') return 'Tailor (01)';
-  if (raw === 'Stitching') return 'Tailor (02)';
-  if (raw === 'Finishing') return 'Hand Work';
-  if (WORK_TYPES.includes(raw)) return raw;
-  return raw || 'Tailor (01)';
+  if (raw == null) return 'Tailor (01)';
+  const t = String(raw).trim();
+  if (!t) return 'Tailor (01)';
+  // Case-insensitive aliases — the floor terminals don't always send Title
+  // case, and we used to silently drop "cutting" / "KHAKA WORK" / etc. from
+  // the report rollups. Normalize on read so old D1 rows and new push values
+  // land in the same bucket.
+  const lo = t.toLowerCase();
+  if (lo === 'cutting' || lo === 'cutting master') return 'Tailor (01)';
+  if (lo === 'stitching') return 'Tailor (02)';
+  if (lo === 'finishing') return 'Hand Work';
+  if (lo === 'khaka work') return 'Hand Work';
+  if (WORK_TYPES.includes(t)) return t; // keep Title case for display
+  return t; // unknown process — pass through unchanged
 }
 
 export function emptyProcessSplit() {

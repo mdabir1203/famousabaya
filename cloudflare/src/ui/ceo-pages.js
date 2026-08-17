@@ -650,7 +650,23 @@ async function poll(skipRefreshRetry) {
       }
       if (syncEl && renderOk) {
         const lagMs = Number(d.ingest_lag_ms || 0);
-        const lagText = Number.isFinite(lagMs) ? ' · lag ' + Math.round(lagMs / 1000) + 's' : '';
+        // Format lag as a human phrase so "4h of no events" doesn't look like
+        // a system failure — it usually means the factory is between shifts.
+        const lagMode = (d.state_meta && d.state_meta.lag_mode) || 'unknown';
+        const lagLabel = {
+          hot: 'live',
+          warm: 'paused',
+          idle: 'idle',
+          stale: 'stale',
+          'no-data': 'no data',
+        }[lagMode] || 'live';
+        let lagText = ' · ' + lagLabel;
+        if (lagMode === 'hot' && Number.isFinite(lagMs)) {
+          lagText = ' · ' + Math.round(lagMs / 1000) + 's';
+        } else if (Number.isFinite(lagMs)) {
+          // Idle/stale: show only the friendly word, not a giant seconds number.
+          lagText = ' · ' + lagLabel;
+        }
         syncEl.textContent =
           'Updated ' +
           new Date().toLocaleTimeString([], { timeZone: uiTz() }) +
@@ -1076,92 +1092,149 @@ function renderRecentInvoiceLogs() {
   el.innerHTML = html;
 }
 
+/** Show a non-blocking error banner at the top of the body so render failures
+ *  are visible without forcing the user to open devtools. Keeps the rest of
+ *  the page renderable. */
+function showRenderError(stage, err) {
+  try {
+    var msg = (err && (err.message || err.stack)) ? String(err.message || err.stack) : String(err || 'unknown');
+    if (msg.length > 240) msg = msg.slice(0, 240) + '\u2026';
+    var existing = document.getElementById('render-error-banner');
+    var body = '<div style="font-family:var(--fn-mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;margin-top:6px">' +
+      'Stage: ' + String(stage || '?') + '\n' +
+      msg + '</div>' +
+      '<div style="margin-top:8px;font-size:10.5px;opacity:.7">Hard-refresh (Ctrl+Shift+R) if this keeps appearing. The dashboard above is still live; only this section failed to render.</div>';
+    if (existing) {
+      existing.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+        '<div style="flex:1"><b>\u26A0 Render hiccup</b>' + body + '</div>' +
+        '<button type="button" onclick="this.parentNode.parentNode.remove()" style="background:transparent;border:0;color:#fff;font-size:16px;cursor:pointer;line-height:1;padding:0 4px">\u00d7</button></div>';
+      return;
+    }
+    var banner = document.createElement('div');
+    banner.id = 'render-error-banner';
+    banner.style.cssText = 'position:relative;margin:0 16px 14px;padding:14px 16px;border-radius:14px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.45);color:#ffd6d6;font-size:12.5px';
+    banner.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+      '<div style="flex:1"><b>\u26A0 Render hiccup</b>' + body + '</div>' +
+      '<button type="button" onclick="this.parentNode.parentNode.remove()" style="background:transparent;border:0;color:#fff;font-size:16px;cursor:pointer;line-height:1;padding:0 4px">\u00d7</button></div>';
+    var dash = document.querySelector('.dash');
+    if (dash && dash.parentNode) dash.parentNode.insertBefore(banner, dash.nextSibling);
+    else document.body.appendChild(banner);
+  } catch (_) { /* never let the banner itself break the page */ }
+}
+
+/** Run a render step; if it throws, surface the error and keep going so
+ *  the rest of the page still updates. */
+function safeRender(stage, fn) {
+  try { fn(); }
+  catch (e) {
+    console.error('[ceo-dashboard] renderAll step failed:', stage, e);
+    showRenderError(stage, e);
+  }
+}
+
 function renderAll() {
   const active = STATE.active || {};
   const perf = STATE.perf || [];
   const activeIds = Object.keys(active);
 
-  const completed = Number(STATE.completed_today) || 0;
-  const kpiCompleted = byId('kpi-completed', 'kpi-done');
-  const kpiActive = byId('kpi-active');
-  const kpiAvg = byId('kpi-avg');
-  const kpiEff = byId('kpi-eff');
-  if (kpiCompleted) kpiCompleted.textContent = completed;
-  if (kpiActive) kpiActive.textContent = activeIds.length;
-  if (completed > 0) {
-    if (kpiAvg) kpiAvg.textContent = fmtHMS(STATE.avg_cycle_sec_today || 0);
-    const eff = Number(STATE.efficiency_today) || 0;
-    if (kpiEff) {
-      kpiEff.textContent = eff + '%';
-      kpiEff.style.color = eff >= 80 ? 'var(--gr)' : eff >= 60 ? 'var(--am)' : 'var(--rd)';
+  safeRender('kpi', function () {
+    const completed = Number(STATE.completed_today) || 0;
+    const kpiCompleted = byId('kpi-completed', 'kpi-done');
+    const kpiActive = byId('kpi-active');
+    const kpiAvg = byId('kpi-avg');
+    const kpiEff = byId('kpi-eff');
+    if (kpiCompleted) kpiCompleted.textContent = completed;
+    if (kpiActive) kpiActive.textContent = activeIds.length;
+    if (completed > 0) {
+      if (kpiAvg) kpiAvg.textContent = fmtHMS(STATE.avg_cycle_sec_today || 0);
+      const eff = Number(STATE.efficiency_today) || 0;
+      if (kpiEff) {
+        kpiEff.textContent = eff + '%';
+        kpiEff.style.color = eff >= 80 ? 'var(--gr)' : eff >= 60 ? 'var(--am)' : 'var(--rd)';
+      }
+    } else {
+      if (kpiAvg) kpiAvg.textContent = '\u2014';
+      if (kpiEff) {
+        kpiEff.textContent = '\u2014';
+        kpiEff.style.color = '';
+      }
     }
-  } else {
-    if (kpiAvg) kpiAvg.textContent = '\u2014';
-    if (kpiEff) {
-      kpiEff.textContent = '\u2014';
-      kpiEff.style.color = '';
-    }
-  }
+  });
 
-  const ft = STATE.factory_today || '';
-  document.getElementById('dash-date').textContent =
-    (ft ? 'Factory day ' + ft + ' \u2014 ' : '') + new Date().toLocaleTimeString([], { timeZone: uiTz() });
-  const dn = document.getElementById('dubai-now');
-  if (dn) dn.textContent = 'Dubai time: ' + uiNowString();
-  const ws = document.getElementById('work-status');
-  if (ws) ws.textContent = 'Status: ' + String(STATE.working_status || '--');
+  safeRender('header', function () {
+    const ft = STATE.factory_today || '';
+    const dd = document.getElementById('dash-date');
+    if (dd) dd.textContent =
+      (ft ? 'Factory day ' + ft + ' \u2014 ' : '') + new Date().toLocaleTimeString([], { timeZone: uiTz() });
+    const dn = document.getElementById('dubai-now');
+    if (dn) dn.textContent = 'Dubai time: ' + uiNowString();
+    const ws = document.getElementById('work-status');
+    if (ws) ws.textContent = 'Status: ' + String(STATE.working_status || '--');
+  });
 
-  renderLiveSessionsBlock();
-  renderAbayaTotalsTable();
+  safeRender('live', renderLiveSessionsBlock);
+  safeRender('abaya-totals', renderAbayaTotalsTable);
 
-  // Emp perf bars
-  const sorted = perf.slice().sort((a,b)=>b.units-a.units);
-  const maxU = sorted.length ? sorted[0].units : 1;
-  const topN = Math.max(1, Math.ceil(sorted.length*0.2));
-  document.getElementById('emp-perf').innerHTML = sorted.length === 0
-    ? '<div style="color:var(--tx3);font-size:12px;text-align:center;padding:20px">No sessions yet</div>'
-    : sorted.map((p,i)=>{
-      const w = Math.max(2,Math.round((p.units/maxU)*100));
-      return '<div class="emp-row">' +
-        '<div class="emp-av" style="background:'+(p.color||'#666')+'">'+p.initials+'</div>' +
-        '<div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(i<topN?'\u2B50 ':'')+p.name+'<div style="font-size:10px;color:var(--tx3)">'+p.process+'</div></div>' +
-        '<div class="bar-wrap"><div class="bar-fill" style="width:'+w+'%;background:'+(p.color||'#3b82f6')+'88"></div></div>' +
-        '<div style="width:32px;text-align:right;font-size:13px;font-weight:700">'+p.units+'</div>' +
-        '<div style="width:38px;text-align:right;font-size:11px;color:var(--tx2)">'+p.eff+'%</div></div>';
+  safeRender('emp-perf', function () {
+    const sorted = perf.slice().sort((a,b)=>b.units-a.units);
+    const maxU = sorted.length ? sorted[0].units : 1;
+    const topN = Math.max(1, Math.ceil(sorted.length*0.2));
+    const ep = document.getElementById('emp-perf');
+    if (!ep) return;
+    ep.innerHTML = sorted.length === 0
+      ? '<div style="color:var(--tx3);font-size:12px;text-align:center;padding:20px">No sessions yet</div>'
+      : sorted.map((p,i)=>{
+        const w = Math.max(2,Math.round((p.units/maxU)*100));
+        return '<div class="emp-row">' +
+          '<div class="emp-av" style="background:'+(p.color||'#666')+'">'+p.initials+'</div>' +
+          '<div style="width:120px;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(i<topN?'\u2B50 ':'')+p.name+'<div style="font-size:10px;color:var(--tx3)">'+p.process+'</div></div>' +
+          '<div class="bar-wrap"><div class="bar-fill" style="width:'+w+'%;background:'+(p.color||'#3b82f6')+'88"></div></div>' +
+          '<div style="width:32px;text-align:right;font-size:13px;font-weight:700">'+p.units+'</div>' +
+          '<div style="width:38px;text-align:right;font-size:11px;color:var(--tx2)">'+p.eff+'%</div></div>';
+      }).join('');
+  });
+
+  safeRender('proc-split', function () {
+    const split = STATE.process_split_today || {};
+    const total = WORK_TYPES_ORDER.reduce(function(s,t){ return s + (Number(split[t])||0); }, 0) || 1;
+    const ps = document.getElementById('proc-split');
+    if (!ps) return;
+    ps.innerHTML = WORK_TYPES_ORDER.map(function(p){
+      var v = Number(split[p])||0;
+      var pct = Math.round((v/total)*100);
+      var col = procColorUI(p);
+      return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">'+p+'</span><span style="color:'+col+';font-weight:700">'+v+' units ('+pct+'%)</span></div>' +
+        '<div style="height:5px;background:var(--s3);border-radius:3px"><div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:3px;transition:width .5s"></div></div></div>';
     }).join('');
+  });
 
-  const split = STATE.process_split_today || {};
-  const total = WORK_TYPES_ORDER.reduce(function(s,t){ return s + (Number(split[t])||0); }, 0) || 1;
-  document.getElementById('proc-split').innerHTML = WORK_TYPES_ORDER.map(function(p){
-    var v = Number(split[p])||0;
-    var pct = Math.round((v/total)*100);
-    var col = procColorUI(p);
-    return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="font-weight:600">'+p+'</span><span style="color:'+col+';font-weight:700">'+v+' units ('+pct+'%)</span></div>' +
-      '<div style="height:5px;background:var(--s3);border-radius:3px"><div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:3px;transition:width .5s"></div></div></div>';
-  }).join('');
-
-  const hours = {};
-  const hourKeys = Object.keys(STATE.hourly_today || {}).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
-  if (!hourKeys.length) {
-    for (let h = ${FACTORY_HOURLY_START}; h <= ${FACTORY_HOURLY_END}; h++) {
-      hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
+  safeRender('hourly', function () {
+    const hours = {};
+    const hourKeys = Object.keys(STATE.hourly_today || {}).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!hourKeys.length) {
+      for (let h = ${FACTORY_HOURLY_START}; h <= ${FACTORY_HOURLY_END}; h++) {
+        hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
+      }
+    } else {
+      hourKeys.forEach((h) => {
+        hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
+      });
     }
-  } else {
-    hourKeys.forEach((h) => {
-      hours[h] = (STATE.hourly_today && STATE.hourly_today[h] != null) ? STATE.hourly_today[h] : 0;
-    });
-  }
-  const hVals = Object.values(hours);
-  const hMax = Math.max(...hVals,1);
-  document.getElementById('hourly').innerHTML = Object.entries(hours).map(([h,v])=>{
-    const ht = Math.max(4, Math.round((v/hMax)*68));
-    return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">' +
-      '<div style="font-size:9px;color:var(--tx3)">'+(v||'')+'</div>' +
-      '<div style="width:100%;height:'+ht+'px;background:linear-gradient(180deg,var(--bl),var(--pu));border-radius:3px 3px 0 0;opacity:'+(v?1:0.12)+'"></div></div>';
-  }).join('');
-  document.getElementById('hlbl').innerHTML = Object.keys(hours).map(h=>'<div style="flex:1;font-size:8px;color:var(--tx3);text-align:center">'+h+'</div>').join('');
+    const hVals = Object.values(hours);
+    const hMax = Math.max.apply(null, hVals.concat([1]));
+    const ho = document.getElementById('hourly');
+    if (ho) ho.innerHTML = Object.entries(hours).map(function (kv) {
+      var h = kv[0], v = kv[1];
+      const ht = Math.max(4, Math.round((v/hMax)*68));
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">' +
+        '<div style="font-size:9px;color:var(--tx3)">'+(v||'')+'</div>' +
+        '<div style="width:100%;height:'+ht+'px;background:linear-gradient(180deg,var(--bl),var(--pu));border-radius:3px 3px 0 0;opacity:'+(v?1:0.12)+'"></div></div>';
+    }).join('');
+    const hl = document.getElementById('hlbl');
+    if (hl) hl.innerHTML = Object.keys(hours).map(h=>'<div style="flex:1;font-size:8px;color:var(--tx3);text-align:center">'+h+'</div>').join('');
+  });
 
-  renderRecentInvoiceLogs();
+  safeRender('recent-invoice-logs', renderRecentInvoiceLogs);
 }
 
 async function openAnalytics() {

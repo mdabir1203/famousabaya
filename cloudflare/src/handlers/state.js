@@ -12,8 +12,17 @@ import {
 } from '../working-hours.js';
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
 
-/** GET /api/state — single D1.batch for reads (fewer internal round trips). */
-export async function handleState(env) {
+/** GET /api/state — single D1.batch for reads (fewer internal round trips).
+ *
+ * Query params:
+ *   ?days=<n>   how many days of history to include in the `logs` field.
+ *               Defaults to 1 (realtime behavior) and is clamped to [1, 400].
+ *               The dashboard's report panel asks for `?days=400` so weekly /
+ *               monthly / yearly reports can be aggregated from the bundle
+ *               instead of having to issue a separate /api/report call.
+ *   ?limit=<n>  hard cap on log rows; clamped to [1, 5000].
+ */
+export async function handleState(env, url) {
   const factoryToday = factoryTodayString(env);
   const workingCfg = await getWorkingHoursConfig(env);
   const todayKey = weekdayKeyInTz(Math.floor(Date.now() / 1000), workingCfg.timezone || 'Asia/Dubai');
@@ -22,6 +31,31 @@ export async function handleState(env) {
   const hourEnd = windowsToday.length
     ? Math.floor((windowsToday[windowsToday.length - 1][1] - 1) / 60)
     : FACTORY_HOURLY_END;
+
+  // Resolve the log lookback from ?days= (or default to 1 to preserve
+  // legacy realtime behavior — no unbounded queries against D1).
+  const rawDays = parseInt((url && url.searchParams && url.searchParams.get('days')) || '1', 10);
+  const days = Math.max(1, Math.min(400, Number.isFinite(rawDays) ? rawDays : 1));
+  // Default cap is 100 for the realtime "last 24 hours" path, but when the
+  // caller asks for a wider window (?days>=7) they want the full history that
+  // the window covers — silently truncating to 100 was the root cause of
+  // "monthly/weekly/yearly reports all show the same numbers" on the cloud
+  // dashboard. Callers can still override with ?limit=N (capped at 5000).
+  const rawLimit = parseInt((url && url.searchParams && url.searchParams.get('limit')) || '', 10);
+  const defaultLimit = days >= 7 ? 5000 : 100;
+  const limit = Math.max(
+    1,
+    Math.min(5000, Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : defaultLimit)
+  );
+
+  // Compute the lower bound day_date in the factory timezone, then keep
+  // everything in one D1 round trip via WHERE day_date >= ?.
+  const [ty, tm, td] = factoryToday.split('-').map(Number);
+  const startDate = new Date(Date.UTC(ty, tm - 1, td));
+  startDate.setUTCDate(startDate.getUTCDate() - (days - 1));
+  const fromYmd = startDate.getUTCFullYear() + '-' +
+    String(startDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
+    String(startDate.getUTCDate()).padStart(2, '0');
 
   const stmtActive = env.DB.prepare(`
       SELECT emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
@@ -33,20 +67,38 @@ export async function handleState(env) {
         abaya_id, abaya_code, station, started_at, ended_at, duration_sec,
         hour_of_day, day_date, invoice_count, invoice_serial,
         NULL as quantity, NULL as checker_barcode
-      FROM sessions ORDER BY ended_at DESC LIMIT 100
-    `);
+      FROM sessions WHERE day_date >= ? AND day_date <= ?
+      ORDER BY ended_at DESC LIMIT ?
+    `).bind(fromYmd, factoryToday, limit);
+  // Per-employee perf: pick the *latest* emp_name / emp_process / emp_code /
+  // emp_color / emp_initials (by ended_at), not the alphabetical MAX().
+  // MAX() on TEXT is alphabetical in SQLite, so when one emp_id is reused
+  // for a new joiner the dashboard would show the alphabetically-later name
+  // — which is the wrong person. Subquery picks the most-recent row per emp.
   const stmtPerf = env.DB.prepare(`
-      SELECT emp_id,
-        MAX(emp_name) as emp_name, MAX(emp_process) as emp_process,
-        MAX(emp_color) as emp_color, MAX(emp_initials) as emp_initials,
-        COUNT(*) as units,
-        ROUND(AVG(duration_sec)) as avg_sec,
-        SUM(duration_sec) as total_sec
-      FROM sessions
-      WHERE day_date = ?
-      GROUP BY emp_id
-      ORDER BY units DESC
-    `).bind(factoryToday);
+      WITH agg AS (
+        SELECT emp_id, COUNT(*) as units,
+               ROUND(AVG(duration_sec)) as avg_sec,
+               SUM(duration_sec) as total_sec
+        FROM sessions
+        WHERE day_date = ?
+        GROUP BY emp_id
+      ),
+      latest AS (
+        SELECT s.emp_id, s.emp_name, s.emp_process, s.emp_color, s.emp_initials
+        FROM sessions s
+        JOIN (
+          SELECT emp_id, MAX(ended_at) AS last_end
+          FROM sessions
+          WHERE day_date = ?
+          GROUP BY emp_id
+        ) m ON m.emp_id = s.emp_id AND m.last_end = s.ended_at
+      )
+      SELECT agg.emp_id, latest.emp_name, latest.emp_process, latest.emp_color, latest.emp_initials,
+        agg.units, agg.avg_sec, agg.total_sec
+      FROM agg JOIN latest ON latest.emp_id = agg.emp_id
+      ORDER BY agg.units DESC
+    `).bind(factoryToday, factoryToday);
   const stmtDaily = env.DB.prepare(`
       SELECT stat_date, total_units, total_sec, cutting_units, stitch_units, finish_units,
         tailor_01_units, tailor_02_units, hand_work_units, stone_work_units,
@@ -216,6 +268,18 @@ export async function handleState(env) {
   }, 0);
   const sourceTs = Math.max(latestFinishedMs, latestActiveStartedMs, serverNowTs);
   const ingestLagMs = Math.max(0, serverNowTs - Math.max(latestFinishedMs, latestActiveStartedMs));
+  // Lag thresholds (ms): "hot" = within typical D1 query latency + push queue.
+  // "warm" = no event in 5 min but factory likely just paused. "idle" = 30 min+ of
+  // silence — the factory isn't pushing because there's no activity, not because
+  // the cloud is broken. "stale" is reserved for genuine problems (D1 issues,
+  // long-running write queue, clock skew). Anything > 4h is a yellow flag the
+  // factory hasn't sent anything in a long time.
+  let lagMode;
+  if (ingestLagMs <= 5000) lagMode = 'hot';
+  else if (ingestLagMs <= 5 * 60 * 1000) lagMode = 'warm';
+  else if (ingestLagMs <= 30 * 60 * 1000) lagMode = 'idle';
+  else if (ingestLagMs <= 4 * 60 * 60 * 1000) lagMode = 'stale';
+  else lagMode = 'no-data';
 
   return jsonRes(
     {
@@ -225,9 +289,15 @@ export async function handleState(env) {
       db_snapshot_ts: latestFinishedMs || serverNowTs,
       server_now_ts: serverNowTs,
       ingest_lag_ms: ingestLagMs,
+      logs_window_days: days,
+      logs_from_ymd: fromYmd,
+      logs_to_ymd: factoryToday,
       state_meta: {
         source: 'cloudflare-worker-d1',
-        lag_mode: ingestLagMs <= 2500 ? 'hot' : ingestLagMs <= 10000 ? 'warm' : 'stale',
+        lag_mode: lagMode,
+        logs_window_days: days,
+        logs_from_ymd: fromYmd,
+        logs_to_ymd: factoryToday,
       },
       factory_today: factoryToday,
       completed_today: completedToday,

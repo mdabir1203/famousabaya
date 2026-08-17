@@ -18,6 +18,18 @@ const DATA_DIR = (function () {
   return path.join(__dirname, 'data');
 })();
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (_) {}
+
+// Compute the stable uploads root once. When the launcher spawns the server it
+// sets ABAYA_DATA_DIR → we move employee/item photos to <stable>/public/uploads
+// so a future .exe update or fresh reinstall never wipes the gallery. Without
+// ABAYA_DATA_DIR (dev runs) we keep the install-relative path identical to
+// pre-fix behavior. The URL paths in the API + browser stay /uploads/...
+const STABLE_UPLOADS_PUBLIC = (function () {
+  const d = String(process.env.ABAYA_DATA_DIR || '').trim();
+  if (!d) return null;
+  const abs = path.isAbsolute(d) ? d : path.join(__dirname, d);
+  return path.join(abs, 'public', 'uploads');
+})();
 if (!process.env.SQLITE_SNAPSHOT_DIR) process.env.SQLITE_SNAPSHOT_DIR = path.join(DATA_DIR, 'sqlite-snapshots');
 if (!process.env.OFFLINE_REPORT_DIR) process.env.OFFLINE_REPORT_DIR = path.join(DATA_DIR, 'offline-dashboard-reports');
 if (!process.env.CEO_INGEST_QUEUE_DIR) process.env.CEO_INGEST_QUEUE_DIR = DATA_DIR;
@@ -97,6 +109,21 @@ app.use(
     },
   })
 );
+// Stable uploads dir (employee / item photos). When ABAYA_DATA_DIR is set, files
+// live there so an .exe update/reinstall doesn't wipe the gallery. URLs stay
+// /uploads/employees/<file> so the browser/UI doesn't change.
+if (STABLE_UPLOADS_PUBLIC) {
+  app.use(
+    '/uploads',
+    express.static(STABLE_UPLOADS_PUBLIC, {
+      setHeaders(res, fp) {
+        if (/\.(jpe?g|png|gif|webp|svg)$/i.test(String(fp || ''))) {
+          res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+        }
+      },
+    })
+  );
+}
 app.use(express.json());
 
 // Trailing slash normalization middleware: 308-redirects /api/state/ → /api/state so tablet browsers don't hit 404.
@@ -188,8 +215,16 @@ app.get('/api/updates/mirror-health', (req, res) => {
 });
 
 const UPLOADS_PUBLIC = path.join(__dirname, 'public', 'uploads');
-const UPLOAD_EMP_DIR = path.join(UPLOADS_PUBLIC, 'employees');
-const UPLOAD_ITEM_DIR = path.join(UPLOADS_PUBLIC, 'items');
+// UPLOAD_EMP_DIR / UPLOAD_ITEM_DIR are derived from STABLE_UPLOADS_PUBLIC
+// (computed above) so employee + item photos land in <ABAYA_DATA_DIR>/public
+// when the launcher spawns the server — survives .exe updates and reinstalls.
+// Dev runs (no ABAYA_DATA_DIR) keep the install-relative behavior.
+const UPLOAD_EMP_DIR = STABLE_UPLOADS_PUBLIC
+  ? path.join(STABLE_UPLOADS_PUBLIC, 'employees')
+  : path.join(UPLOADS_PUBLIC, 'employees');
+const UPLOAD_ITEM_DIR = STABLE_UPLOADS_PUBLIC
+  ? path.join(STABLE_UPLOADS_PUBLIC, 'items')
+  : path.join(UPLOADS_PUBLIC, 'items');
 
 function ensurePublicUploadDirs() {
   try {
@@ -250,16 +285,26 @@ const uploadXlsxMem = multer({
 /** Link employees to uploads/employees/emp_{barcode}.ext when photo column empty. */
 function attachEmployeeImagesFromDisk() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  // Check both locations: stable data dir (preferred, update-safe) and the
+  // install-relative public dir (legacy/dev). Whichever has the file wins.
+  const searchRoots = STABLE_UPLOADS_PUBLIC
+    ? [STABLE_UPLOADS_PUBLIC, path.join(__dirname, 'public', 'uploads')]
+    : [path.join(__dirname, 'public', 'uploads')];
   for (let i = 0; i < EMPLOYEES.length; i++) {
     const e = EMPLOYEES[i];
     if (e.photo && String(e.photo).trim()) continue;
     const base = 'emp_' + sanitizeUploadToken(e.barcode);
+    let matched = false;
     for (let xi = 0; xi < exts.length; xi++) {
-      const rel = 'uploads/employees/' + base + exts[xi];
-      if (fs.existsSync(path.join(__dirname, 'public', rel))) {
-        e.photo = rel;
-        break;
+      const file = base + exts[xi];
+      for (let ri = 0; ri < searchRoots.length; ri++) {
+        if (fs.existsSync(path.join(searchRoots[ri], 'employees', file))) {
+          e.photo = 'uploads/employees/' + file;
+          matched = true;
+          break;
+        }
       }
+      if (matched) break;
     }
   }
 }
@@ -267,16 +312,26 @@ function attachEmployeeImagesFromDisk() {
 /** Link catalog rows to uploads/items/item_{barcode}.ext when icon empty. */
 function attachItemImagesFromDisk() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  // Same dual-root search as attachEmployeeImagesFromDisk: stable data dir
+  // first (update-safe), install-relative dir as a legacy/dev fallback.
+  const searchRoots = STABLE_UPLOADS_PUBLIC
+    ? [STABLE_UPLOADS_PUBLIC, path.join(__dirname, 'public', 'uploads')]
+    : [path.join(__dirname, 'public', 'uploads')];
   for (let i = 0; i < abayaCatalog.length; i++) {
     const a = abayaCatalog[i];
     if (a.icon != null && String(a.icon).trim() !== '') continue;
     const base = 'item_' + sanitizeUploadToken(a.barcode);
+    let matched = false;
     for (let xi = 0; xi < exts.length; xi++) {
-      const rel = 'uploads/items/' + base + exts[xi];
-      if (fs.existsSync(path.join(__dirname, 'public', rel))) {
-        a.icon = rel;
-        break;
+      const file = base + exts[xi];
+      for (let ri = 0; ri < searchRoots.length; ri++) {
+        if (fs.existsSync(path.join(searchRoots[ri], 'items', file))) {
+          a.icon = 'uploads/items/' + file;
+          matched = true;
+          break;
+        }
       }
+      if (matched) break;
     }
   }
 }
@@ -1299,9 +1354,17 @@ let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
 let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
 
+// STATE_LOG_WINDOW_MS: how far back /api/state broadcasts logs in its realtime bundle.
+// Default 400 days — long enough to back every report (Daily / Weekly / Monthly /
+// Yearly / Custom) without the report panel having to issue a separate fetch.
+// The realtime socket bundle is the source of truth for the dashboard; capping
+// it at 24h was the root cause of "Daily / Monthly / Yearly all show the same
+// numbers" because the report panel only sees the most-recent 24h of rows.
 const STATE_LOG_WINDOW_MS = Math.max(
   60000,
-  Number(process.env.STATE_LOG_WINDOW_MS) > 0 ? Number(process.env.STATE_LOG_WINDOW_MS) : 24 * 60 * 60 * 1000
+  Number(process.env.STATE_LOG_WINDOW_MS) > 0
+    ? Number(process.env.STATE_LOG_WINDOW_MS)
+    : 400 * 24 * 60 * 60 * 1000
 );
 const STATE_LOG_MAX_ROWS = Math.max(
   100,
@@ -1535,14 +1598,39 @@ function parseStateLimit(qLimit) {
 }
 
 /**
+ * Resolve the lookback window for /api/state from a `?days=<n>` query string.
+ * Bounded to [1, 400] so a typo can't blow out memory; the realtime socket
+ * broadcast still uses the bundled default (now 400 days) — this helper is
+ * the HTTP-only override for "give me X days of history right now."
+ * @param {string|number|undefined} raw
+ * @returns {number|null} lookback in ms, or null when missing/invalid
+ */
+function parseStateDaysMs(raw) {
+  const n = parseInt(String(raw == null ? '' : raw), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const clamped = Math.max(1, Math.min(400, n));
+  return clamped * 24 * 60 * 60 * 1000;
+}
+
+/**
  * Bounded logs for HTTP + Socket.IO (default: last STATE_LOG_WINDOW_MS, cap STATE_LOG_MAX_ROWS).
- * Optional query: ?since=<epoch_ms>&limit=<n>
+ * Optional query:
+ *   ?since=<epoch_ms>  explicit lower bound, wins over the default window
+ *   ?days=<n>          shorthand for `since=now-(n*86400000)`; clamped 1..400
+ *   ?limit=<n>         cap on returned rows; clamped to STATE_LOG_MAX_ROWS
+ *
+ * The realtime socket broadcast (no `req`) keeps the bundled default. HTTP
+ * callers — including the dashboard's report panel on first paint — can ask
+ * for a wider window than the socket bundle.
  */
 function getRealtimeStateBundle(req) {
   const now = Date.now();
   const q = req && req.query ? req.query : {};
   let sinceMs = parseStateSinceMs(q.since, now);
-  if (sinceMs == null) sinceMs = now - STATE_LOG_WINDOW_MS;
+  if (sinceMs == null) {
+    const daysMs = parseStateDaysMs(q.days);
+    sinceMs = daysMs != null ? now - daysMs : now - STATE_LOG_WINDOW_MS;
+  }
   let maxRows = parseStateLimit(q.limit);
   if (maxRows == null) maxRows = STATE_LOG_MAX_ROWS;
 
@@ -1570,6 +1658,7 @@ function getRealtimeStateBundle(req) {
       logs_in_window_before_cap: inWindowBeforeCap,
       logs_truncated: truncated,
       logs_since_ms: sinceMs,
+      logs_window_days: Math.max(1, Math.min(400, Math.round((now - sinceMs) / (24 * 60 * 60 * 1000)))),
       restored_from_offline_cache: offlineReportRestored,
       d1_hydration: hydrationResult ? {
         completed: hydrationCompletedAt > 0,
@@ -3799,6 +3888,31 @@ server.listen(PORT, bindHost, () => {
   const ROSTER_PULL_MS = Math.max(5000, Number(process.env.ROSTER_PULL_INTERVAL_MS) || 60000);
   setInterval(refreshEmployeesFromCloud, ROSTER_PULL_MS);
   setInterval(refreshWorkTypesFromCloud, ROSTER_PULL_MS);
+  // Mirror the local roster up to the cloud periodically so the CEO dashboard
+  // sees the full directory even if no edits have happened on this machine since
+  // the last push. Without this the cloud can stay empty (and the dashboard's
+  // employee directory / per-process split would be empty) until someone
+  // touches a roster row — which triggers the existing on-edit push.
+  if (CF_URL && CF_SECRET) {
+    const ROSTER_PUSH_MS = Math.max(15000, Number(process.env.ROSTER_PUSH_INTERVAL_MS) || 300000);
+    const pushRosterTick = function () {
+      void pushEmployeesToCloud(EMPLOYEES).then(function (r) {
+        if (!r.pushed && r.reason !== 'cloud-not-configured') {
+          console.warn('[roster] periodic employees push failed:', r.error);
+        }
+      });
+      void pushWorkTypesToCloud(FACTORY_WORK_TYPES.slice()).then(function (r) {
+        if (!r.pushed && r.reason !== 'cloud-not-configured') {
+          console.warn('[roster] periodic work-types push failed:', r.error);
+        }
+      });
+    };
+    // Push once shortly after boot so a fresh install gets its roster into the
+    // cloud even if no one edits the local list right away.
+    setTimeout(pushRosterTick, 5000);
+    setInterval(pushRosterTick, ROSTER_PUSH_MS);
+    console.log(`  Roster mirror: every ${Math.round(ROSTER_PUSH_MS / 1000)}s (employees + work types → cloud)`);
+  }
   setInterval(persistOfflineDashboardReport, 60000);
   setImmediate(persistOfflineDashboardReport);
   if (SQLITE_SNAPSHOT_ENABLED) {

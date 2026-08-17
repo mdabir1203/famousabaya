@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Channel = "stable",
   [string]$Version = "",
   [switch]$SkipGitHubPublish
@@ -7,6 +7,24 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
+
+# ─── Install-time .env seed ──────────────────────────────────────────────────
+# The packaged app seeds %APPDATA%\AbaYa Track\.env on first run from
+# install\.env.production. This MUST have the real CF_INGEST_SECRET and
+# ABAYA_UPDATE_MIRROR_BASE_URL — otherwise a fresh install hits 401 on every
+# cloud push and the auto-updater falls through to GitHub (also 401 since 2024).
+$prodEnv = Join-Path $PSScriptRoot ".env.production"
+if (-not (Test-Path $prodEnv)) {
+  Write-Warning "install\.env.production is missing — copying from .env as a fallback."
+  $devEnv = Join-Path $root ".env"
+  if (Test-Path $devEnv) {
+    Copy-Item $devEnv $prodEnv -Force
+  } else {
+    throw "Cannot seed install\.env.production: $root\.env not found. Create one (e.g. from .env.example) before building."
+  }
+} else {
+  Write-Host "[INFO] Using existing install\.env.production as the packaged-app .env seed" -ForegroundColor Green
+}
 
 # Load .env file to get GH_TOKEN
 $envFile = Join-Path $root ".env"
