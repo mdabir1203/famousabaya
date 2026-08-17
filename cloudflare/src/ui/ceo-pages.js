@@ -1821,7 +1821,7 @@ function exportWA() {
     });
     lines.push('');
     lines.push('_AbaYa Track - Cloudflare D1_');
-    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
+    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
     closeModal();
     return;
   }
@@ -1847,7 +1847,7 @@ function exportWA() {
     });
     lines.push('');
     lines.push('_AbaYa Track_');
-    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
+    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
     closeModal();
     return;
   }
@@ -1956,7 +1956,7 @@ function exportWA() {
   }
   lines.push('');
   lines.push('_AbaYa Track - Powered by Cloudflare_');
-  window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
+  window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
   closeModal();
 }
 

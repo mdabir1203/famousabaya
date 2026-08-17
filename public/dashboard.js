@@ -730,17 +730,26 @@ socket.on('state_update', (data) => {
 });
 
 function renderAll() {
-  renderKPIs();
-  renderLiveSessions();
-  renderAbayaItemTotals();
-  renderEmployeePerf();
-  renderHourlyChart();
-  renderPareto();
-  renderProcessEff();
-  renderRecentInvoiceLogsNode();
-  renderRecentCheckerLogsNode();
-  syncDashboardFloorTabUi();
-  updateClock();
+  // Run every render step in its own try/catch so a single broken panel
+  // (e.g. a stale variable name) can never blank out the whole dashboard.
+  // Mirrors the safeRender() pattern used in cloudflare/src/ui/ceo-pages.js.
+  function safe(stage, fn) {
+    try { fn(); }
+    catch (e) {
+      try { console.error('[dashboard] renderAll step failed:', stage, e); } catch (_) {}
+    }
+  }
+  safe('kpi',              renderKPIs);
+  safe('live',             renderLiveSessions);
+  safe('abaya-totals',     renderAbayaItemTotals);
+  safe('emp-perf',         renderEmployeePerf);
+  safe('hourly',           renderHourlyChart);
+  safe('pareto',           renderPareto);
+  safe('process-eff',      renderProcessEff);
+  safe('recent-invoice',   renderRecentInvoiceLogsNode);
+  safe('recent-checker',   renderRecentCheckerLogsNode);
+  safe('floor-tab',        syncDashboardFloorTabUi);
+  safe('clock',            updateClock);
 }
 
 // â”€â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -798,7 +807,7 @@ function renderAbayaItemTotals() {
   }
   const rows = keys
     .map(function (k) {
-      const o = agg[k];
+      const o = itemAgg[k];
       const ab = abayaCatalogRowForId(o.abaya_id);
       const code = ab ? ab.code : o.abaya_id;
       const barcode = ab && ab.barcode ? ab.barcode : '';
