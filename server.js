@@ -1859,6 +1859,293 @@ function broadcastState() {
 }
 
 /**
+ * Pull today's data from the cloud Worker and merge into local
+ * ACTIVE_SESSIONS / COMPLETED_LOGS. This is the bypass path for when
+ * terminals can only reach the cloud (off-LAN, ISP issues, factory WiFi
+ * down) — the LAN dashboard still shows live data because the server
+ * itself proxies the cloud's view into local state.
+ *
+ * Bypasses: connection-refused from the floor terminals. Terminals only
+ * need to reach the cloud (over the public internet, via any network).
+ * The LAN server then mirrors their events back into the local dashboard.
+ *
+ * Dedup keys:
+ *   - completed logs: row.id (string)
+ *   - active sessions: emp_id (the cloud's active map is keyed by emp_id)
+ *
+ * Shape notes:
+ *   - Local ACTIVE_SESSIONS[emp_id] = { emp_id, abaya_id, log_id, started_at, process }
+ *     Cloud active[key]            = { emp_id, abaya_id, started_at, process, ... }
+ *     The local shape is a subset of the cloud's, so we copy across the union of
+ *     fields and add a `log_id` we synthesize (so a later finish has a key).
+ *   - Logs use the same shape on both sides (we already normalise on the
+ *     hydrate path) so we copy wholesale.
+ *
+ * Throttled: max once per 10s per call site. Errors are swallowed + logged.
+ */
+let _refreshCloudTodayInFlight = false;
+let _refreshCloudTodayLastAt = 0;
+let _refreshCloudTodayLastOkAt = 0;
+let _refreshCloudTodayLastErr = null;
+let _refreshCloudTodayLastMergeStats = null;
+async function refreshCloudToday(opts) {
+  const force = !!(opts && opts.force);
+  const now = Date.now();
+  if (!force && _refreshCloudTodayInFlight) return { skipped: 'in-flight' };
+  if (!force && now - _refreshCloudTodayLastAt < 10 * 1000) return { skipped: 'throttled' };
+  if (!CF_URL || !CF_SECRET) {
+    _refreshCloudTodayLastErr = 'cloud-not-configured';
+    return { skipped: 'cloud-not-configured' };
+  }
+  _refreshCloudTodayInFlight = true;
+  _refreshCloudTodayLastAt = now;
+  try {
+    const url = String(CF_URL).replace(/\/+$/, '') + '/api/state?days=1&limit=500';
+    const res = await fetch(url, {
+      headers: { 'X-Ingest-Secret': CF_SECRET },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      _refreshCloudTodayLastErr = 'Worker HTTP ' + res.status + (txt ? ': ' + txt.slice(0, 160) : '');
+      return { ok: false, error: _refreshCloudTodayLastErr };
+    }
+    const j = await res.json();
+    if (!j || j.ok !== true) {
+      _refreshCloudTodayLastErr = 'Worker returned malformed state';
+      return { ok: false, error: _refreshCloudTodayLastErr };
+    }
+    const stats = { logsAdded: 0, logsUpdated: 0, activeAdded: 0, activeReplaced: 0 };
+
+    // ---- Merge logs ----
+    const cloudLogs = Array.isArray(j.logs) ? j.logs : [];
+    const byId = new Map();
+    for (let i = 0; i < COMPLETED_LOGS.length; i++) {
+      const l = COMPLETED_LOGS[i];
+      if (l && l.id != null) byId.set(String(l.id), l);
+    }
+    // Cloud's emp_id is the xlsx-style stable id (`e_bc_<barcode>`). LAN
+    // factory server can have either the hardcoded roster (IDs `e1`, `e2`,
+    // ...) or the xlsx roster (IDs `e_bc_<barcode>`). When the LAN server
+    // is using the hardcoded roster, we translate the cloud's id to the
+    // matching local `eN` so the dashboard's per-employee aggregations
+    // (Pareto, process efficiency, employee performance) light up.
+    const bcToLocalEmpForLogs = Object.create(null);
+    for (let i = 0; i < EMPLOYEES.length; i++) {
+      const e = EMPLOYEES[i];
+      if (e && e.barcode != null) {
+        bcToLocalEmpForLogs[String(e.barcode).trim()] = e;
+        // Also store as numeric-without-leading-zeros (cloud emits both forms)
+        const numeric = String(Number(e.barcode));
+        if (numeric && numeric !== 'NaN') bcToLocalEmpForLogs[numeric] = e;
+      }
+    }
+    function cloudEmpIdToLocal(empId) {
+      if (empId == null) return '';
+      const s = String(empId);
+      if (!s.startsWith('e_bc_')) return s;
+      const bc = s.slice('e_bc_'.length);
+      const localEmp = bcToLocalEmpForLogs[bc] || bcToLocalEmpForLogs[String(Number(bc))];
+      return localEmp ? localEmp.id : s;
+    }
+    for (let i = 0; i < cloudLogs.length; i++) {
+      const cl = cloudLogs[i];
+      if (!cl || cl.id == null) continue;
+      const id = String(cl.id);
+      const existing = byId.get(id);
+      if (existing) {
+        // Update mutable fields; never overwrite the local log with cloud fields
+        // that the local pipeline knows better (e.g. invoice_serial from the
+        // terminal is trusted over a stale cloud row).
+        for (const k of ['emp_name', 'emp_code', 'emp_process', 'emp_color', 'emp_initials', 'abaya_code']) {
+          if (cl[k] != null && cl[k] !== '') existing[k] = cl[k];
+        }
+        if (Number.isFinite(cl.duration_sec) && cl.duration_sec > 0) existing.duration_sec = cl.duration_sec;
+        stats.logsUpdated++;
+      } else {
+        // Normalise the cloud log into the same shape the local pipeline produces
+        // (mirrors the logic in hydrateCompletedLogsFromCloud).
+        const norm = {
+          id,
+          emp_id: cloudEmpIdToLocal(cl.emp_id),
+          emp_name: cl.emp_name || '',
+          emp_code: cl.emp_code || '',
+          emp_process: cl.emp_process || '',
+          emp_color: cl.emp_color || '',
+          emp_initials: cl.emp_initials || '',
+          abaya_id: cl.abaya_id != null ? String(cl.abaya_id) : '',
+          abaya_code: cl.abaya_code || '',
+          station: cl.station || '',
+          started_at: typeof cl.started_at === 'number' ? cl.started_at : (cl.started_at ? Number(cl.started_at) * 1000 : 0),
+          ended_at: typeof cl.ended_at === 'number' ? cl.ended_at : (cl.ended_at ? Number(cl.ended_at) * 1000 : 0),
+          duration_sec: Number(cl.duration_sec) || 0,
+          end: cl.end != null ? Number(cl.end) : (typeof cl.ended_at === 'number' ? cl.ended_at * 1000 : 0),
+          process: cl.process || cl.emp_process || '',
+          hour_of_day: cl.hour_of_day != null ? Number(cl.hour_of_day) : null,
+          day_date: cl.day_date || '',
+          invoice_count: cl.invoice_count != null ? Number(cl.invoice_count) : 0,
+          invoice_serial: cl.invoice_serial || '',
+        };
+        COMPLETED_LOGS.push(norm);
+        byId.set(id, norm);
+        stats.logsAdded++;
+      }
+    }
+    // Keep COMPLETED_LOGS bounded so memory doesn't grow forever.
+    if (COMPLETED_LOGS.length > STATE_LOG_MAX_ROWS) {
+      COMPLETED_LOGS = COMPLETED_LOGS.slice(-STATE_LOG_MAX_ROWS);
+    }
+
+    // ---- Merge active sessions ----
+    // Cloud returns `active` as an object keyed by something we don't know in
+    // advance; we pull emp_id out of each value. Local is keyed by emp_id.
+    //
+    // Cloud's emp_id is the xlsx-style stable id (`e_bc_<barcode>`). The LAN
+    // factory server can have either:
+    //   - a hardcoded roster (IDs `e1`, `e2`, ...) from in-source EMPLOYEES, or
+    //   - an xlsx roster (IDs `e_bc_<barcode>` from stableEmployeeIdFromXlsxBarcode)
+    // To make the merged active sessions visible in the LAN dashboard, we
+    // translate `e_bc_<barcode>` → the matching local `eN` by looking up
+    // employees[].barcode. If no match, fall back to the cloud id (the
+    // dashboard will simply not render the row, which is fine).
+    const cloudActive = (j.active && typeof j.active === 'object') ? j.active : {};
+    // Build barcode → local-emp lookup once per merge.
+    const bcToLocalEmp = Object.create(null);
+    for (let i = 0; i < EMPLOYEES.length; i++) {
+      const e = EMPLOYEES[i];
+      if (e && e.barcode != null) {
+        bcToLocalEmp[String(e.barcode).trim()] = e;
+      }
+    }
+    for (const k of Object.keys(cloudActive)) {
+      const ca = cloudActive[k] || {};
+      let empId = ca.emp_id != null ? String(ca.emp_id) : (k.startsWith('e_') ? k : '');
+      if (!empId) continue;
+      // Translate e_bc_<barcode> to local eN if we have a matching employee.
+      if (empId.startsWith('e_bc_')) {
+        const bc = empId.slice('e_bc_'.length);
+        const localEmp = bcToLocalEmp[bc] || bcToLocalEmp[String(Number(bc)).padStart(8, '0')];
+        if (localEmp) empId = localEmp.id;
+      }
+      const started = typeof ca.started_at === 'number'
+        ? ca.started_at
+        : (ca.started_at ? Number(ca.started_at) * 1000 : Date.now());
+      const log_id = 'WL-cloudmirror-' + empId + '-' + started;
+      const local = ACTIVE_SESSIONS[empId];
+      if (local) {
+        // Trust the local entry for the abaya_id (the terminal knows what
+        // it's working on right now), but update display fields.
+        if (ca.process && local.process !== ca.process) local.process = ca.process;
+        if (ca.emp_name) local.emp_name = ca.emp_name;
+        stats.activeReplaced++;
+      } else {
+        ACTIVE_SESSIONS[empId] = {
+          emp_id: empId,
+          abaya_id: ca.abaya_id != null ? String(ca.abaya_id) : '',
+          log_id,
+          started_at: started,
+          process: ca.process || ca.emp_process || '',
+        };
+        stats.activeAdded++;
+      }
+    }
+
+    _refreshCloudTodayLastOkAt = Date.now();
+    _refreshCloudTodayLastErr = null;
+    _refreshCloudTodayLastMergeStats = stats;
+
+    // Recompute EMP_PERF and notify the dashboard.
+    if (typeof recomputeEmpPerfFromLogs === 'function') recomputeEmpPerfFromLogs();
+    broadcastState();
+    return { ok: true, stats };
+  } catch (e) {
+    _refreshCloudTodayLastErr = (e && e.message) ? e.message : String(e);
+    return { ok: false, error: _refreshCloudTodayLastErr };
+  } finally {
+    _refreshCloudTodayInFlight = false;
+  }
+}
+
+function getCloudRefreshHealth() {
+  return {
+    enabled: !!(CF_URL && CF_SECRET),
+    inFlight: _refreshCloudTodayInFlight,
+    lastAt: _refreshCloudTodayLastAt,
+    lastOkAt: _refreshCloudTodayLastOkAt,
+    lastErr: _refreshCloudTodayLastErr,
+    lastStats: _refreshCloudTodayLastMergeStats,
+  };
+}
+
+/**
+ * One-shot on boot: rewrite existing COMPLETED_LOGS rows whose emp_id is in
+ * the cloud's xlsx-stable format (`e_bc_<barcode>`) to the matching local
+ * `eN` id. Runs only if EMPLOYEES is the hardcoded roster (no employees.xlsx)
+ * — otherwise the local roster already uses `e_bc_*` and no rewrite is needed.
+ *
+ * Without this, the dashboard's per-employee panels (Pareto, employee
+ * performance, process efficiency) show 0 units for the entire day because
+ * `aggregateRealtime()` groups by `emp_id` and the hardcoded roster keys
+ * don't match the cloud's `e_bc_*` keys.
+ *
+ * Idempotent: if all logs are already in local-id form, this is a no-op.
+ */
+function migrateCloudXlsxIdsToLocalRoster() {
+  // Only migrate when there's a hardcoded roster (no employees.xlsx loaded)
+  if (EMPLOYEES_XLSX_PATH) return { skipped: 'xlsx-roster-in-use' };
+  // Build barcode → local emp lookup.
+  const bcToLocal = Object.create(null);
+  for (let i = 0; i < EMPLOYEES.length; i++) {
+    const e = EMPLOYEES[i];
+    if (e && e.barcode != null) {
+      bcToLocal[String(e.barcode).trim()] = e;
+      const numeric = String(Number(e.barcode));
+      if (numeric && numeric !== 'NaN') bcToLocal[numeric] = e;
+    }
+  }
+  if (!Object.keys(bcToLocal).length) return { skipped: 'no-roster-barcode-info' };
+
+  let rewritten = 0;
+  for (let i = 0; i < COMPLETED_LOGS.length; i++) {
+    const l = COMPLETED_LOGS[i];
+    if (!l || !l.emp_id) continue;
+    const s = String(l.emp_id);
+    if (!s.startsWith('e_bc_')) continue;
+    const bc = s.slice('e_bc_'.length);
+    const localEmp = bcToLocal[bc] || bcToLocal[String(Number(bc))];
+    if (localEmp) {
+      l.emp_id = localEmp.id;
+      rewritten++;
+    }
+  }
+  // Active sessions: same rewrite.
+  let activeRewritten = 0;
+  for (const k of Object.keys(ACTIVE_SESSIONS)) {
+    const s = ACTIVE_SESSIONS[k];
+    if (!s || !s.emp_id) continue;
+    const id = String(s.emp_id);
+    if (!id.startsWith('e_bc_')) continue;
+    const bc = id.slice('e_bc_'.length);
+    const localEmp = bcToLocal[bc] || bcToLocal[String(Number(bc))];
+    if (localEmp) {
+      const newKey = localEmp.id;
+      if (newKey !== k) {
+        ACTIVE_SESSIONS[newKey] = Object.assign({}, s, { emp_id: newKey });
+        delete ACTIVE_SESSIONS[k];
+        activeRewritten++;
+      } else {
+        s.emp_id = newKey;
+      }
+    }
+  }
+  if (rewritten > 0 || activeRewritten > 0) {
+    if (typeof recomputeEmpPerfFromLogs === 'function') recomputeEmpPerfFromLogs();
+    broadcastState();
+  }
+  return { ok: true, logsRewritten: rewritten, activeRewritten };
+}
+
+/**
  * Active sessions are not auto-finished when the wall clock leaves shift windows (scheduled
  * breaks, gaps between blocks, overnight). One Start keeps the same abaya + process until the
  * worker taps Finish; duration_sec on finish still uses overlapSecWithWindows in req_finishWork
@@ -3469,7 +3756,24 @@ app.get('/api/ceo-ingest-status', (req, res) => {
     ingestStats: getIngestStats(),
     rejectedQueue: getRejectedQueueStats(),
     alerts: getAlertHealth(),
+    cloudToday: getCloudRefreshHealth(),
   });
+});
+
+/**
+ * Force a cloud-today pull right now. Bypasses the 10s throttle.
+ * Auth: factory ingest secret (so a supervisor can also trigger from the cloud).
+ * Use case: a tablet just came back online and the dashboard needs an
+ * immediate refresh instead of waiting for the next 30s tick.
+ */
+app.post('/api/cloud-today/refresh', (req, res) => {
+  const secret = String(req.headers['x-ingest-secret'] || '').trim();
+  if (!CF_SECRET || secret !== CF_SECRET) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  refreshCloudToday({ force: true })
+    .then((r) => res.json({ ok: true, ...r, health: getCloudRefreshHealth() }))
+    .catch((e) => res.status(500).json({ ok: false, error: e.message || 'refresh failed' }));
 });
 
 /** Send a test alert email to verify Resend wiring (auth via X-Ingest-Secret). */
@@ -3928,6 +4232,33 @@ server.listen(PORT, bindHost, () => {
   }
   refreshWorkingHoursFromCloud();
   setInterval(refreshWorkingHoursFromCloud, 5 * 60 * 1000);
+
+  // Cloud-today mirror: every 30s, pull today's data from the Worker and
+  // merge into local state. Bypasses the case where terminals can only
+  // reach the cloud (off-LAN, ISP issues, WiFi down) — the LAN dashboard
+  // still shows live data because the server itself proxies the view.
+  if (CF_URL && CF_SECRET) {
+    // Fire-and-forget on a soft delay so the rest of boot can finish first
+    // and so the snapshot save at boot doesn't race with the merge.
+    setTimeout(() => {
+      void refreshCloudToday({ force: true }).then((r) => {
+        if (r && r.ok) {
+          console.log('[cloud-today] boot pull: ' + JSON.stringify(r.stats));
+        } else {
+          console.warn('[cloud-today] boot pull skipped/failed: ' + (r && r.skipped ? r.skipped : (r && r.error)));
+        }
+      });
+    }, 8000);
+    setInterval(() => {
+      void refreshCloudToday().then((r) => {
+        if (r && r.ok && r.stats && (r.stats.logsAdded || r.stats.activeAdded)) {
+          console.log('[cloud-today] merged: ' + JSON.stringify(r.stats));
+        }
+      });
+    }, 30 * 1000);
+    console.log('  Cloud-today mirror: every 30s (bypasses terminal → LAN outages by pulling from Worker)');
+  }
+
   const alerts = ensureAlertManager();
   if (alerts) {
     console.log(`  Alerts: Resend → ${alerts.to.join(', ')} (cooldown ${Math.round(alerts.dedupMs / 60000)}m, cap ${alerts.hourlyCap}/h${alerts.dryRun ? ', DRY_RUN' : ''})`);
@@ -3966,6 +4297,15 @@ server.listen(PORT, bindHost, () => {
     setTimeout(loadEmployeesFromXlsxFile, 2000);
     setInterval(loadEmployeesFromXlsxFile, EMPLOYEES_XLSX_INTERVAL_MS);
     console.log(`  Employees: ${path.resolve(__dirname, EMPLOYEES_XLSX_PATH)} (refreshes every ${Math.round(EMPLOYEES_XLSX_INTERVAL_MS / 3600000)}h)`);
+  } else {
+    // One-shot on boot: rewrite any `e_bc_*` ids in COMPLETED_LOGS / ACTIVE
+    // (left over from earlier cloud-mirror pulls) to the local `eN` ids
+    // so the dashboard's per-employee aggregations light up. Skipped when
+    // an xlsx roster is in use (the local roster already matches).
+    const mig = migrateCloudXlsxIdsToLocalRoster();
+    if (mig && mig.logsRewritten) {
+      console.log(`  Cloud-id migration: rewrote ${mig.logsRewritten} log(s) + ${mig.activeRewritten || 0} active session(s) from e_bc_* to local ids`);
+    }
   }
   startExcelFileWatchers();
 });
