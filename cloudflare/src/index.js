@@ -25,7 +25,7 @@ import { handleEmployeeDay } from './handlers/employee-day.js';
 import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
 import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
-import { handleCheckReport, handleCheckReportConfig, handleCancellationsPost, handleCancellationsList } from './handlers/check-report.js';
+import { handleCheckDeliveryReport, handleCheckDeliveryConfig, handleCancellationsPost, handleCancellationsList, handleCheckReport, handleCheckReportConfig } from './handlers/check-report.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
 import releaseMomentData from './data/release-moment.json';
@@ -312,7 +312,18 @@ export default {
         return handleAnalytics(env, url);
       }
 
-      // Check Report (production throughput) — calendar + invoices + cancellations
+      // Check Delivery Report — calendar + per-factory (showroom) breakdown
+      // + cancellations. Pulls the operator-leaderboard's invoice / abaya /
+      // showroom data via server-side proxy, so the CEO dashboard sees the
+      // same data the leaderboard's own modal does. Older `/api/check-report`
+      // and `/api/check-report/config` paths are still registered (legacy
+      // shim) so any older dashboard build keeps working.
+      if (path === '/api/check-delivery-report/config' && request.method === 'GET') {
+        return handleCheckDeliveryConfig(env, url);
+      }
+      if (path === '/api/check-delivery-report' && request.method === 'GET') {
+        return handleCheckDeliveryReport(env, url);
+      }
       if (path === '/api/check-report/config' && request.method === 'GET') {
         return handleCheckReportConfig(env, url);
       }

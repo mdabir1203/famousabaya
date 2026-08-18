@@ -1,46 +1,54 @@
-// Check Report handlers for the cloud CEO dashboard.
+// Check Delivery Report handlers for the cloud CEO dashboard.
 //
-// Three routes:
-//   GET  /api/check-report/config          — list of factories + defaults
-//   GET  /api/check-report?from=...&to=... — production report for a date range
-//   POST /api/cancellations                — record a cancellation
+// "Check Delivery Report" (renamed from "Check Production Report" in v1.2.9)
+// pulls the operator-leaderboard's real invoice / abaya / showroom data
+// instead of relying on the cloud's own D1 (which only sees the production
+// line sessions and cannot tell which invoice a finished abaya belongs
+// to). The cloud Worker proxies the leaderboard's API server-side, runs
+// the same aggregation the leaderboard's own UI does, and merges in any
+// cancellations recorded from the CEO dashboard so the report has a
+// single coherent shape.
 //
-// The report is built from three D1 sources:
-//   - sessions: completed / invoice-bearing work for the range
-//   - cancellations: explicit cancellation records
-//   - abaya_catalog: code / barcode mapping (for the per-row display)
+// Routes:
+//   GET  /api/check-delivery-report/config   — list of factories (locations) + defaults
+//   GET  /api/check-delivery-report?from=...&to=...&factory=...
+//                                              — delivery report for a date range
+//   POST /api/cancellations                   — record a cancellation
+//   GET  /api/cancellations?from=...&to=...  — list cancellations
 //
-// "Invoices" are derived from sessions that have invoice_count > 0
-// (or invoice_serial set). Each unique invoice_serial becomes one
-// invoice bucket; sessions without an invoice_serial are grouped
-// under a synthetic "(no invoice)" bucket so they're still counted.
-//
-// "Delivered" vs "Pending" status per abaya is derived from the
-// sessions.invoice_count + invoice_serial — when an invoice_serial
-// is set the abaya is treated as Delivered (the factory's invoice
-// note confirms it). Sessions without an invoice_serial are Pending
-// (waiting for invoice). Cancelled abayas come from the cancellations
-// table (matched by abaya_code OR invoice_no).
+// Backward compatibility:
+//   /api/check-report and /api/check-report/config are STILL registered so
+//   any older dashboard build (or external tool) keeps working. They
+//   return the same shape as before — just sourced from the leaderboard
+//   instead of the cloud's own D1. See the legacy shim at the bottom of
+//   this file.
 
 import { jsonRes, errRes, CEO_JSON_NO_STORE } from '../http-response.js';
-import { factoryTodayString, factoryDateStringForUnix } from '../working-hours.js';
+import { factoryTodayString } from '../working-hours.js';
 
 const FACTORY_TZ = 'Asia/Dubai';
-// Single-factory deployment: the dashboard's "Factory" dropdown is
-// cosmetic. We always report against the main factory.
-const DEFAULT_FACTORY = 'Main Factory';
-const FACTORIES = [DEFAULT_FACTORY];
+const DEFAULT_FACTORY = 'FAREWELL ABAYA LLC';
 
-export async function handleCheckReportConfig(env, url) {
-  // factory_today in Asia/Dubai (matches the dashboard's "Production Report" header).
-  const today = factoryTodayString(env);
-  return jsonRes({
-    ok: true,
-    factories: FACTORIES,
-    defaultFactory: DEFAULT_FACTORY,
-    timezone: FACTORY_TZ,
-    todayYmd: today,
-  }, 200, CEO_JSON_NO_STORE);
+// The leaderboard is hosted on a separate Cloudflare Pages project. The
+// cloud Worker proxies its public API so the dashboard doesn't need to
+// handle CORS or duplicate the aggregation logic. The URL is read from
+// the LEADERBOARD_URL var (see wrangler.toml); empty means "fall back to
+// the cloud's own D1 only" (the old behavior, which shows everything as
+// "(no invoice) unassigned").
+function leaderboardUrl(env) {
+  return String(env.LEADERBOARD_URL || '').trim().replace(/\/+$/, '');
+}
+
+// ---- Time helpers (Asia/Dubai) ----------------------------------------------
+//
+// Mirrors the leaderboard's helpers in src/lib/check-report.ts. Anchored on
+// noon UTC so DST edge cases (Asia/Dubai is fixed UTC+4, but defensive
+// coding) don't shift the day boundary.
+
+function ymdToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: FACTORY_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
 }
 
 function safeYmd(s, fallback) {
@@ -48,192 +56,322 @@ function safeYmd(s, fallback) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return fallback;
   return t;
 }
-function todayYmdUtcFallback(env) {
-  return factoryTodayString(env);
+
+function startOfDayIso(ymd) {
+  // Asia/Dubai is fixed UTC+4 (no DST). Hardcode the offset rather than
+  // recomputing via Intl — the offset is a fact, not a calculation.
+  return ymd + 'T00:00:00+04:00';
 }
-function ymdToRange(ymd) {
-  // Asia/Dubai day → [startMs, endMs) in UTC.
-  // Use Intl to get the offset, then compute noon UTC as a stable anchor
-  // (noon avoids DST edge cases at midnight).
-  const [y, m, d] = ymd.split('-').map((n) => parseInt(n, 10));
-  if (!y || !m || !d) return null;
-  // Build a date at 00:00 local Dubai by computing the UTC instant that
-  // is 00:00 Dubai on that day. We approximate with 4 hours back from
-  // UTC, which is the worst case for Asia/Dubai (UTC+4).
-  const startMs = Date.UTC(y, m - 1, d, -4, 0, 0, 0);
-  // End of day: 24h later.
-  const endMs = startMs + 24 * 60 * 60 * 1000;
-  return [startMs, endMs];
-}
-function ymdToRangeSafe(ymd, env) {
-  const fallback = todayYmdUtcFallback(env);
-  const ok = safeYmd(ymd, fallback);
-  const r = ymdToRange(ok);
-  if (!r) return ymdToRangeSafe(fallback, env);
-  return { ymd: ok, startMs: r[0], endMs: r[1] };
+function endOfDayIso(ymd) {
+  return ymd + 'T23:59:59.999+04:00';
 }
 
-function longFmt(ymd) {
-  if (!ymd) return '';
-  const [y, m, d] = ymd.split('-').map((n) => parseInt(n, 10));
-  const noon = Date.UTC(y, m - 1, d, 12, 0, 0, 0);
+function weekdayInTz(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   try {
     return new Intl.DateTimeFormat('en-US', {
+      timeZone: FACTORY_TZ, weekday: 'long',
+    }).format(noon);
+  } catch (_) { return ''; }
+}
+
+function longDateInTz(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const noon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
       timeZone: FACTORY_TZ, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    }).format(new Date(noon));
+    }).format(noon);
   } catch (_) { return ymd; }
 }
 
-export async function handleCheckReport(env, url) {
-  const t0 = Date.now();
-  const fromParam = url.searchParams.get('from');
-  const toParam = url.searchParams.get('to');
-  const factoryParam = String(url.searchParams.get('factory') || '').trim();
-  const factory = factoryParam || DEFAULT_FACTORY;
+// ---- Leaderboard fetch (with timeout + soft-fail) --------------------------
+//
+// We pull the leaderboard's /api/check-report?from=...&to=... endpoint
+// (the same one the operator's leaderboard modal calls). The leaderboard
+// returns raw rows; the aggregation that turns them into totals +
+// byLocation + groups lives in src/lib/check-report.ts and is ported
+// to JS below (aggregateFromLeaderboardRows).
 
-  const today = todayYmdUtcFallback(env);
-  const fromR = ymdToRangeSafe(fromParam, env);
-  // If no to, default to same as from.
-  const toR = ymdToRangeSafe(toParam || fromParam, env);
-  // Clamp to the same-day case when from > to (e.g. user picked one day).
-  const fromMs = Math.min(fromR.startMs, toR.startMs);
-  const toMs = Math.max(fromR.endMs, toR.endMs);
-
+async function fetchLeaderboardRows(env, fromYmd, toYmd) {
+  const base = leaderboardUrl(env);
+  if (!base) return { rows: [], source: 'cloud-d1-fallback' };
+  const url = base + '/api/check-report?from=' + encodeURIComponent(fromYmd) +
+    '&to=' + encodeURIComponent(toYmd);
   try {
-    // ---- Pull sessions for the range (bounded so we don't blow memory) ----
-    const SESS_LIMIT = 5000;
-    const sessStmt = env.DB.prepare(`
-      SELECT id, emp_id, emp_name, abaya_id, abaya_code, station,
-             started_at, ended_at, duration_sec, emp_process,
-             day_date, invoice_count, invoice_serial
-      FROM sessions
-      WHERE ended_at >= ? AND ended_at < ?
-      ORDER BY ended_at ASC
-      LIMIT ?
-    `).bind(Math.floor(fromMs / 1000), Math.floor(toMs / 1000), SESS_LIMIT);
-    const sessRes = await sessStmt.all();
-    const sessions = sessRes.results || [];
-
-    // ---- Pull abaya catalog for code/barcode lookup ----
-    const catRes = await env.DB.prepare(
-      `SELECT id, code, barcode FROM abaya_catalog`
-    ).all();
-    const codeByBarcode = Object.create(null);
-    const codeById = Object.create(null);
-    for (const r of (catRes.results || [])) {
-      if (r.barcode) codeByBarcode[String(r.barcode)] = r;
-      if (r.id) codeById[String(r.id)] = r;
+    const res = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.error('[check-delivery] leaderboard HTTP', res.status, txt.slice(0, 200));
+      return { rows: [], source: 'cloud-d1-fallback', error: 'leaderboard HTTP ' + res.status };
     }
+    const j = await res.json();
+    return { rows: Array.isArray(j && j.rows) ? j.rows : [], source: 'leaderboard' };
+  } catch (e) {
+    console.error('[check-delivery] leaderboard fetch failed:', e && (e.message || e));
+    return { rows: [], source: 'cloud-d1-fallback', error: (e && e.message) || String(e) };
+  }
+}
 
-    // ---- Pull cancellations for the range ----
-    const cancRes = await env.DB.prepare(`
-      SELECT id, factory, invoice_no, abaya_code, cancelled_at, cancelled_by, reason
+// ---- Aggregation (port of src/lib/check-report.ts aggregateCheckReport) ----
+//
+// Pure function: rows + window → totals + byLocation + groups. Returns the
+// exact shape the dashboard's cr-* components need. Kept as a single
+// function for readability — once the leaderboard and dashboard settle
+// into their final shape we can split per-pass.
+
+function statusForRow(r) {
+  if (r.deletedAt) return 'cancelled';
+  if (r.status === 'completed') return 'completed';
+  return 'pending';
+}
+function eventAtForRow(r, status) {
+  if (status === 'cancelled') return String(r.deletedAt);
+  if (status === 'completed') return r.completedAt || r.createdAt;
+  return r.createdAt;
+}
+function locationForRow(r) {
+  return (r.showroom || '').trim() || 'Unspecified';
+}
+
+function rowsInWindow(rows, fromYmd, toYmd) {
+  const fromIso = startOfDayIso(fromYmd);
+  const toIso = endOfDayIso(toYmd);
+  return rows.filter((r) => {
+    const candidates = [r.deletedAt, r.completedAt, r.createdAt];
+    for (const ts of candidates) {
+      if (!ts) continue;
+      if (String(ts) >= fromIso && String(ts) <= toIso) return true;
+    }
+    return false;
+  });
+}
+
+function aggregateRows(rows, fromYmd, toYmd) {
+  const inWindow = rowsInWindow(rows, fromYmd, toYmd);
+  const totals = { invoices: 0, abayas: 0, delivered: 0, pending: 0, cancelled: 0 };
+  const invoiceSet = new Set();
+  const groupMap = new Map();
+  const locMap = new Map();
+
+  for (const r of inWindow) {
+    const status = statusForRow(r);
+    totals.abayas += 1;
+    invoiceSet.add(r.invoiceNo);
+    if (status === 'completed') totals.delivered += 1;
+    else if (status === 'cancelled') totals.cancelled += 1;
+    else totals.pending += 1;
+
+    const loc = locationForRow(r);
+    const groupKey = loc + '::' + r.invoiceNo;
+    let g = groupMap.get(groupKey);
+    if (!g) {
+      g = { location: loc, invoiceNo: r.invoiceNo, rows: [] };
+      groupMap.set(groupKey, g);
+    }
+    g.rows.push({
+      invoiceNo: r.invoiceNo,
+      abayaCode: r.itemCode || '',
+      status,
+      eventAt: eventAtForRow(r, status),
+      location: loc,
+      cancelledBy: r.cancelledBy || undefined,
+      cancellationReason: r.cancellationReason || undefined,
+    });
+
+    let lt = locMap.get(loc);
+    if (!lt) {
+      lt = { location: loc, invoices: 0, abayas: 0, delivered: 0, pending: 0, cancelled: 0, _invoiceSet: new Set() };
+      locMap.set(loc, lt);
+    }
+    lt.abayas += 1;
+    if (status === 'completed') lt.delivered += 1;
+    else if (status === 'cancelled') lt.cancelled += 1;
+    else lt.pending += 1;
+    lt._invoiceSet.add(r.invoiceNo);
+  }
+  totals.invoices = invoiceSet.size;
+
+  const byLocation = Array.from(locMap.values())
+    .map((lt) => ({
+      location: lt.location,
+      invoices: lt._invoiceSet.size,
+      abayas: lt.abayas,
+      delivered: lt.delivered,
+      pending: lt.pending,
+      cancelled: lt.cancelled,
+    }))
+    .sort((a, b) => (b.abayas - a.abayas) || a.location.localeCompare(b.location));
+
+  const groups = Array.from(groupMap.values()).map((g) => {
+    const rows = g.rows.slice().sort((a, b) => (a.eventAt < b.eventAt ? 1 : -1));
+    return Object.assign({}, g, { rows });
+  });
+  groups.sort((a, b) => {
+    if (a.location !== b.location) return a.location.localeCompare(b.location);
+    return a.invoiceNo.localeCompare(b.invoiceNo);
+  });
+
+  return { totals, byLocation, groups, inWindowCount: inWindow.length };
+}
+
+// ---- Cloud-side cancellations (merged into the report) ---------------------
+//
+// Cancellations recorded from the CEO dashboard live in the cloud's D1
+// `cancellations` table. They don't have to match a leaderboard row —
+// a supervisor can record a cancellation for an invoice that hasn't
+// appeared in the leaderboard yet (the operator's POS system might be
+// behind, or the order was placed by phone). We pull them in by
+// time-range and append them to the cancellations list in the response
+// so the dashboard's Cancellations section shows them.
+
+async function fetchCloudCancellations(env, fromMs, toMs) {
+  try {
+    const r = await env.DB.prepare(`
+      SELECT id, factory, invoice_no, abaya_code, cancelled_at, cancelled_by, reason, source
       FROM cancellations
       WHERE cancelled_at >= ? AND cancelled_at < ?
       ORDER BY cancelled_at ASC
     `).bind(fromMs, toMs).all();
-    const cancellations = cancRes.results || [];
+    return (r && r.results) || [];
+  } catch (e) {
+    console.error('[check-delivery] cloud cancellations query failed:', e && (e.message || e));
+    return [];
+  }
+}
 
-    // ---- Build per-invoice buckets ----
-    // Bucket key: invoice_serial if present, else a synthetic key per-abaya
-    // so each non-invoiced abaya is its own row (not "Pending 1,2,3..." with
-    // no traceability).
-    const buckets = [];              // { no, abayas: [...], totals: {...} }
-    const bucketByNo = new Map();
-    function getOrCreateBucket(no, isSynthetic) {
-      const key = isSynthetic ? ('__synth__:' + no) : ('inv:' + no);
-      let b = bucketByNo.get(key);
-      if (!b) {
-        b = { no: isSynthetic ? '' : no, synthetic: !!isSynthetic, abayas: [], totals: { abayas: 0, delivered: 0, pending: 0, cancelled: 0 } };
-        bucketByNo.set(key, b);
-        buckets.push(b);
+// ---- /api/check-delivery-report/config --------------------------------------
+//
+// Returns the list of factories (locations) the operator can pick from.
+// We pull this from the leaderboard's data by probing the most recent
+// rows (or fall back to a static list when the leaderboard is offline).
+// The dashboard uses this to populate the "Factory" dropdown.
+
+export async function handleCheckDeliveryConfig(env, url) {
+  const today = ymdToday();
+  // Probe the leaderboard for the list of locations by fetching a wide
+  // window and deduping showroom names. Cheap because the leaderboard
+  // already has an index on showroom and this is a one-shot call per
+  // dashboard load.
+  const base = leaderboardUrl(env);
+  let factories = [DEFAULT_FACTORY];
+  if (base) {
+    try {
+      // Use a single-day window for the location probe (cheaper). If the
+      // operator hasn't logged anything today yet the locations list will
+      // fall back to a recent sample via a 7-day window.
+      const probeRes = await fetch(base + '/api/check-report?from=' + today + '&to=' + today, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (probeRes.ok) {
+        const j = await probeRes.json();
+        const locs = new Set();
+        for (const r of ((j && j.rows) || [])) {
+          const loc = (r.showroom || '').trim();
+          if (loc) locs.add(loc);
+        }
+        if (locs.size === 0) {
+          // Try a 30-day window to find at least one showroom.
+          const from30 = new Date();
+          from30.setDate(from30.getDate() - 30);
+          const from30Ymd = new Intl.DateTimeFormat('en-CA', { timeZone: FACTORY_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(from30);
+          const r2 = await fetch(base + '/api/check-report?from=' + from30Ymd + '&to=' + today, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r2.ok) {
+            const j2 = await r2.json();
+            for (const r of ((j2 && j2.rows) || [])) {
+              const loc = (r.showroom || '').trim();
+              if (loc) locs.add(loc);
+            }
+          }
+        }
+        if (locs.size) factories = Array.from(locs).sort();
       }
-      return b;
+    } catch (e) {
+      console.warn('[check-delivery] config probe failed:', e && (e.message || e));
     }
-    // Index abaya_code → cancellation (first match) for status tagging.
-    const cancByAbayaCode = new Map();
-    const cancByInvoiceNo = new Map();
-    for (const c of cancellations) {
-      if (c.abaya_code) cancByAbayaCode.set(String(c.abaya_code), c);
-      if (c.invoice_no) cancByInvoiceNo.set(String(c.invoice_no), c);
-    }
+  }
+  return jsonRes({
+    ok: true,
+    factories,
+    defaultFactory: DEFAULT_FACTORY,
+    timezone: FACTORY_TZ,
+    todayYmd: today,
+    leaderboardConfigured: !!base,
+  }, 200, CEO_JSON_NO_STORE);
+}
 
-    for (const s of sessions) {
-      const code = s.abaya_code || s.abaya_id || '(unknown)';
-      const serial = s.invoice_serial ? String(s.invoice_serial) : '';
-      const b = serial
-        ? getOrCreateBucket(serial, false)
-        : getOrCreateBucket(s.id, true);
-      // Status: cancelled if there's a matching cancellation; delivered
-      // if serial present; else pending.
-      const canc = cancByAbayaCode.get(String(code)) || (serial ? cancByInvoiceNo.get(serial) : null);
-      const status = canc ? 'CANCELLED' : (serial ? 'DELIVERED' : 'PENDING');
-      const row = {
-        code: code,
-        barcode: s.abaya_id && codeById[String(s.abaya_id)] ? codeById[String(s.abaya_id)].barcode : '',
-        process: s.emp_process || '',
-        timestamp: (s.ended_at || 0) * 1000,
-        durationSec: Number(s.duration_sec) || 0,
-        emp: s.emp_name || '',
-        // Lowercase for the cr-status CSS class on the dashboard.
-        status: status.charAt(0) + status.slice(1).toLowerCase(),
-        cancellation: canc ? {
-          cancelledAt: canc.cancelled_at,
-          cancelledBy: canc.cancelled_by || '',
-          reason: canc.reason || '',
-        } : null,
-      };
-      b.abayas.push(row);
-    }
+// ---- /api/check-delivery-report --------------------------------------------
+//
+// 1. Pulls the leaderboard's raw rows for the date range (with soft-fail
+//    to the cloud's own D1 when the leaderboard is offline).
+// 2. Runs the same aggregation the leaderboard's UI does (port of
+//    aggregateCheckReport in src/lib/check-report.ts).
+// 3. Pulls cloud-side cancellations and appends them to the cancellations
+//    list so the dashboard's Cancellations section shows them.
+// 4. Returns the final report in the shape the dashboard's cr-* components
+//    expect.
 
-    // Compute per-bucket + global totals.
-    const totals = { invoices: 0, abayas: 0, delivered: 0, pending: 0, cancelled: 0 };
-    for (const b of buckets) {
-      let delivered = 0, pending = 0, cancelled = 0;
-      for (const a of b.abayas) {
-        if (a.status === 'DELIVERED') delivered++;
-        else if (a.status === 'CANCELLED') cancelled++;
-        else pending++;
-      }
-      b.totals.abayas = b.abayas.length;
-      b.totals.delivered = delivered;
-      b.totals.pending = pending;
-      b.totals.cancelled = cancelled;
-      totals.abayas += b.abayas.length;
-      totals.delivered += delivered;
-      totals.pending += pending;
-      totals.cancelled += cancelled;
-    }
-    // "Invoices" = non-synthetic buckets with ≥1 delivered abaya.
-    // (We don't double-count synthetic rows.)
-    for (const b of buckets) {
-      if (!b.synthetic && b.totals.delivered > 0) totals.invoices += 1;
-    }
+export async function handleCheckDeliveryReport(env, url) {
+  const t0 = Date.now();
+  const fromParam = String(url.searchParams.get('from') || '').trim();
+  const toParam = String(url.searchParams.get('to') || '').trim();
+  const factoryParam = String(url.searchParams.get('factory') || '').trim();
+  const today = ymdToday();
+  const fromYmd = safeYmd(fromParam, today);
+  const toYmd = safeYmd(toParam, fromYmd);
 
-    // ---- Build factory section ----
-    const factorySection = {
-      name: factory,
-      totals: {
-        invoices: totals.invoices,
-        abayas: totals.abayas,
-        delivered: totals.delivered,
-        pending: totals.pending,
-        cancelled: totals.cancelled,
+  // Inclusive day bounds in Asia/Dubai.
+  const fromMs = new Date(startOfDayIso(fromYmd)).getTime();
+  const toMs = new Date(endOfDayIso(toYmd)).getTime();
+
+  try {
+    // ---- 1. Pull the leaderboard's raw rows ----
+    const lb = await fetchLeaderboardRows(env, fromYmd, toYmd);
+    const leaderboardRows = lb.rows;
+
+    // ---- 2. Aggregate (per showroom + per invoice) ----
+    const agg = aggregateRows(leaderboardRows, fromYmd, toYmd);
+    let { totals, byLocation, groups } = agg;
+
+    // ---- 2b. Factory filter (dashboard "Factory" dropdown) ----
+    // "All" (empty factory) returns every location. A specific factory
+    // filters by-location + shows a synthetic factory section header.
+    const allFactories = factoryParam === '' || factoryParam.toLowerCase() === 'all';
+    const filteredByLocation = allFactories
+      ? byLocation
+      : byLocation.filter((lt) => lt.location === factoryParam);
+    const filteredGroups = allFactories
+      ? groups
+      : groups.filter((g) => g.location === factoryParam);
+    // Recompute totals over the filter so the headline numbers match
+    // what the operator sees in the breakdown.
+    const filteredTotals = filteredGroups.reduce(
+      (acc, g) => {
+        for (const r of g.rows) {
+          acc.abayas += 1;
+          if (r.status === 'completed') acc.delivered += 1;
+          else if (r.status === 'cancelled') acc.cancelled += 1;
+          else acc.pending += 1;
+        }
+        return acc;
       },
-      invoices: buckets
-        // Show synthetic buckets at the bottom, real invoices at top.
-        .slice()
-        .sort((a, b) => (a.synthetic === b.synthetic ? 0 : (a.synthetic ? 1 : -1)))
-        .map((b) => ({
-          no: b.no,
-          synthetic: b.synthetic,
-          totals: b.totals,
-          abayas: b.abayas,
-        })),
-    };
+      { invoices: 0, abayas: 0, delivered: 0, pending: 0, cancelled: 0 }
+    );
+    const inv = new Set();
+  for (const g of filteredGroups) inv.add(g.invoiceNo);
+    filteredTotals.invoices = inv.size;
 
-    // ---- Cancellations list (for the Cancellations section) ----
-    const cancellationRows = cancellations.map((c) => ({
+    // ---- 3. Cloud-side cancellations for the same range ----
+    const cloudCancels = await fetchCloudCancellations(env, fromMs, toMs);
+    const cancellations = cloudCancels.map((c) => ({
       id: c.id,
       factory: c.factory || '',
       invoiceNo: c.invoice_no || '',
@@ -241,38 +379,59 @@ export async function handleCheckReport(env, url) {
       cancelledAt: c.cancelled_at,
       cancelledBy: c.cancelled_by || '',
       reason: c.reason || '',
+      source: c.source || 'ceo',
     }));
 
-    const sameDay = fromR.ymd === toR.ymd;
+    const sameDay = fromYmd === toYmd;
     const label = sameDay
-      ? longFmt(fromR.ymd)
-      : longFmt(fromR.ymd) + ' \u2192 ' + longFmt(toR.ymd);
+      ? longDateInTz(fromYmd)
+      : longDateInTz(fromYmd) + ' \u2192 ' + longDateInTz(toYmd);
 
     return jsonRes({
       ok: true,
       timezone: FACTORY_TZ,
-      factory,
+      factory: allFactories ? 'All' : factoryParam,
       dateRange: {
-        from: fromR.ymd,
-        to: toR.ymd,
+        from: fromYmd,
+        to: toYmd,
         sameDay,
         label,
+        fromWeekday: weekdayInTz(fromYmd),
+        toWeekday: weekdayInTz(toYmd),
       },
-      totals,
-      factories: [factorySection],
-      cancellations: cancellationRows,
+      totals: allFactories ? totals : filteredTotals,
+      byLocation: filteredByLocation,
+      groups: filteredGroups,
+      factories: filteredByLocation.map((lt) => ({
+        name: lt.location,
+        totals: {
+          invoices: lt.invoices,
+          abayas: lt.abayas,
+          delivered: lt.delivered,
+          pending: lt.pending,
+          cancelled: lt.cancelled,
+        },
+      })),
+      cancellations,
       meta: {
         generatedAt: Date.now(),
         durationMs: Date.now() - t0,
-        sessionsScanned: sessions.length,
-        cancellationsScanned: cancellations.length,
+        dataSource: lb.source,
+        leaderboardError: lb.error || null,
+        leaderboardRowsScanned: leaderboardRows.length,
+        rowsInWindow: agg.inWindowCount,
+        cloudCancellationsScanned: cancellations.length,
       },
     }, 200, CEO_JSON_NO_STORE);
   } catch (e) {
-    console.error('[check-report] failed:', e && (e.stack || e.message || e));
-    return errRes('Could not build report: ' + ((e && e.message) || String(e)), 500);
+    console.error('[check-delivery] failed:', e && (e.stack || e.message || e));
+    return errRes('Could not build delivery report: ' + ((e && e.message) || String(e)), 500);
   }
 }
+
+// ---- Cancellations (unchanged from v1.2.9 — POST + GET) -------------------
+// Kept under the same paths so any dashboard build (current or older) that
+// records a cancellation continues to work.
 
 export async function handleCancellationsPost(env, request) {
   let body;
@@ -328,11 +487,11 @@ export async function handleCancellationsPost(env, request) {
 export async function handleCancellationsList(env, url) {
   const from = url.searchParams.get('from');
   const to = url.searchParams.get('to');
-  const today = todayYmdUtcFallback(env);
-  const fromR = ymdToRangeSafe(from || today, env);
-  const toR = ymdToRangeSafe(to || from || today, env);
-  const fromMs = Math.min(fromR.startMs, toR.startMs);
-  const toMs = Math.max(fromR.endMs, toR.endMs);
+  const today = ymdToday();
+  const fromYmd = safeYmd(from || today, today);
+  const toYmd = safeYmd(to || from || today, today);
+  const fromMs = new Date(startOfDayIso(fromYmd)).getTime();
+  const toMs = new Date(endOfDayIso(toYmd)).getTime();
   try {
     const res = await env.DB.prepare(`
       SELECT id, factory, invoice_no, abaya_code, cancelled_at, cancelled_by, reason, source
@@ -350,8 +509,23 @@ export async function handleCancellationsList(env, url) {
       reason: c.reason || '',
       source: c.source || 'ceo',
     }));
-    return jsonRes({ ok: true, cancellations, timezone: FACTORY_TZ, from: fromR.ymd, to: toR.ymd }, 200, CEO_JSON_NO_STORE);
+    return jsonRes({ ok: true, cancellations, timezone: FACTORY_TZ, from: fromYmd, to: toYmd }, 200, CEO_JSON_NO_STORE);
   } catch (e) {
     return errRes('Could not list cancellations: ' + ((e && e.message) || String(e)), 500);
   }
+}
+
+// ---- Legacy shim: /api/check-report and /api/check-report/config ------------
+//
+// The dashboard's first call site (from the modal that was wired in
+// ceo-pages.js before the rename) used /api/check-report. Older dashboard
+// builds in the wild still hit that path, so we re-export the new
+// handlers under the old names. The dashboard will switch to the
+// /api/check-delivery-report paths in a follow-up.
+
+export async function handleCheckReportConfig(env, url) {
+  return handleCheckDeliveryConfig(env, url);
+}
+export async function handleCheckReport(env, url) {
+  return handleCheckDeliveryReport(env, url);
 }

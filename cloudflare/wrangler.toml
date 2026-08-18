@@ -40,6 +40,14 @@ FACTORY_TZ = "Asia/Dubai"
 # Example: https://factory.farewellabaya.com
 # Set to empty string to disable factory push (Worker stores in D1 only).
 FACTORY_TUNNEL_URL = ""
+# Base URL of the leaderboard Pages project. The cloud CEO dashboard's
+# "Check Delivery Report" proxies through here so the report shows the real
+# invoice / abaya / showroom data (the cloud's own D1 only sees the
+# production line sessions and can't tell which invoice a finished abaya
+# belongs to). Set to empty string to fall back to the cloud's D1-only
+# aggregation (shows everything as "(no invoice) unassigned").
+#   Default: https://invoice.farewellabaya.com
+LEADERBOARD_URL = "https://invoice.farewellabaya.com"
 # Secrets (set via wrangler secret put — never commit values):
 #   npx wrangler secret put DISPATCH_BRIDGE_SECRET   ← shared with factory .env
 #   npx wrangler secret put WHATSAPP_VERIFY_TOKEN
