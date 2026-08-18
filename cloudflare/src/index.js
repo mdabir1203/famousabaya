@@ -25,6 +25,7 @@ import { handleEmployeeDay } from './handlers/employee-day.js';
 import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
 import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
+import { handleCheckReport, handleCheckReportConfig, handleCancellationsPost, handleCancellationsList } from './handlers/check-report.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
 import releaseMomentData from './data/release-moment.json';
@@ -309,6 +310,20 @@ export default {
 
       if (path === '/api/analytics' && request.method === 'GET') {
         return handleAnalytics(env, url);
+      }
+
+      // Check Report (production throughput) — calendar + invoices + cancellations
+      if (path === '/api/check-report/config' && request.method === 'GET') {
+        return handleCheckReportConfig(env, url);
+      }
+      if (path === '/api/check-report' && request.method === 'GET') {
+        return handleCheckReport(env, url);
+      }
+      if (path === '/api/cancellations' && request.method === 'POST') {
+        return handleCancellationsPost(env, request);
+      }
+      if (path === '/api/cancellations' && request.method === 'GET') {
+        return handleCancellationsList(env, url);
       }
 
       if (path === '/api/trace' && request.method === 'GET') {
