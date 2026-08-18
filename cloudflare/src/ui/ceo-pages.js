@@ -222,7 +222,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 #proc-split{max-height:220px;overflow-y:auto;padding-right:4px}
 @media(max-width:700px){.stat-row{grid-template-columns:1fr 1fr}.dash-row{grid-template-columns:1fr}}
 
-/* ─── Check Report (calendar + production report) ─────────────────────────
+/* ─── Check Delivery Report (calendar + per-factory delivery summary) ─────────
  * Reuses the existing dark-purple palette and rep-panel / modal-overlay
  * patterns so the new button looks like it has always belonged to the
  * Executive Reports panel. No new visual language.
@@ -345,7 +345,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
       <button class="rep-btn" onclick="openReport('weekly')"><span style="font-size:14px">&#128196;</span><span>Weekly</span></button>
       <button class="rep-btn" onclick="openReport('monthly')"><span style="font-size:14px">&#128202;</span><span>Monthly</span></button>
       <button class="rep-btn" onclick="openReport('yearly')"><span style="font-size:14px">&#128200;</span><span>Yearly</span></button>
-      <button class="rep-btn" id="cr-open" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.55)"><span style="font-size:14px">&#128197;</span><span>Check Report</span></button>
+      <button class="rep-btn" id="cr-open" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.55)" title="Check Delivery Report — overall delivery summary by factory"><span style="font-size:14px">&#128230;</span><span>Check Delivery</span></button>
     </div>
   </div>
 
@@ -431,7 +431,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   </div>
 </div>
 
-<!-- SINGULAR EMPLOYEE DAY MODAL (coherent with Check Report design system) -->
+<!-- SINGULAR EMPLOYEE DAY MODAL (coherent with Check Delivery Report design system) -->
 <div class="modal-overlay" id="modal-ed" role="dialog" aria-modal="true" aria-labelledby="ed-title">
   <div class="modal-box" style="max-width:780px">
     <div class="modal-title" id="ed-title">Employee day</div>
@@ -1574,7 +1574,7 @@ function renderEmployeeDay(data) {
     'What ' + name + ' did on this date, in order. Generated: ' +
     new Date().toLocaleString([], { timeZone: uiTz() });
 
-  // Stat cards (same cr-totals / cr-tot pattern as Check Report)
+  // Stat cards (same cr-totals / cr-tot pattern as Check Delivery Report)
   const totalsHtml =
     '<div class="cr-totals" style="grid-template-columns:repeat(3,1fr)">' +
       '<div class="cr-tot"><div class="cr-tot-lbl">Units</div>' +
@@ -2167,9 +2167,16 @@ setInterval(function () {
   setInterval(load, 60000);
 })();
 
-/* ─── Check Report (Production Throughput) ───────────────────────────────────
+/* ─── Check Delivery Report (calendar + per-factory delivery summary) ─────────
  * Reuses the same dark-purple palette. Server is on the same origin so the
- * BASE constant from the surrounding dashboard script is reused directly. */
+ * BASE constant from the surrounding dashboard script is reused directly.
+ * The user picks a date or range + a factory (or "All factories" for the
+ * overall headline), and the report shows:
+ *   1. Overall delivery summary (Invoices / Abayas / Delivered / Pending /
+ *      Cancelled) as five big stat cards under a "Delivery summary" header.
+ *   2. Per-factory drill-down — each factory as its own card with a sub-grid
+ *      of invoices and abayas, plus mini status pills.
+ *   3. Cancellations section (cloud-side) appended at the bottom. */
 (function initCheckReport() {
   // fetchJsonSafe is not inlined in the dashboard helper bundle. Define a
   // tiny local equivalent so the IIFE stays self-contained. Returns parsed
@@ -2215,10 +2222,12 @@ setInterval(function () {
     if (!m) return;
     m.classList.add('open');
     state.step = 'calendar';
-    crFetchJson(BASE + '/api/check-report/config').then(function (j) {
+    crFetchJson(BASE + '/api/check-delivery-report/config').then(function (j) {
       if (j && j.ok) {
         state.config = j;
-        state.factory = j.defaultFactory || '';
+        // Default to "All factories" so the user lands on the overall
+        // summary first; can pick a specific factory from the dropdown.
+        state.factory = '';
         state.todayYmd = j.todayYmd || ymdInTzMs(Date.now());
       } else {
         state.todayYmd = ymdInTzMs(Date.now());
@@ -2286,9 +2295,12 @@ setInterval(function () {
     const monthName = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'long', year: 'numeric' })
       .format(new Date(Date.UTC(year, month, 15)));
     const factories = (state.config && state.config.factories) || ['Main Factory'];
-    const factoryOpts = factories.map(function (f) {
-      return '<option value="' + escapeAttr(f) + '"' + (f === state.factory ? ' selected' : '') + '>' + escapeHtml(f) + '</option>';
-    }).join('');
+    // "All factories" sentinel = empty string. The dashboard defaults to this
+    // so the headline numbers are the first thing the user sees.
+    const factoryOpts = '<option value=""' + (state.factory === '' ? ' selected' : '') + '>All factories</option>' +
+      factories.map(function (f) {
+        return '<option value="' + escapeAttr(f) + '"' + (f === state.factory ? ' selected' : '') + '>' + escapeHtml(f) + '</option>';
+      }).join('');
 
     body.innerHTML =
       '<div class="cr-cal">' +
@@ -2311,12 +2323,12 @@ setInterval(function () {
           '<select id="cr-factory" onchange="CR_STATE_FACTORY=this.value">' + factoryOpts + '</select>' +
         '</div>' +
         '<div><b id="cr-range-label">' + escapeHtml(rangeLabel()) + '</b>' +
-          ' &middot; <span style="color:var(--tx3)">click one date for a single day, or two dates for a range</span></div>' +
+          ' &middot; <span style="color:var(--tx3)">pick a date or range, then Check Delivery Report</span></div>' +
       '</div>';
     if (acts) {
       acts.innerHTML =
         '<button class="btn-close" onclick="closeCheckReport()">Close</button>' +
-        '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="crSubmit()">&#128197; Check Report</button>';
+        '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="crSubmit()">&#128230; Check Delivery Report</button>';
     }
   }
   // Expose a small bridge for the inline onchange so the factory select can
@@ -2360,7 +2372,7 @@ setInterval(function () {
     params.set('from', state.fromYmd);
     params.set('to', state.toYmd);
     if (state.factory) params.set('factory', state.factory);
-    crFetchJson(BASE + '/api/check-report?' + params.toString()).then(function (j) {
+    crFetchJson(BASE + '/api/check-delivery-report?' + params.toString()).then(function (j) {
       if (!j || !j.ok) { showToast((j && j.error) || 'Could not load report'); return; }
       state.report = j;
       state.step = 'report';
@@ -2432,25 +2444,56 @@ setInterval(function () {
     const sub  = document.getElementById('cr-sub');
     const acts = document.getElementById('cr-actions');
     const title = document.getElementById('cr-title');
-    title.textContent = r.dateRange.sameDay ? 'Production Report' : 'Production Report (range)';
+    title.textContent = r.dateRange.sameDay ? 'Check Delivery Report' : 'Check Delivery Report (range)';
     sub.innerHTML = '<b>' + escapeHtml(r.dateRange.label) + '</b>' +
       ' &middot; <span style="color:var(--tx3)">Generated in ' + escapeHtml(r.timezone) + '</span>';
+
+    // ---- Overall delivery summary (first thing the eye lands on) -----------
+    // Five big cards: Invoices / Abayas / Delivered / Pending / Cancelled.
+    // When a specific factory is picked, the headline is that factory's
+    // slice; the per-factory cards below stay as a comparison.
     const t = r.totals;
-    const totalsHtml = '<div class="cr-totals">' +
-      statCard('Invoices', t.invoices, 'invoices') +
-      statCard('Abayas', t.abayas, 'abayas') +
-      statCard('Delivered', t.delivered, 'delivered') +
-      statCard('Pending', t.pending, 'pending') +
-      statCard('Cancelled', t.cancelled, 'cancelled') +
+    const isAll = !r.factory || r.factory === 'All' || r.factory === '' ||
+      (r.factories && r.factories.length > 1);
+    const summaryHeading = isAll
+      ? 'Delivery summary &mdash; overall (all factories)'
+      : 'Delivery summary &mdash; ' + escapeHtml(r.factory);
+    const totalFactories = (r.factories || []).length;
+    const overallHtml =
+      '<div class="cr-section">' +
+        '<div class="cr-section-h">' +
+          '<span>' + summaryHeading +
+            '<span class="cr-mini"> &middot; ' + totalFactories +
+            (totalFactories === 1 ? ' factory' : ' factories') + '</span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="cr-totals">' +
+          statCard('Invoices', t.invoices, 'invoices') +
+          statCard('Abayas', t.abayas, 'abayas') +
+          statCard('Delivered', t.delivered, 'delivered') +
+          statCard('Pending', t.pending, 'pending') +
+          statCard('Cancelled', t.cancelled, 'cancelled') +
+        '</div>' +
       '</div>';
-    const factoriesHtml = r.factories.length
-      ? r.factories.map(factorySection).join('')
-      : '<div class="cr-empty">No factory activity in this range.</div>';
+
+    // ---- Per-factory drill-down (only when viewing "All") -------------------
+    // When a single factory is picked, the headline IS that factory — no
+    // need to repeat the per-factory card. When viewing All, the per-factory
+    // cards give the CEO a one-line comparison.
+    const factoriesHtml = (isAll && r.factories && r.factories.length)
+      ? '<div class="cr-section">' +
+          '<div class="cr-section-h"><span>By factory<span class="cr-mini"> &middot; pick one above to drill in</span></span></div>' +
+          r.factories.map(factorySection).join('') +
+        '</div>'
+      : (r.factories && r.factories.length
+          ? r.factories.map(factorySection).join('')
+          : '<div class="cr-empty">No factory activity in this range.</div>');
+
     const cancelHtml = r.cancellations.length
       ? '<div class="cr-section"><div class="cr-section-h">Cancellations <span class="cr-mini">traceable to invoice / abaya code</span></div>' +
         '<div class="cr-cancel-list">' + r.cancellations.map(cancelRowHtml).join('') + '</div></div>'
       : '';
-    body.innerHTML = totalsHtml + factoriesHtml + cancelHtml;
+    body.innerHTML = overallHtml + factoriesHtml + cancelHtml;
     acts.innerHTML =
       '<button class="btn-close" onclick="crBack()">&#9664; Change Date</button>' +
       '<button class="btn-close" onclick="openCancelModal()">+ Record Cancellation</button>' +
@@ -2462,7 +2505,7 @@ setInterval(function () {
     const r = state.report; if (!r) return;
     const t = r.totals;
     const lines = [];
-    lines.push('*AbaYa Track \u2014 Production Report*');
+    lines.push('*AbaYa Track \u2014 Check Delivery Report*');
     lines.push('_' + r.dateRange.label + '_');
     lines.push('_Generated in ' + r.timezone + '_');
     lines.push('');
@@ -2571,11 +2614,11 @@ setInterval(function () {
 })();
 </script>
 
-<!-- Check Report modal: calendar + production report + record cancellation -->
+<!-- Check Delivery Report modal: calendar + per-factory delivery summary + record cancellation -->
 <div class="modal-overlay" id="modal-check" role="dialog" aria-modal="true" aria-labelledby="cr-title">
   <div class="modal-box" style="max-width:780px">
-    <div class="modal-title" id="cr-title">Check Production Report</div>
-    <div class="modal-sub" id="cr-sub">Pick a single date or a range in the production timezone.</div>
+    <div class="modal-title" id="cr-title">Check Delivery Report</div>
+    <div class="modal-sub" id="cr-sub">Pick a single date or a range in the production timezone. Pick a factory to drill in, or leave on "All factories" for the overall summary.</div>
     <div id="cr-body" class="cr-wrap"></div>
     <div class="modal-actions" id="cr-actions">
       <button class="btn-close" onclick="closeCheckReport()">Close</button>
