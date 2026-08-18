@@ -111,44 +111,30 @@ export function getCEODashboard(origin) {
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>AbaYa Track — CEO Dashboard</title>
 <script>
-// Lightweight Web Vitals (TTFB, FCP, LCP, CLS, INP) — zero dependencies.
-// Numbers live on window.__vitals and in console for support reviews.
+// Visible error banner — if ANY script on the page throws, show it
+// inside the dashboard so the user doesn't have to open devtools.
 (function () {
-  try {
-    var v = (window.__vitals = {});
-    function log() {
-      if (console && console.debug) console.debug('[vitals]', JSON.stringify(v));
-    }
-    var nav = performance.getEntriesByType('navigation')[0];
-    if (nav) {
-      v.TTFB = Math.round(nav.responseStart);
-      v.HTML = Math.round(nav.responseEnd);
-    }
-    new PerformanceObserver(function (l) {
-      var e = l.getEntries();
-      if (e.length) v.LCP = Math.round(e[e.length - 1].startTime);
-      log();
-    }).observe({ type: 'largest-contentful-paint', buffered: true });
-    new PerformanceObserver(function (l) {
-      var e = l.getEntries();
-      if (e.length) v.FCP = Math.round(e[0].startTime);
-      log();
-    }).observe({ type: 'paint', buffered: true });
-    var cls = 0;
-    new PerformanceObserver(function (l) {
-      l.getEntries().forEach(function (x) {
-        if (!x.hadRecentInput) cls += x.value;
-      });
-      v.CLS = Math.round(cls * 1000) / 1000;
-      log();
-    }).observe({ type: 'layout-shift', buffered: true });
-    new PerformanceObserver(function (l) {
-      l.getEntries().forEach(function (x) {
-        v.INP = Math.max(v.INP || 0, Math.round(x.duration));
-      });
-      log();
-    }).observe({ type: 'event', durationThreshold: 40, buffered: true });
-  } catch (_) {}
+  function show(msg) {
+    try {
+      var b = document.getElementById('__js_err_banner');
+      if (!b) {
+        b = document.createElement('div');
+        b.id = '__js_err_banner';
+        b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#ef4444;color:#fff;font:12px/1.4 monospace;padding:8px 12px;white-space:pre-wrap;max-height:40vh;overflow:auto;box-shadow:0 4px 12px rgba(0,0,0,.4)';
+        if (document.body) document.body.appendChild(b); else document.addEventListener('DOMContentLoaded', function () { document.body.appendChild(b); });
+      }
+      var line = document.createElement('div');
+      line.textContent = '[JS] ' + msg;
+      b.appendChild(line);
+    } catch (_) {}
+  }
+  window.addEventListener('error', function (ev) {
+    show((ev.filename || 'inline') + ':' + (ev.lineno || '?') + ':' + (ev.colno || '?') + ' — ' + (ev.message || 'unknown'));
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev.reason;
+    show('unhandledrejection: ' + (r && r.message ? r.message : String(r)));
+  });
 })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -618,6 +604,7 @@ async function poll(skipRefreshRetry) {
       cache: 'no-store',
       headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
     });
+    try { console.log('[ceo-poll] status=' + r.status + ' url=' + url); } catch (_) {}
     if (r.status === 200) {
       let d = await r.json();
       if (d && d.ok === true && d.state && typeof d.state === 'object') {
@@ -706,6 +693,7 @@ async function poll(skipRefreshRetry) {
           'HTTP ' + r.status + (r.status === 401 ? ' (session/cookie?)' : '');
     }
   } catch (e) {
+    try { console.error('[ceo-poll] threw:', e); } catch (_) {}
     if (syncEl) {
       var emsg = e && e.message ? String(e.message).slice(0, 80) : '';
       syncEl.textContent = 'Offline \u2014 retrying...' + (emsg ? ' (' + emsg + ')' : '');
@@ -1101,7 +1089,7 @@ function showRenderError(stage, err) {
     if (msg.length > 240) msg = msg.slice(0, 240) + '\u2026';
     var existing = document.getElementById('render-error-banner');
     var body = '<div style="font-family:var(--fn-mono);font-size:11.5px;line-height:1.5;white-space:pre-wrap;margin-top:6px">' +
-      'Stage: ' + String(stage || '?') + '\n' +
+      'Stage: ' + String(stage || '?') + '<br>' +
       msg + '</div>' +
       '<div style="margin-top:8px;font-size:10.5px;opacity:.7">Hard-refresh (Ctrl+Shift+R) if this keeps appearing. The dashboard above is still live; only this section failed to render.</div>';
     if (existing) {
@@ -1647,7 +1635,7 @@ async function openReport(type) {
 
     (data.by_employee||[]).forEach(e => {
       html += '<div style="display:grid;grid-template-columns:1fr 44px 62px 62px 62px 62px 62px 62px;gap:6px;padding:9px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px">' +
-        '<span style="font-weight:600"><a href="javascript:void(0)" style="color:var(--tx);text-decoration:underline dotted" title="See this employee\'s day" onclick="openEmployeeDay(decodeURIComponent(\'' + encodeURIComponent(String(e.emp_id || '')) + '\'))">' + esc(String(e.emp_name || e.emp_id || '')) + '</a><span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
+        '<span style="font-weight:600"><a href="javascript:void(0)" style="color:var(--tx);text-decoration:underline dotted" title="See this employee\\'s day" onclick="openEmployeeDay(decodeURIComponent(\\'\\') + encodeURIComponent(String(e.emp_id || \\'\\')) + \\'\\'))">' + esc(String(e.emp_name || e.emp_id || '')) + '</a><span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
         '<span style="text-align:right;font-weight:700">'+e.units+'</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">'+fmtHMS(e.active_time_sec)+'</span>' +
         '<span style="text-align:right;color:var(--tx2)">'+fmtHMS(e.elapsed_time_sec)+'</span>' +
@@ -1821,7 +1809,7 @@ function exportWA() {
     });
     lines.push('');
     lines.push('_AbaYa Track - Cloudflare D1_');
-    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
+    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
     closeModal();
     return;
   }
@@ -1847,7 +1835,7 @@ function exportWA() {
     });
     lines.push('');
     lines.push('_AbaYa Track_');
-    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
+    window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
     closeModal();
     return;
   }
@@ -1956,7 +1944,7 @@ function exportWA() {
   }
   lines.push('');
   lines.push('_AbaYa Track - Powered by Cloudflare_');
-  window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\n')), '_blank');
+  window.open('https://wa.me/?text=' + encodeURIComponent(lines.join('\\n')), '_blank');
   closeModal();
 }
 
@@ -2387,7 +2375,7 @@ setInterval(function () {
       lines.push('');
     }
     lines.push('_Sent from AbaYa Track CEO Dashboard_');
-    const text = lines.join('\n');
+    const text = lines.join('\\n');
     window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
     showToast('WhatsApp opened with the report');
   };

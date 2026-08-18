@@ -3,7 +3,11 @@
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Ingest-Secret',
+  // Cache-Control + Pragma are non-safelisted request headers, so cross-origin
+  // fetches (e.g. embeded dashboards on other domains) need a CORS preflight.
+  // Whitelist them so the CEO JSON stays fresh.
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Ingest-Secret, Cache-Control, Pragma',
+  'Access-Control-Max-Age': '86400',
 };
 
 /** Stops browsers and the Cloudflare CDN from caching CEO JSON (fixes stale dashboard). */
