@@ -170,13 +170,30 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .emp-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0}
 .bar-wrap{flex:1;height:5px;background:var(--s3);border-radius:3px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px}
-.rep-panel{background:linear-gradient(135deg,rgba(106,95,193,.12),rgba(167,139,250,.08));border:1px solid rgba(106,95,193,.3);border-radius:14px;padding:16px;margin-bottom:16px}
+.rep-panel{background:linear-gradient(135deg,rgba(106,95,193,.12),rgba(167,139,250,.08));border:1px solid rgba(106,95,193,.3);border-radius:14px;padding:16px 16px 14px;margin-bottom:16px}
 .rep-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-.rep-btn{display:flex;align-items:center;gap:6px;padding:9px 16px;border-radius:13px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #584674;background:#79628c;color:#fff;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
-.rep-btn:hover{box-shadow:rgba(0,0,0,.18) 0px .5rem 1.5rem;transform:translateY(-1px)}
+.rep-btn{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:88px;padding:12px 14px;border-radius:13px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid #584674;background:#79628c;color:#fff;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.3px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
+.rep-btn:hover{box-shadow:rgba(0,0,0,.22) 0px .5rem 1.5rem;transform:translateY(-1px);filter:brightness(1.06)}
+.exec-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+@media(max-width:680px){.exec-filters{grid-template-columns:1fr}}
+.exec-filter{background:rgba(0,0,0,.18);border:1px solid rgba(106,95,193,.22);border-radius:11px;padding:10px 12px}
+.exec-filter-lbl{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:6px}
+.exec-filter-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.exec-filter-hint{font-size:10.5px;color:var(--tx3);margin-top:6px;line-height:1.4}
+.exec-input{padding:8px 10px;border-radius:9px;background:var(--s1);border:1px solid var(--bd2);color:var(--tx);font-family:var(--fn);font-size:13px;min-width:0;flex:1}
+.exec-input:focus{outline:none;border-color:var(--bl);box-shadow:0 0 0 3px rgba(106,95,193,.18)}
+.exec-chip{padding:8px 12px;border-radius:9px;background:var(--s3);color:var(--tx2);border:1px solid var(--bd2);font-family:var(--fn);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.exec-chip:hover{background:var(--bl);color:#fff;border-color:rgba(167,139,250,.5)}
+.exec-chip-primary{background:linear-gradient(135deg,#6a5fc1,#422082);color:#fff;border-color:rgba(167,139,250,.55);box-shadow:0 0 0 1px rgba(167,139,250,.18) inset}
+.exec-chip-primary:hover{filter:brightness(1.08);border-color:rgba(167,139,250,.75)}
+.exec-reports{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+@media(max-width:680px){.exec-reports{grid-template-columns:repeat(2,1fr)}}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(21,15,35,.85);z-index:999;align-items:flex-start;justify-content:center;padding:20px;backdrop-filter:blur(8px);overflow-y:auto}
 .modal-overlay.open{display:flex}
 .modal-box{background:var(--s1);border:1px solid var(--bd2);border-radius:20px;padding:24px;width:100%;max-width:600px;margin:auto;box-shadow:rgba(22,15,36,.9) 0px 24px 80px;animation:pop .25s ease}
+.modal-title{font-family:var(--fn-display);font-size:20px;font-weight:700;color:var(--tx);margin-bottom:4px;line-height:1.2;letter-spacing:-.3px}
+.modal-sub{font-size:12.5px;color:var(--tx3);margin-bottom:16px;line-height:1.45}
+.modal-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap;align-items:center}
 @keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
 .btn-export{flex:1;padding:13px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-weight:700;border:none;border-radius:13px;font-size:14px;cursor:pointer;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px}
 .btn-export:hover{opacity:.9}
@@ -296,32 +313,39 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   <div class="ds" id="work-status" style="font-size:11px">Status: --</div>
 
   <div class="rep-panel" id="exec-reports">
-    <div style="font-size:15px;font-weight:700;color:var(--bl);display:flex;align-items:center;gap:8px">&#128274; Executive Reports</div>
-    <div style="font-size:11px;color:var(--tx2);margin-top:4px">View report, then export to WhatsApp in one tap</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 2px">
-      <label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:8px">
-        <span>&#128197; Pick a date</span>
-        <input type="date" id="report-date" style="padding:8px 10px;border-radius:8px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:12px;font-family:var(--fn)">
-      </label>
-      <button type="button" class="rep-btn" style="padding:8px 12px;text-transform:none" onclick="resetReportDate()">Today</button>
-      <span style="font-size:10px;color:var(--tx3)">Reports open for this date. Leave empty for today.</span>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <div style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#6a5fc1,#422082);display:flex;align-items:center;justify-content:center;font-size:15px">&#128274;</div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:var(--tx);font-family:var(--fn-display);letter-spacing:-.2px">Executive Reports</div>
+        <div style="font-size:11.5px;color:var(--tx3);margin-top:2px">Pick a date and (optionally) a person, then tap a report below. All reports export to WhatsApp in one tap.</div>
+      </div>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 2px">
-      <label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:8px">
-        <span>&#128100; Pick a person</span>
-        <select id="employee-day-select" style="padding:10px 12px;border-radius:10px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:13px;font-family:var(--fn);max-width:240px">
-          <option value="">Loading names...</option>
-        </select>
-      </label>
-      <button type="button" class="rep-btn" style="padding:10px 18px" onclick="openSelectedEmployeeDay()">&#128269; Show their day</button>
-      <span style="font-size:10px;color:var(--tx3)">See what that person did on the picked date (or today).</span>
+    <div class="exec-filters">
+      <div class="exec-filter">
+        <div class="exec-filter-lbl">&#128197; Pick a date</div>
+        <div class="exec-filter-row">
+          <input type="date" id="report-date" class="exec-input" aria-label="Report date">
+          <button type="button" class="exec-chip" onclick="resetReportDate()">Today</button>
+        </div>
+        <div class="exec-filter-hint">Reports open for this date. Leave empty for today.</div>
+      </div>
+      <div class="exec-filter">
+        <div class="exec-filter-lbl">&#128100; Pick a person</div>
+        <div class="exec-filter-row">
+          <select id="employee-day-select" class="exec-input" style="max-width:240px" aria-label="Employee">
+            <option value="">Loading names\u2026</option>
+          </select>
+          <button type="button" class="exec-chip exec-chip-primary" onclick="openSelectedEmployeeDay()">&#128269; Show their day</button>
+        </div>
+        <div class="exec-filter-hint">See what that person did on the picked date (or today).</div>
+      </div>
     </div>
-    <div class="rep-btns">
-      <button class="rep-btn" onclick="openReport('daily')">&#128467; Daily Report</button>
-      <button class="rep-btn" onclick="openReport('weekly')">&#128196; Weekly Report</button>
-      <button class="rep-btn" onclick="openReport('monthly')">&#128202; Monthly Report</button>
-      <button class="rep-btn" onclick="openReport('yearly')">&#128200; Yearly Report</button>
-      <button class="rep-btn" id="cr-open" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.5)">&#128197; Check Report</button>
+    <div class="exec-reports">
+      <button class="rep-btn" onclick="openReport('daily')"><span style="font-size:14px">&#128467;</span><span>Daily</span></button>
+      <button class="rep-btn" onclick="openReport('weekly')"><span style="font-size:14px">&#128196;</span><span>Weekly</span></button>
+      <button class="rep-btn" onclick="openReport('monthly')"><span style="font-size:14px">&#128202;</span><span>Monthly</span></button>
+      <button class="rep-btn" onclick="openReport('yearly')"><span style="font-size:14px">&#128200;</span><span>Yearly</span></button>
+      <button class="rep-btn" id="cr-open" onclick="openCheckReport()" style="background:linear-gradient(135deg,#6a5fc1,#422082);border-color:rgba(167,139,250,.55)"><span style="font-size:14px">&#128197;</span><span>Check Report</span></button>
     </div>
   </div>
 
@@ -403,6 +427,18 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
     <div style="display:flex;gap:10px;margin-top:16px">
       <button class="btn-export" onclick="exportWA()">&#128241; Send via WhatsApp</button>
       <button class="btn-close" onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- SINGULAR EMPLOYEE DAY MODAL (coherent with Check Report design system) -->
+<div class="modal-overlay" id="modal-ed" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+  <div class="modal-box" style="max-width:780px">
+    <div class="modal-title" id="ed-title">Employee day</div>
+    <div class="modal-sub" id="ed-sub">What this person did on the picked date, in order.</div>
+    <div id="ed-body" class="cr-wrap"></div>
+    <div class="modal-actions" id="ed-actions">
+      <button class="btn-close" onclick="closeEmployeeDay()">Close</button>
     </div>
   </div>
 </div>
@@ -1463,11 +1499,13 @@ function openSelectedEmployeeDay() {
   const sel = document.getElementById('employee-day-select');
   const raw = sel ? String(sel.value || '') : '';
   if (!raw) {
-    document.getElementById('modal-title').textContent = 'Pick a person first';
-    document.getElementById('modal-ts').textContent = '';
-    document.getElementById('modal-body').innerHTML =
-      '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">Choose a name from "Pick a person", then tap Show their day.</div>';
-    document.getElementById('modal').classList.add('open');
+    document.getElementById('ed-title').textContent = 'Pick a person first';
+    document.getElementById('ed-sub').textContent = '';
+    document.getElementById('ed-body').innerHTML =
+      '<div class="cr-empty">Choose a name from "Pick a person", then tap Show their day.</div>';
+    document.getElementById('ed-actions').innerHTML =
+      '<button class="btn-close" onclick="closeEmployeeDay()">Close</button>';
+    document.getElementById('modal-ed').classList.add('open');
     return;
   }
   openEmployeeDay(decodeURIComponent(raw));
@@ -1481,11 +1519,22 @@ function employeeDayAnchorYmd() {
   return (p && p.end_date) || localYmdNow();
 }
 
+function closeEmployeeDay() {
+  const m = document.getElementById('modal-ed');
+  if (m) m.classList.remove('open');
+}
+window.closeEmployeeDay = closeEmployeeDay;
+
 async function openEmployeeDay(empId) {
   const anchor = employeeDayAnchorYmd();
-  document.getElementById('modal-title').textContent = 'Employee day';
-  document.getElementById('modal-ts').textContent = 'Loading ' + anchor + '...';
-  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
+  const m = document.getElementById('modal-ed');
+  if (m) m.classList.add('open');
+  document.getElementById('ed-title').textContent = 'Employee day';
+  document.getElementById('ed-sub').textContent = 'Loading ' + anchor + '...';
+  document.getElementById('ed-body').innerHTML =
+    '<div class="cr-empty">\u23F3 Loading\u2026</div>';
+  document.getElementById('ed-actions').innerHTML =
+    '<button class="btn-close" onclick="closeEmployeeDay()">Close</button>';
   try {
     const r = await fetchWithRetry(
       BASE + '/api/report/employee-day?emp_id=' + encodeURIComponent(empId) +
@@ -1496,62 +1545,144 @@ async function openEmployeeDay(empId) {
     if (!data || data.ok === false) throw new Error((data && data.error) || 'load failed');
     renderEmployeeDay(data);
   } catch (e) {
-    document.getElementById('modal-body').innerHTML =
-      backToReportBtnHtml() +
-      '<div style="padding:20px;text-align:center;color:var(--rd);font-size:13px">Could not load employee day: ' +
+    document.getElementById('ed-body').innerHTML =
+      '<div class="cr-empty" style="color:var(--rd)">Could not load employee day: ' +
       esc(String((e && e.message) || e)) + '</div>';
   }
+}
+
+function edFmtRange(s) {
+  const start = s.started_at
+    ? new Date(Number(s.started_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+    : '\u2014';
+  const end = s.live
+    ? 'now'
+    : s.ended_at
+      ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+      : '\u2014';
+  return start + ' \u2013 ' + end;
 }
 
 function renderEmployeeDay(data) {
   const emp = data.emp || {};
   const t = data.totals || {};
   const name = emp.name || emp.id || 'Employee';
-  document.getElementById('modal-title').textContent = name + ' — ' + String(data.date || '');
-  document.getElementById('modal-ts').textContent =
-    (emp.process ? emp.process + ' — ' : '') +
+  const date = String(data.date || '');
+  document.getElementById('ed-title').textContent = name + (date ? ' \u2014 ' + date : '');
+  document.getElementById('ed-sub').textContent =
+    (emp.process ? emp.process + ' \u00b7 ' : '') +
     'What ' + name + ' did on this date, in order. Generated: ' +
     new Date().toLocaleString([], { timeZone: uiTz() });
-  let html =
-    backToReportBtnHtml() +
-    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 0 14px">' +
-    card('Units', t.units || 0, 'var(--gr)') +
-    card('Work time', fmtHMS(t.active_time_sec || 0), 'var(--am)') +
-    card('Live now', fmtHMS(t.live_active_time_sec || 0), 'var(--bl)') +
+
+  // Stat cards (same cr-totals / cr-tot pattern as Check Report)
+  const totalsHtml =
+    '<div class="cr-totals" style="grid-template-columns:repeat(3,1fr)">' +
+      '<div class="cr-tot"><div class="cr-tot-lbl">Units</div>' +
+        '<div class="cr-tot-val" style="color:var(--gr)">' + (t.units || 0) + '</div></div>' +
+      '<div class="cr-tot"><div class="cr-tot-lbl">Work time</div>' +
+        '<div class="cr-tot-val" style="color:var(--am)">' + esc(fmtHMS(t.active_time_sec || 0)) + '</div></div>' +
+      '<div class="cr-tot"><div class="cr-tot-lbl">Live now</div>' +
+        '<div class="cr-tot-val" style="color:var(--bl)">' + esc(fmtHMS(t.live_active_time_sec || 0)) + '</div></div>' +
     '</div>';
+
+  // Sessions section
   const rows = data.sessions || [];
+  let sessionsHtml;
   if (!rows.length) {
-    html += '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:13px">No sessions on this date.</div>';
+    sessionsHtml =
+      '<div class="cr-section"><div class="cr-section-h">Sessions <span class="cr-mini">chronological, with abaya + duration</span></div>' +
+      '<div class="cr-empty">No sessions on this date.</div></div>';
   } else {
-    html +=
-      '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden;max-height:320px;overflow-y:auto">' +
-      '<div style="display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr) 64px;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px">' +
-      '<span>Time</span><span>Process</span><span>Item</span><span style="text-align:right">Duration</span></div>';
+    sessionsHtml =
+      '<div class="cr-section">' +
+        '<div class="cr-section-h">Sessions <span class="cr-mini">' + rows.length + ' step' + (rows.length === 1 ? '' : 's') + ' \u00b7 chronological</span></div>' +
+        '<div class="cr-scroll">' +
+          '<div style="display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1.1fr) 76px;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:600">' +
+            '<span>Time</span><span>Process</span><span>Item</span><span style="text-align:right">Duration</span></div>';
     rows.forEach(function (s) {
-      const start = s.started_at
-        ? new Date(Number(s.started_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
-        : '—';
-      const end = s.live
-        ? 'now'
-        : s.ended_at
-          ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
-          : '—';
-      html +=
-        '<div style="display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr) 64px;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center;' +
-        (s.live ? 'background:rgba(106,95,193,.14);' : '') +
+      const procColor = procColorUI(s.emp_process);
+      const liveBadge = s.live
+        ? ' <span class="cr-status" style="color:var(--bl);background:var(--blb);border-color:rgba(106,95,193,.3)">live</span>'
+        : '';
+      sessionsHtml +=
+        '<div style="display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1.1fr) 76px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center;' +
+        (s.live ? 'background:rgba(106,95,193,.10);' : '') +
         '">' +
-        '<span style="color:var(--tx3)">' + esc(start + '–' + end) + '</span>' +
-        '<span style="font-weight:600;color:' + procColorUI(s.emp_process) + '">' +
-        esc(String(s.emp_process || '—')) +
-        (s.live ? ' <span style="color:var(--bl);font-size:10px">(active)</span>' : '') +
-        '</span>' +
-        '<span style="color:var(--tx2)">' + esc(String(s.abaya_code || s.abaya_id || '—')) + '</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(s.duration_sec) + '</span></div>';
+          '<span style="color:var(--tx3);font-variant-numeric:tabular-nums">' + esc(edFmtRange(s)) + '</span>' +
+          '<span style="font-weight:600;color:' + procColor + '">' + esc(String(s.emp_process || '\u2014')) + liveBadge + '</span>' +
+          '<span style="color:var(--tx2);font-family:var(--fn-mono);font-size:11px">' + esc(String(s.abaya_code || s.abaya_id || '\u2014')) + '</span>' +
+          '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">' + esc(fmtHMS(s.duration_sec)) + '</span>' +
+        '</div>';
     });
-    html += '</div>';
+    sessionsHtml += '</div></div>';
   }
-  document.getElementById('modal-body').innerHTML = html;
+
+  document.getElementById('ed-body').innerHTML = totalsHtml + sessionsHtml;
+  // Action bar: WhatsApp export, Change Date, Close
+  document.getElementById('ed-actions').innerHTML =
+    '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="edWhatsApp()">&#128241; Send via WhatsApp</button>' +
+    '<button class="btn-close" onclick="edChangeDate()">&#9664; Change Date</button>' +
+    '<button class="btn-close" onclick="closeEmployeeDay()">Close</button>';
 }
+
+/** Step back to the Executive Reports panel so the user can pick a new date / person. */
+function edChangeDate() {
+  closeEmployeeDay();
+  // The Executive Reports panel is at the top of the dashboard; scroll to it.
+  try {
+    const panel = document.getElementById('exec-reports');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (_) {}
+}
+window.edChangeDate = edChangeDate;
+
+/** Build a WhatsApp-shareable summary of the employee day. */
+window.edWhatsApp = function () {
+  // Re-render the most recent /api/report/employee-day call's data. The handler
+  // stored it on the closure, but we don't keep that across invocations — so
+  // we re-fetch.
+  const sel = document.getElementById('employee-day-select');
+  const empId = sel ? String(sel.value || '') : '';
+  if (!empId) { showToast('Pick a person first', 'error'); return; }
+  const date = employeeDayAnchorYmd();
+  showToast('Building WhatsApp text\u2026');
+  fetchWithRetry(
+    BASE + '/api/report/employee-day?emp_id=' + encodeURIComponent(decodeURIComponent(empId)) +
+      '&date=' + encodeURIComponent(date) + '&ts=' + Date.now(),
+    { cache: 'no-store' }
+  ).then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data || data.ok === false) throw new Error((data && data.error) || 'load failed');
+      const emp = data.emp || {};
+      const t = data.totals || {};
+      const name = emp.name || emp.id || 'Employee';
+      const lines = [];
+      lines.push('*AbaYa Track \u2014 ' + name + '*');
+      lines.push('_' + String(data.date || '') + '_');
+      lines.push('_' + (emp.process || '') + '_');
+      lines.push('_Generated in ' + uiTz() + '_');
+      lines.push('');
+      lines.push('*Totals*');
+      lines.push('\u2022 Units: *' + (t.units || 0) + '*');
+      lines.push('\u2022 Work time: *' + fmtHMS(t.active_time_sec || 0) + '*');
+      lines.push('\u2022 Live now: *' + fmtHMS(t.live_active_time_sec || 0) + '*');
+      lines.push('');
+      if ((data.sessions || []).length) {
+        lines.push('*Sessions*');
+        data.sessions.forEach(function (s) {
+          lines.push('\u2022 ' + edFmtRange(s) + ' \u00b7 ' + (s.emp_process || '\u2014') +
+            ' \u00b7 ' + (s.abaya_code || s.abaya_id || '\u2014') +
+            ' \u00b7 ' + fmtHMS(s.duration_sec) + (s.live ? ' (active)' : ''));
+        });
+        lines.push('');
+      }
+      lines.push('_Sent from AbaYa Track CEO Dashboard_');
+      const text = lines.join('\\n');
+      window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+      showToast('WhatsApp opened');
+    })
+    .catch(function (e) { showToast('Could not build text: ' + (e.message || e), 'error'); });
+};
 
 function backToReportBtnHtml() {
   return '<div style="margin-bottom:10px"><button type="button" class="rep-btn" style="padding:8px 12px;text-transform:none" onclick="backToReport()">&larr; Back to report</button></div>';

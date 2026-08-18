@@ -13,29 +13,81 @@ import { isValidYmd } from './report-shared.js';
  * One employee, one factory date: every completed station session in
  * chronological order, plus the live session row when the date is the
  * factory's today. Powers the dashboard "what is this employee doing" view.
+ *
+ * emp_id translation:
+ *   The CEO dashboard's "Pick a person" dropdown is populated from
+ *   /api/employees which returns the local roster's id (e.g. "e20" for
+ *   Farhan). The cloud's `sessions` table, however, stores the
+ *   xlsx-stable id ("e_bc_00000129" for Farhan — see ingest.js's
+ *   stableEmployeeIdFromBarcode path). The two are different on purpose
+ *   (the local roster is hand-edited, the cloud ingests use the
+ *   barcoded badges), so we have to translate.
+ *
+ *   We accept either form:
+ *     - "eN"            → look up employees.barcode, derive "e_bc_<bc>"
+ *     - "e_bc_<bc>"     → pass through (already in cloud form)
+ *     - raw emp_code    → look up employees.code, then derive bc
+ *   The WHERE clause uses `emp_id IN (?,?)` so we match BOTH the
+ *   original and the translated form, which keeps old clients working
+ *   even if they didn't know about the translation.
  */
 export async function handleEmployeeDay(env, url) {
   const t0 = Date.now();
-  const empId = String(url.searchParams.get('emp_id') || '').trim();
+  const empIdRaw = String(url.searchParams.get('emp_id') || '').trim();
   const date = String(url.searchParams.get('date') || '').trim();
-  if (!empId) return errRes('Missing emp_id', 400);
+  if (!empIdRaw) return errRes('Missing emp_id', 400);
   if (!isValidYmd(date)) return errRes('Invalid date (use YYYY-MM-DD)', 400);
+
+  // ---- Translate the local roster id → cloud (xlsx-stable) id ----
+  // We always run the roster lookup so a fresh "eN" id never silently
+  // returns 0 sessions (which is the bug this method exists to fix).
+  const rosterRes = await env.DB.prepare(
+    `SELECT id, name, code, process, barcode FROM employees WHERE id = ? OR code = ?`
+  ).bind(empIdRaw, empIdRaw).first();
+  // If the caller passed an xlsx-stable id (e_bc_*) we still want to
+  // surface the human name for the report header — look it up by barcode.
+  const rosterByBarcode = empIdRaw.startsWith('e_bc_')
+    ? await env.DB.prepare(
+        `SELECT id, name, code, process, barcode FROM employees
+         WHERE barcode = ? OR REPLACE(barcode, '0', '') = REPLACE(?, '0', '')`
+      ).bind(empIdRaw.slice('e_bc_'.length), empIdRaw.slice('e_bc_'.length)).first()
+    : null;
+  const emp = rosterRes || rosterByBarcode || null;
+
+  // Build the candidate list of emp_ids to match against sessions.emp_id.
+  const candidateIds = new Set([empIdRaw]);
+  if (emp && emp.barcode) {
+    // Cloud's stable id for this employee: 'e_bc_' + barcode.
+    candidateIds.add('e_bc_' + String(emp.barcode));
+    // Some ingest paths also store the numeric form (no leading zeros).
+    const numeric = String(Number(emp.barcode));
+    if (numeric && numeric !== 'NaN') candidateIds.add('e_bc_' + numeric);
+  }
+  if (empIdRaw.startsWith('e_bc_')) {
+    // Caller passed xlsx-stable directly — also try the literal original
+    // in case a legacy row stored the local id.
+    candidateIds.add(empIdRaw);
+  }
+  const empIdList = Array.from(candidateIds);
+  const empIdPlaceholders = empIdList.map(() => '?').join(',');
 
   const factoryToday = factoryTodayString(env);
   const isToday = date === factoryToday;
 
   // One D1 round trip: day sessions (+ working-hours config and live session
-  // when the requested date is the factory's today).
+  // when the requested date is the factory's today). The WHERE clause matches
+  // any candidate emp_id (local or xlsx-stable) so callers don't need to
+  // know which form the sessions table actually uses.
   const stmts = [
     env.DB.prepare(
       `
       SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code,
         started_at, ended_at, duration_sec, invoice_count, invoice_serial, station
       FROM sessions
-      WHERE day_date = ? AND emp_id = ?
+      WHERE day_date = ? AND emp_id IN (${empIdPlaceholders})
       ORDER BY started_at ASC
     `
-    ).bind(date, empId),
+    ).bind(date, ...empIdList),
   ];
   if (isToday) {
     stmts.push(env.DB.prepare(`SELECT v FROM worker_settings WHERE k = ?`).bind(WORKING_HOURS_KEY));
@@ -44,9 +96,9 @@ export async function handleEmployeeDay(env, url) {
         `
         SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code, started_at
         FROM active_sessions
-        WHERE emp_id = ?
+        WHERE emp_id IN (${empIdPlaceholders})
       `
-      ).bind(empId)
+      ).bind(...empIdList)
     );
   }
   const tDb = Date.now();
@@ -95,11 +147,17 @@ export async function handleEmployeeDay(env, url) {
   const lastRaw = rows.length ? rows[rows.length - 1] : null;
   const liveRow = sessions.length && sessions[sessions.length - 1].live ? sessions[sessions.length - 1] : null;
   const activeSec = sessions.reduce((s, x) => s + (x.live ? 0 : x.duration_sec), 0);
-  const emp = {
-    id: empId,
-    name: (liveRow && liveRow.emp_name) || (lastRaw && lastRaw.emp_name) || '',
-    code: (liveRow && liveRow.emp_code) || (lastRaw && lastRaw.emp_code) || '',
-    process: (liveRow && liveRow.emp_process) || (lastRaw && lastRaw.emp_process) || '',
+  // Build the response `emp` block. We prefer the roster (which the
+  // dashboard uses for the dropdown), then fall back to the most-recent
+  // session row for fields the roster doesn't have (station etc).
+  const roster = emp; // alias for readability
+  const empResp = {
+    id: (roster && roster.id) || empIdRaw,
+    name: (roster && roster.name) || (liveRow && liveRow.emp_name) || (lastRaw && lastRaw.emp_name) || '',
+    code: (roster && roster.code) || (liveRow && liveRow.emp_code) || (lastRaw && lastRaw.emp_code) || '',
+    process: (roster && roster.process) || (liveRow && liveRow.emp_process) || (lastRaw && lastRaw.emp_process) || '',
+    barcode: (roster && roster.barcode) || '',
+    matchedIds: empIdList, // debug aid: shows the client which ids we tried
   };
 
   return jsonRes(
@@ -107,7 +165,7 @@ export async function handleEmployeeDay(env, url) {
       ok: true,
       date,
       factory_today: factoryToday,
-      emp,
+      emp: empResp,
       totals: {
         units: rows.length,
         active_time_sec: activeSec,
