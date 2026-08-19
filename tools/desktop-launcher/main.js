@@ -362,6 +362,30 @@ function applyGithubUpdaterFeedFromPackage() {
   }
 }
 
+/**
+ * Apply the cloud (R2) OTA feed as the updater source. The Worker serves
+ *   <base>/updates/<channel>/latest.yml
+ * from the abaya-updates R2 bucket. Publicly reachable, no token, no
+ * GitHub auth. Used as the primary fallback when the LAN mirror is
+ * unreachable (off-site laptops, factory down, IP changed). Set via
+ * ABAYA_CLOUD_UPDATE_BASE_URL env, defaults to the Worker custom domain.
+ */
+function applyCloudUpdaterFeed(channel) {
+  const base = String(process.env.ABAYA_CLOUD_UPDATE_BASE_URL || 'https://dashboard.farewellabaya.com')
+    .trim()
+    .replace(/\/+$/, '');
+  const url = base + '/updates/' + channel + '/latest.yml';
+  try {
+    getAutoUpdater().setFeedURL({ provider: 'generic', url: url });
+    return { ok: true, url: url };
+  } catch (e) {
+    appendUpdateAudit('cloud-feed-error', {
+      error: String(e && e.message ? e.message : e),
+    });
+    return { ok: false, error: String(e && e.message ? e.message : e), url: url };
+  }
+}
+
 const normalizeMirrorBaseUrl = updatePolicyLib.normalizeMirrorBaseUrl;
 
 /**
@@ -923,10 +947,28 @@ function setupAutoUpdates() {
     }
 
     if (source !== 'lan') {
-      applyGithubUpdaterFeedFromPackage();
-      source = 'github';
-      if (mirrorBaseNorm && !probeOk) {
-        probeMsg = 'lan-unavailable: ' + probeMsg;
+      // Fallback chain:
+      //   1. cloud (R2 OTA via Worker) — public, no token, reachable from any
+      //      client laptop regardless of LAN topology. This is the new
+      //      primary fallback for v1.2.10 (fixes the ERR_CONNECTION_REFUSED
+      //      bug when the LAN mirror IP is unreachable).
+      //   2. github — last resort, requires a valid GH_TOKEN for non-404
+      //      anon access to releases.atom.
+      const cloudApplied = applyCloudUpdaterFeed(updaterMapping.channel);
+      if (cloudApplied && cloudApplied.ok) {
+        source = 'cloud';
+        mirrorFeedUrl = cloudApplied.url;
+        if (mirrorBaseNorm && !probeOk) {
+          probeMsg = 'lan-unavailable: ' + probeMsg + ' (using cloud R2 feed)';
+        } else {
+          probeMsg = 'no-lan-mirror-config (using cloud R2 feed)';
+        }
+      } else {
+        applyGithubUpdaterFeedFromPackage();
+        source = 'github';
+        if (mirrorBaseNorm && !probeOk) {
+          probeMsg = 'lan-unavailable: ' + probeMsg + ' (cloud-feed-failed too)';
+        }
       }
     }
 
@@ -989,7 +1031,7 @@ function loadDotenvIntoProcessEnv(repoRoot) {
   // Whitelist of keys the autoUpdater / updater mirror resolution read.
   // The factory server reads its own .env via dotenv at boot; we only
   // mirror what the updater chain needs.
-  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'ABAYA_UPDATE_MIRROR_BASE_URL', 'CSC_LINK', 'CSC_KEY_PASSWORD'];
+  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'ABAYA_UPDATE_MIRROR_BASE_URL', 'ABAYA_CLOUD_UPDATE_BASE_URL', 'CSC_LINK', 'CSC_KEY_PASSWORD'];
   let injected = 0;
   for (const k of keys) {
     if (process.env[k]) continue; // env already wins

@@ -80,7 +80,15 @@ function resolveEmployeeFromFolderName(folderName, employees) {
 }
 
 async function fetchEmployees(cfg) {
-  const url = String(cfg.employeesUrl || 'http://127.0.0.1:3000/api/employees').replace(/\/$/, '');
+  // Prefer cfg.employeesUrl; fall back to PORT env (matches the factory
+  // server's default), then 3111 (the install/.env.production port).
+  // This way the watcher works whether the user shipped the .env
+  // override or just dropped a fresh config.json.
+  let url = String(cfg.employeesUrl || '').replace(/\/$/, '');
+  if (!url) {
+    const port = Number(process.env.PORT) || 3111;
+    url = 'http://127.0.0.1:' + port + '/api/employees';
+  }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     const j = await res.json();

@@ -63,6 +63,19 @@ export async function handleEmployeeDay(env, url) {
     const numeric = String(Number(emp.barcode));
     if (numeric && numeric !== 'NaN') candidateIds.add('e_bc_' + numeric);
   }
+  if (emp && emp.id) {
+    // Defensive: also include the local roster id in case the cloud's
+    // sessions table ever stored the LAN's `eN` form (e.g. an older
+    // server version before the e_bc_* migration was complete). This
+    // is cheap and prevents "0 sessions" surprises on legacy rows.
+    candidateIds.add(String(emp.id));
+  }
+  if (emp && emp.code) {
+    // The CEO dashboard's "Pick a person" dropdown sends the LAN's local
+    // `eN` id, but older clients (or manual curls) sometimes sent the
+    // human-readable `code` (e.g. "EMP124") directly. Try that form too.
+    candidateIds.add(String(emp.code));
+  }
   if (empIdRaw.startsWith('e_bc_')) {
     // Caller passed xlsx-stable directly — also try the literal original
     // in case a legacy row stored the local id.
@@ -160,6 +173,32 @@ export async function handleEmployeeDay(env, url) {
     matchedIds: empIdList, // debug aid: shows the client which ids we tried
   };
 
+  // ---- When the requested date is empty, surface the nearest 3 dates
+  // that DO have data for this employee. Without this, "No sessions on
+  // this date" leaves the CEO guessing whether the picker is wrong or the
+  // employee just didn't work. (Adds one cheap D1 round trip, only when
+  // the primary query returned 0 rows.) ----
+  let nearbyDates = [];
+  if (rows.length === 0 && empIdList.length) {
+    try {
+      const nearbyRes = await env.DB.prepare(
+        `SELECT day_date, COUNT(*) AS n
+         FROM sessions
+         WHERE emp_id IN (${empIdPlaceholders})
+         GROUP BY day_date
+         ORDER BY ABS(julianday(day_date) - julianday(?)) ASC
+         LIMIT 3`
+      ).bind(...empIdList, date).all();
+      nearbyDates = (nearbyRes.results || []).map((r) => ({
+        day_date: r.day_date,
+        units: Number(r.n) || 0,
+      }));
+    } catch (e) {
+      // Non-fatal — the user still gets the honest "no sessions" answer.
+      console.error('[employee-day] nearby-dates query failed:', e && (e.message || e));
+    }
+  }
+
   return jsonRes(
     {
       ok: true,
@@ -175,6 +214,7 @@ export async function handleEmployeeDay(env, url) {
         last_ended_at: rows.length ? Number(rows[rows.length - 1].ended_at) || null : null,
       },
       sessions,
+      nearby_dates: nearbyDates,
     },
     200,
     Object.assign({}, CEO_JSON_NO_STORE, {

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // Custom-range state for the Executive CEO Reports panel. Set by the
 // date pickers in dashboard.html, read by reportPeriodForType('Custom').
@@ -412,7 +412,7 @@ socket.on('connect', () => {
 socket.on('disconnect', () => {
   document.getElementById('conn-dot').classList.remove('online');
   document.getElementById('conn-label').textContent = 'Fallback';
-  showToast('Live socket lost â€” switching to fallback sync...', 'error');
+  showToast('Live socket lost — switching to fallback sync...', 'error');
   startFallbackPolling();
 });
 
@@ -769,7 +769,7 @@ function renderKPIs() {
   if (totalUnits > 0) {
     document.getElementById('kpi-avg').textContent = fmtHMS(agg.todayAvgSec);
   } else {
-    document.getElementById('kpi-avg').textContent = 'â€"';
+    document.getElementById('kpi-avg').textContent = '—';
   }
 }
 
@@ -839,7 +839,7 @@ function renderAbayaItemTotals() {
         tierHtml +
         '</span>' +
         '<span style="font-family:var(--fn-mono);font-size:11px;color:var(--am)">' +
-        (r.barcode ? escapeHtml(r.barcode) : '<span style="color:var(--tx3)">â€”</span>') +
+        (r.barcode ? escapeHtml(r.barcode) : '<span style="color:var(--tx3)">—</span>') +
         '</span>' +
         '<span style="text-align:right;color:var(--tx3)">' +
         r.segments +
@@ -848,7 +848,7 @@ function renderAbayaItemTotals() {
         fmtHMS(r.completedSec) +
         '</span>' +
         '<span style="text-align:right;color:var(--tx3)">' +
-        (r.activeSec > 0 ? fmtHMS(r.activeSec) : 'â€”') +
+        (r.activeSec > 0 ? fmtHMS(r.activeSec) : '—') +
         '</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">' +
         fmtHMS(r.totalSec) +
@@ -888,8 +888,8 @@ function renderLiveSessions() {
     const elapsed = activeSecondsWindowedFromMs(startedMs);
     const totalItem = totalSecForGarment(agg, sess.abaya_id);
     const avHtml = employeeAvatarHtml(emp);
-    const sessionProcess = (sess.process || '').trim() || 'â€”';  // use active session role only
-    const itemLabel = ab && ab.barcode ? escapeHtml(ab.barcode) : 'â€”';
+    const sessionProcess = (sess.process || '').trim() || '—';  // use active session role only
+    const itemLabel = ab && ab.barcode ? escapeHtml(ab.barcode) : '—';
 
     const startedAtSec = Math.floor(startedMs / 1000);
     const startedLabel = formatDateTimeTz(startedMs, { timeZone: tz, weekday: true, seconds: true });
@@ -979,6 +979,14 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;');
 }
 
+// `escape` is the short name used in a few older blocks (Every-Employee-Every-Task,
+// the export-WA fallbacks, etc.). Without this local alias, calls like
+// `escape('19:19–20:00')` silently fall through to JavaScript's deprecated
+// GLOBAL `escape()`, which URL-encodes the string (`%3A` for `:`, `%E2%80%93`
+// for `–`). That produces output like "19%3A19%E2%80%93%3A54" inside the
+// rendered table cell — see GitHub issue #34.
+var escape = escapeHtml;
+
 function escapeAttr(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -1006,8 +1014,8 @@ function renderModalItemPictureBlock(resolved, heading) {
   if (!resolved || !resolved.item) return '';
   const a = resolved.item;
   const title = escapeHtml(String(heading || 'Item'));
-  const code = escapeHtml(String(a.code || a.id || 'â€”'));
-  const barcode = escapeHtml(String(a.barcode || 'â€”'));
+  const code = escapeHtml(String(a.code || a.id || '—'));
+  const barcode = escapeHtml(String(a.barcode || '—'));
   const media = resolved.hasImage
     ? '<img src="' + escapeAttr(resolved.imageUrl) + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block" class="hover-preview-thumb" data-fullsrc="' + escapeAttr(resolved.imageUrl) + '">'
     : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--tx3);background:var(--s3);text-transform:uppercase;letter-spacing:.06em">No image</div>';
@@ -1134,7 +1142,7 @@ function renderRecentInvoiceLogsNode() {
     .map(function (l) {
       const t = formatDateTimeTz(l.end, { timeZone: whTimezone() });
       const emp = empById(l.emp_id);
-      const name = escapeHtml(emp ? emp.name : l.emp_id || 'â€”');
+      const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
       const nums = escapeHtml(String(l.invoice_serial || '')).replace(/,/g, ', ');
       const cnt =
         l.invoice_count != null ? '<span style="color:#c2ef4e;font-weight:700">' + escapeHtml(String(l.invoice_count)) + '</span>' : '';
@@ -1176,7 +1184,7 @@ function renderRecentCheckerLogsNode() {
       const ab = ABAYAS.find(function (a) {
         return a.id === l.abaya_id;
       });
-      const name = escapeHtml(emp ? emp.name : l.emp_id || 'â€”');
+      const name = escapeHtml(emp ? emp.name : l.emp_id || '—');
       const code = ab ? escapeHtml(String(ab.code)) : '\u2014';
       const qty =
         l.quantity != null && l.quantity !== ''
@@ -1887,16 +1895,16 @@ function openReport(type) {
   const title = document.getElementById('modal-title');
   const body = document.getElementById('modal-body');
 
-  title.textContent = type + ' Production Report â€” ' + reportWindowLabel(type, period);
+  title.textContent = type + ' Production Report — ' + reportWindowLabel(type, period);
   const tsMeta = document.getElementById('modal-ts');
   if (tsMeta) {
     const extra = period && period.fallbackApplied ? ' (auto-fallback: no logs today, showing yesterday)' : '';
-    tsMeta.textContent = 'Generated on ' + new Date().toLocaleString() + ' â€” Window: ' + reportWindowLabel(type, period) + extra;
+    tsMeta.textContent = 'Generated on ' + new Date().toLocaleString() + ' — Window: ' + reportWindowLabel(type, period) + extra;
   }
 
   const totalUnits = single.totalUnits;
   const totalSec = single.totalSec;
-  const avgCycle = totalUnits > 0 ? fmtHMS(single.avgSec) : 'â€"';
+  const avgCycle = totalUnits > 0 ? fmtHMS(single.avgSec) : '—';
   const actCount = Object.keys(STATE.active || {}).length;
 
   // Summary cards
@@ -2085,12 +2093,12 @@ function openReport(type) {
       const ab = abById[String(l.abaya_id)] || null;
       const t = new Date(l.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       // Use the process stored in the log (employee may have selected a different role)
-      const logProcess = l.process || (emp ? emp.process : 'â€"');
+      const logProcess = l.process || (emp ? emp.process : '—');
       parts[i] =
         '<div style="display:grid;grid-template-columns:50px minmax(0,1fr) 72px minmax(72px,0.9fr) 58px minmax(100px,1.1fr);gap:8px;padding:9px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:start">' +
         '<span style="color:var(--tx3)">' + t + '</span>' +
-        '<span style="font-weight:600">' + (emp ? escapeHtml(emp.name) : 'â€"') + '</span>' +
-        '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : 'â€"') + (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') + '</span>' +
+        '<span style="font-weight:600">' + (emp ? escapeHtml(emp.name) : '—') + '</span>' +
+        '<span style="color:var(--tx2)">' + (ab ? escapeHtml(ab.code) : '—') + (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') + '</span>' +
         '<span style="color:var(--bl);font-weight:600">' + escapeHtml(String(logProcess)) + '</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(logDurationSec(l)) + '</span>' +
         formatProcessExtraCellHtml(l) +
@@ -2141,7 +2149,7 @@ function computeLocalAnalytics(logs) {
   const procItems = {};
   const empItems = {};
   logs.forEach(function (l) {
-    const proc = l.process || 'â€”';
+    const proc = l.process || '—';
     const du = Number(l.duration_sec) || 0;
     if (!byProc[proc]) byProc[proc] = { units: 0, totalSec: 0 };
     byProc[proc].units += 1;
@@ -2208,7 +2216,7 @@ function computeLocalAnalytics(logs) {
       return {
         emp_id: id,
         emp_name: emp ? emp.name : id,
-        emp_process: emp ? emp.process : 'â€”',
+        emp_process: emp ? emp.process : '—',
         units: o.units,
         avg_sec: Math.round(o.totalSec / o.units),
         lead_abaya_id: Object.keys(empItems[id] || {}).length === 1 ? Object.keys(empItems[id] || {})[0] : '',
@@ -2420,7 +2428,7 @@ function openLocalGarmentTrace(q) {
 function exportReport() {
   if (activeReportType === 'LocalAnalytics' && window._localAnalyticsExport) {
     const d = window._localAnalyticsExport.data;
-    let text = '*AbaYa Track â€” Floor analytics (this PC)*\n';
+    let text = '*AbaYa Track — Floor analytics (this PC)*\n';
     text += '_Sessions in memory: ' + d.log_count + '_\n\n';
     text += '*Bottlenecks (slowest avg first)*\n';
     d.by_process.forEach(function (r) {
@@ -2428,7 +2436,7 @@ function exportReport() {
     });
     text += '\n*Speed leaders*\n';
     d.speed_leaders.slice(0, 20).forEach(function (r, i) {
-      text += (i + 1) + '. ' + r.emp_name + ' â€” ' + fmtHMS(r.avg_sec) + '\n';
+      text += (i + 1) + '. ' + r.emp_name + ' — ' + fmtHMS(r.avg_sec) + '\n';
     });
     window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
     closeReport();
@@ -2441,7 +2449,7 @@ function exportReport() {
     text +=
       '_Finished steps: ' +
       x.matches.length +
-      ' â€” logged ' +
+      ' — logged ' +
       fmtHMS(x.sumCompleted != null ? x.sumCompleted : x.sum) +
       (x.activeExtra ? ' + in progress ' + fmtHMS(x.activeExtra) : '') +
       ' = total ' +
@@ -2730,7 +2738,7 @@ function openEveryEmployeeEveryTask() {
   const tsMeta = document.getElementById('modal-ts');
   if (!modal || !title || !body) return;
 
-  title.textContent = 'Every Employee Every Task â€” ' + period.startYmd + ' to ' + period.endYmd;
+  title.textContent = 'Every Employee Every Task — ' + period.startYmd + ' to ' + period.endYmd;
   if (tsMeta) tsMeta.textContent = 'Range picked: ' + fromYmd + ' \u2192 ' + toYmd + ' \u2022 ' + empRows.length + ' employee(s) \u2022 ' + logs.length + ' task(s)';
 
   // Build a single scrollable container; one section per employee.
@@ -2742,10 +2750,10 @@ function openEveryEmployeeEveryTask() {
     const emp = empById[row.id] || { name: '(unknown)', code: row.id, initials: '?' };
     const rows = row.items.map(function (l) {
       const ab = abById[l.abaya_id] || {};
-      const abayaLabel = ab.code || l.abaya_id || 'â€”';
+      const abayaLabel = ab.code || l.abaya_id || '—';
       const start = l.start ? new Date(l.start) : null;
       const end = l.end ? new Date(l.end) : null;
-      const timeLabel = start ? pad2(start.getHours()) + ':' + pad2(start.getMinutes()) + 'â€“' + (end ? pad2(end.getHours()) + ':' + pad2(end.getMinutes()) : '?') : '?';
+      const timeLabel = start ? pad2(start.getHours()) + ':' + pad2(start.getMinutes()) + '–' + (end ? pad2(end.getHours()) + ':' + pad2(end.getMinutes()) : '?') : '?';
       const ymd = start ? start.getFullYear() + '-' + pad2(start.getMonth() + 1) + '-' + pad2(start.getDate()) : '';
       const mins = Math.max(1, Math.round((Number(l.duration_sec) || 0) / 60));
       let extra = '';
@@ -2757,7 +2765,7 @@ function openEveryEmployeeEveryTask() {
         '<td style="padding:6px 8px;color:var(--tx3);font-family:monospace;font-size:11px;white-space:nowrap">' + escape(ymd) + '</td>' +
         '<td style="padding:6px 8px;color:var(--tx3);font-family:monospace;font-size:11px;white-space:nowrap">' + escape(timeLabel) + '</td>' +
         '<td style="padding:6px 8px;color:var(--label);font-family:monospace">' + escape(abayaLabel) + '</td>' +
-        '<td style="padding:6px 8px">' + escape(l.process || 'â€”') + extra + '</td>' +
+        '<td style="padding:6px 8px">' + escape(l.process || '—') + extra + '</td>' +
         '<td style="padding:6px 8px;text-align:right;color:var(--gr);font-family:monospace">' + mins + 'm</td>' +
         '</tr>';
     }).join('');

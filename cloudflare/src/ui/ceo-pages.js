@@ -873,6 +873,17 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+// Inline-JS literal escaper for HTML attributes like
+//   onclick="openEmployeeDayForDate('e16', '2026-07-18')"
+// Wraps the value in single quotes and escapes the single quote.
+// The values we pass (emp_id, day_date) never contain backslashes
+// in practice, so we don't need to escape that one — which avoids
+// the regex-literal-vs-template-literal escape fight (this is the
+// same gotcha that bit the WhatsApp newline fix in v1.2.8).
+function escJs(s) {
+  return "'" + String(s == null ? '' : s).replace(/'/g, "\\'") + "'";
+}
+
 function escWA(s) {
   return String(s == null ? '' : s)
     .replace(/\\\\/g, '\\\\\\\\')
@@ -1525,8 +1536,8 @@ function closeEmployeeDay() {
 }
 window.closeEmployeeDay = closeEmployeeDay;
 
-async function openEmployeeDay(empId) {
-  const anchor = employeeDayAnchorYmd();
+async function openEmployeeDay(empId, explicitDate) {
+  const anchor = explicitDate || employeeDayAnchorYmd();
   const m = document.getElementById('modal-ed');
   if (m) m.classList.add('open');
   document.getElementById('ed-title').textContent = 'Employee day';
@@ -1550,6 +1561,15 @@ async function openEmployeeDay(empId) {
       esc(String((e && e.message) || e)) + '</div>';
   }
 }
+
+// Convenience: re-open the modal for a specific date. Wired into the
+// "nearby dates" chips that appear when the picked date is empty so the
+// CEO can jump straight to a real workday with one click.
+function openEmployeeDayForDate(empId, dateYmd) {
+  if (!empId || !dateYmd) return;
+  return openEmployeeDay(String(empId), String(dateYmd));
+}
+window.openEmployeeDayForDate = openEmployeeDayForDate;
 
 function edFmtRange(s) {
   const start = s.started_at
@@ -1589,9 +1609,22 @@ function renderEmployeeDay(data) {
   const rows = data.sessions || [];
   let sessionsHtml;
   if (!rows.length) {
+    // Empty date — show the 3 nearest dates the employee DID work, so the
+    // CEO can see whether the picker is wrong or the employee just didn't
+    // log anything on the picked day. Clickable: re-opens the modal for
+    // that date. (Backend populates data.nearby_dates when rows=0.)
+    let nearbyHint = '';
+    if (data.nearby_dates && data.nearby_dates.length) {
+      const chips = data.nearby_dates.map(function (n) {
+        return '<button class="exec-chip" style="margin:0 4px 4px 0" onclick="openEmployeeDayForDate(' + escJs(emp.id) + ', ' + escJs(n.day_date) + ')">' +
+          esc(n.day_date) + ' &middot; ' + n.units + ' unit' + (n.units === 1 ? '' : 's') + '</button>';
+      }).join('');
+      nearbyHint = '<div style="margin-top:10px;font-size:11px;color:var(--tx3)">No sessions for <b>' + esc(data.date) + '</b>, but this employee has logged time on:</div>' +
+        '<div style="margin-top:6px;display:flex;flex-wrap:wrap">' + chips + '</div>';
+    }
     sessionsHtml =
       '<div class="cr-section"><div class="cr-section-h">Sessions <span class="cr-mini">chronological, with abaya + duration</span></div>' +
-      '<div class="cr-empty">No sessions on this date.</div></div>';
+      '<div class="cr-empty">No sessions on this date.</div>' + nearbyHint + '</div>';
   } else {
     sessionsHtml =
       '<div class="cr-section">' +

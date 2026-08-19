@@ -323,15 +323,24 @@ export async function handleReport(env, url) {
   const itemIds = itemTotals.map((it) => String(it.abaya_id || '')).filter(Boolean);
   const lifecycleMap = {};
   if (itemIds.length) {
-    const placeholders = itemIds.map(() => '?').join(',');
-    const lifeRes = await env.DB.prepare(
-      `SELECT abaya_id, cumulative_in_window_sec FROM abaya_time_map WHERE abaya_id IN (${placeholders})`
-    )
-      .bind(...itemIds)
-      .all();
-    (lifeRes.results || []).forEach((r) => {
-      lifecycleMap[String(r.abaya_id)] = Math.floor(Number(r.cumulative_in_window_sec) || 0);
-    });
+    // D1 caps each prepared statement at 100 bound parameters, so a 200-item
+    // itemTotals list (the LIMIT 200 above) would blow past 100 placeholders
+    // and fail with "too many SQL variables at offset N". Chunk the lookup
+    // at 80 per statement (well under the 100 limit) so wide windows
+    // (yearly = 365 days) keep working.
+    const CHUNK = 80;
+    for (let i = 0; i < itemIds.length; i += CHUNK) {
+      const chunk = itemIds.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const lifeRes = await env.DB.prepare(
+        `SELECT abaya_id, cumulative_in_window_sec FROM abaya_time_map WHERE abaya_id IN (${placeholders})`
+      )
+        .bind(...chunk)
+        .all();
+      (lifeRes.results || []).forEach((r) => {
+        lifecycleMap[String(r.abaya_id)] = Math.floor(Number(r.cumulative_in_window_sec) || 0);
+      });
+    }
   }
   itemTotals.forEach((it) => {
     const seg = Number(it.segments) || 0;
