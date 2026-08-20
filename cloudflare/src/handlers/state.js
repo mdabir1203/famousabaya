@@ -11,16 +11,32 @@ import {
   workingStatusNow,
 } from '../working-hours.js';
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
+import { isValidYmd } from './report-shared.js';
 
 /** GET /api/state — single D1.batch for reads (fewer internal round trips).
  *
  * Query params:
- *   ?days=<n>   how many days of history to include in the `logs` field.
- *               Defaults to 1 (realtime behavior) and is clamped to [1, 400].
- *               The dashboard's report panel asks for `?days=400` so weekly /
- *               monthly / yearly reports can be aggregated from the bundle
- *               instead of having to issue a separate /api/report call.
- *   ?limit=<n>  hard cap on log rows; clamped to [1, 5000].
+ *   ?from=<YYYY-MM-DD>  inclusive lower bound for the log lookback window.
+ *                       When set, the dashboard's per-day KPIs (Completed,
+ *                       Active Workers, Process Split, Employee Performance,
+ *                       Garment Totals, Recent Invoice Logs) all scope to
+ *                       this date instead of today. The CEO date picker
+ *                       drives this — picking Aug 17 with no `to` collapses
+ *                       the window to a single day.
+ *   ?to=<YYYY-MM-DD>    inclusive upper bound. Defaults to `from` when only
+ *                       `from` is set, otherwise to today. Together with
+ *                       `from` this makes the endpoint behave like a tiny
+ *                       report for any past day.
+ *   ?days=<n>           how many days of history to include in the `logs`
+ *                       field. Ignored when `from` is set (the range
+ *                       overrides the lookback). Defaults to 1 and is
+ *                       clamped to [1, 400]. The dashboard's report panel
+ *                       asks for `?days=400` so weekly / monthly / yearly
+ *                       reports can be aggregated from the bundle.
+ *   ?limit=<n>          hard cap on log rows; clamped to [1, 5000].
+ *
+ * The endpoint stays backwards compatible: callers that only pass `?days=`
+ * get the original "today + last N days of history" payload.
  */
 export async function handleState(env, url) {
   const factoryToday = factoryTodayString(env);
@@ -31,6 +47,33 @@ export async function handleState(env, url) {
   const hourEnd = windowsToday.length
     ? Math.floor((windowsToday[windowsToday.length - 1][1] - 1) / 60)
     : FACTORY_HOURLY_END;
+
+  // ---- Resolve the date window ----
+  // If the CEO picks a date, the per-day KPIs (Completed Today, Employee
+  // Performance — Today, Process Split Today, Garment Totals Today) all
+  // scope to that date. Without an explicit `from`/`to`, we fall back to
+  // the legacy `?days=` lookback against `factoryToday`.
+  const fromParam = String((url && url.searchParams && url.searchParams.get('from')) || '').trim();
+  const toParam = String((url && url.searchParams && url.searchParams.get('to')) || '').trim();
+  const explicitRange = isValidYmd(fromParam) || isValidYmd(toParam);
+  // The "anchor" is the single day that drives Completed / Employee Perf /
+  // Process Split / Garment Totals / Recent Invoice Logs. When the CEO
+  // picks a date, that's the anchor. Without a picked date, anchor = today.
+  let anchorYmd = factoryToday;
+  let toYmd = factoryToday;
+  if (explicitRange) {
+    const f = isValidYmd(fromParam) ? fromParam : (isValidYmd(toParam) ? toParam : factoryToday);
+    const t = isValidYmd(toParam) ? toParam : f;
+    if (f > t) {
+      return jsonRes(
+        { ok: false, error: 'Invalid range: from is after to' },
+        400,
+        CEO_JSON_NO_STORE
+      );
+    }
+    anchorYmd = f;
+    toYmd = t;
+  }
 
   // Resolve the log lookback from ?days= (or default to 1 to preserve
   // legacy realtime behavior — no unbounded queries against D1).
@@ -50,12 +93,24 @@ export async function handleState(env, url) {
 
   // Compute the lower bound day_date in the factory timezone, then keep
   // everything in one D1 round trip via WHERE day_date >= ?.
-  const [ty, tm, td] = factoryToday.split('-').map(Number);
-  const startDate = new Date(Date.UTC(ty, tm - 1, td));
-  startDate.setUTCDate(startDate.getUTCDate() - (days - 1));
-  const fromYmd = startDate.getUTCFullYear() + '-' +
-    String(startDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
-    String(startDate.getUTCDate()).padStart(2, '0');
+  // When the CEO picked a date, the log lookback is the picked range —
+  // not "the last N days" — so the recent-activity feed reflects what
+  // they actually asked for. Otherwise fall back to the legacy N-day tail.
+  let fromYmd;
+  if (explicitRange) {
+    fromYmd = anchorYmd;
+  } else {
+    const [ty, tm, td] = factoryToday.split('-').map(Number);
+    const startDate = new Date(Date.UTC(ty, tm - 1, td));
+    startDate.setUTCDate(startDate.getUTCDate() - (days - 1));
+    fromYmd = startDate.getUTCFullYear() + '-' +
+      String(startDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(startDate.getUTCDate()).padStart(2, '0');
+  }
+
+  // `logs` window upper bound: when the CEO picked a date, cap at toYmd;
+  // otherwise include everything up to today.
+  const logsToYmd = explicitRange ? toYmd : factoryToday;
 
   const stmtActive = env.DB.prepare(`
       SELECT emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
@@ -69,12 +124,13 @@ export async function handleState(env, url) {
         NULL as quantity, NULL as checker_barcode
       FROM sessions WHERE day_date >= ? AND day_date <= ?
       ORDER BY ended_at DESC LIMIT ?
-    `).bind(fromYmd, factoryToday, limit);
+    `).bind(fromYmd, logsToYmd, limit);
   // Per-employee perf: pick the *latest* emp_name / emp_process / emp_code /
   // emp_color / emp_initials (by ended_at), not the alphabetical MAX().
   // MAX() on TEXT is alphabetical in SQLite, so when one emp_id is reused
   // for a new joiner the dashboard would show the alphabetically-later name
   // — which is the wrong person. Subquery picks the most-recent row per emp.
+  // Anchor = the picked day (or today) so the perf list reflects that day.
   const stmtPerf = env.DB.prepare(`
       WITH agg AS (
         SELECT emp_id, COUNT(*) as units,
@@ -98,37 +154,38 @@ export async function handleState(env, url) {
         agg.units, agg.avg_sec, agg.total_sec
       FROM agg JOIN latest ON latest.emp_id = agg.emp_id
       ORDER BY agg.units DESC
-    `).bind(factoryToday, factoryToday);
+    `).bind(anchorYmd, anchorYmd);
   const stmtDaily = env.DB.prepare(`
       SELECT stat_date, total_units, total_sec, cutting_units, stitch_units, finish_units,
         tailor_01_units, tailor_02_units, hand_work_units, stone_work_units,
         button_units, embroidery_units, ari_work_units, hand_designing_units,
         invoice_maker_units, packaging_units, checker_units, peak_hour, updated_at
-      FROM daily_stats ORDER BY stat_date DESC LIMIT 7
-    `);
+      FROM daily_stats WHERE stat_date >= ? AND stat_date <= ?
+      ORDER BY stat_date DESC LIMIT 30
+    `).bind(fromYmd, toYmd);
   const stmtAgg = env.DB.prepare(`
       SELECT COUNT(*) as cnt, COALESCE(SUM(duration_sec), 0) as total_sec
-      FROM sessions WHERE day_date = ?
-    `).bind(factoryToday);
+      FROM sessions WHERE day_date >= ? AND day_date <= ?
+    `).bind(anchorYmd, toYmd);
   const stmtProcSplit = env.DB.prepare(`
       SELECT emp_process, COUNT(*) as cnt FROM sessions
-      WHERE day_date = ? GROUP BY emp_process
-    `).bind(factoryToday);
+      WHERE day_date >= ? AND day_date <= ? GROUP BY emp_process
+    `).bind(anchorYmd, toYmd);
   const stmtHourly = env.DB.prepare(`
       SELECT hour_of_day, COUNT(*) as cnt FROM sessions
       WHERE day_date = ? AND hour_of_day >= ? AND hour_of_day <= ?
       GROUP BY hour_of_day
-    `).bind(factoryToday, hourStart, hourEnd);
+    `).bind(anchorYmd, hourStart, hourEnd);
   const stmtGarment = env.DB.prepare(`
       SELECT abaya_id, MAX(abaya_code) as abaya_code,
         COUNT(*) as segments,
         COALESCE(SUM(duration_sec), 0) as completed_sec
       FROM sessions
-      WHERE day_date = ?
+      WHERE day_date >= ? AND day_date <= ?
       GROUP BY abaya_id
       ORDER BY SUM(duration_sec) DESC
       LIMIT 800
-    `).bind(factoryToday);
+    `).bind(anchorYmd, toYmd);
 
   const [
     activeRes,
@@ -291,13 +348,22 @@ export async function handleState(env, url) {
       ingest_lag_ms: ingestLagMs,
       logs_window_days: days,
       logs_from_ymd: fromYmd,
-      logs_to_ymd: factoryToday,
+      logs_to_ymd: logsToYmd,
+      // The KPIs (Completed / Process Split / Employee Performance /
+      // Garment Totals) and the Recent Invoice Logs feed are all anchored
+      // to a single day, not "today" — when the CEO picks a date from
+      // the date picker, the whole dashboard flips to that day.
+      kpi_anchor_ymd: anchorYmd,
+      kpi_to_ymd: toYmd,
+      kpi_window_days: explicitRange ? (toYmd >= anchorYmd ? Math.floor((Date.parse(toYmd) - Date.parse(anchorYmd)) / 86400000) + 1 : 1) : 1,
       state_meta: {
         source: 'cloudflare-worker-d1',
         lag_mode: lagMode,
         logs_window_days: days,
         logs_from_ymd: fromYmd,
-        logs_to_ymd: factoryToday,
+        logs_to_ymd: logsToYmd,
+        kpi_anchor_ymd: anchorYmd,
+        kpi_to_ymd: toYmd,
       },
       factory_today: factoryToday,
       completed_today: completedToday,

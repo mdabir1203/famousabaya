@@ -1,23 +1,45 @@
 import { jsonRes, CEO_JSON_NO_STORE } from '../http-response.js';
 import { factoryTodayString } from '../working-hours.js';
-import { safeYmdOrFallback, sessionsFilterForPeriod } from './report-shared.js';
+import { safeYmdOrFallback, sessionsFilterForPeriod, isValidYmd, customRange } from './report-shared.js';
 
-/** GET /api/analytics?period= */
+/** GET /api/analytics?period=&from=&to= */
 export async function handleAnalytics(env, url) {
   const period = url.searchParams.get('period') || 'daily';
   const factoryToday = factoryTodayString(env);
   const localToday = safeYmdOrFallback(url.searchParams.get('local_today'), factoryToday);
-  let { where, binds, range } = sessionsFilterForPeriod(period, localToday);
+  // Explicit from/to win over period. When the CEO picks a date on the
+  // dashboard, the analytics modal (Process & garment analytics) should
+  // scope to that day — not silently fall back to the period anchored at
+  // today. Without from/to, fall back to the legacy period-based window.
+  const fromParam = String((url && url.searchParams && url.searchParams.get('from')) || '').trim();
+  const toParam = String((url && url.searchParams && url.searchParams.get('to')) || '').trim();
+  const explicitRange = isValidYmd(fromParam) || isValidYmd(toParam);
+  let where, binds, range;
   let dailyFallbackApplied = false;
-  if (range.type === 'daily') {
-    const cntRes = await env.DB.prepare(`SELECT COUNT(*) as c FROM sessions ${where}`).bind(...binds).first();
-    if ((Number(cntRes && cntRes.c) || 0) === 0) {
-      const fallbackYmd = range.prevStart;
-      const fallback = sessionsFilterForPeriod(period, fallbackYmd);
-      where = fallback.where;
-      binds = fallback.binds;
-      range = fallback.range;
-      dailyFallbackApplied = true;
+  if (explicitRange) {
+    try {
+      range = customRange(
+        isValidYmd(fromParam) ? fromParam : (isValidYmd(toParam) ? toParam : factoryToday),
+        isValidYmd(toParam) ? toParam : (isValidYmd(fromParam) ? fromParam : factoryToday),
+        { maxDays: 92 }
+      );
+    } catch (e) {
+      return jsonRes({ ok: false, error: String((e && e.message) || e) }, 400, CEO_JSON_NO_STORE);
+    }
+    where = 'WHERE day_date >= ? AND day_date <= ?';
+    binds = [range.startYmd, range.endYmd];
+  } else {
+    ({ where, binds, range } = sessionsFilterForPeriod(period, localToday));
+    if (range.type === 'daily') {
+      const cntRes = await env.DB.prepare(`SELECT COUNT(*) as c FROM sessions ${where}`).bind(...binds).first();
+      if ((Number(cntRes && cntRes.c) || 0) === 0) {
+        const fallbackYmd = range.prevStart;
+        const fallback = sessionsFilterForPeriod(period, fallbackYmd);
+        where = fallback.where;
+        binds = fallback.binds;
+        range = fallback.range;
+        dailyFallbackApplied = true;
+      }
     }
   }
   const fromSessions = `FROM sessions ${where}`;

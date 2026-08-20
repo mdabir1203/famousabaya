@@ -324,7 +324,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
       <div class="exec-filter">
         <div class="exec-filter-lbl">&#128197; Pick a date</div>
         <div class="exec-filter-row">
-          <input type="date" id="report-date" class="exec-input" aria-label="Report date">
+          <input type="date" id="report-date" class="exec-input" aria-label="Report date" onchange="onReportDateChange()">
           <button type="button" class="exec-chip" onclick="resetReportDate()">Today</button>
         </div>
         <div class="exec-filter-hint">Reports open for this date. Leave empty for today.</div>
@@ -373,10 +373,10 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   </div>
 
   <div class="stat-row">
-    <div class="stat-card"><div class="stat-lbl">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">units finished</div></div>
-    <div class="stat-card"><div class="stat-lbl">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
-    <div class="stat-card"><div class="stat-lbl">Avg Cycle Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">per unit</div></div>
-    <div class="stat-card"><div class="stat-lbl">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">units finished</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg">Avg Cycle Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">per unit</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
   </div>
 
   <div class="dash-row">
@@ -385,14 +385,14 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
       <div id="live-sessions"><div style="color:var(--tx3);font-size:12px;text-align:center;padding:20px">No active sessions</div></div>
     </div>
     <div class="dash-card">
-      <div class="dash-card-title">Process Split Today</div>
+      <div class="dash-card-title" data-kpi-label="procsplit">Process Split Today</div>
       <div id="proc-split"><div style="color:var(--tx3);font-size:12px;padding:10px">No data</div></div>
     </div>
   </div>
 
   <div class="dash-card" style="margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div class="dash-card-title" style="margin:0">Employee Performance — Today</div>
+      <div class="dash-card-title" style="margin:0" data-kpi-label="empperf">Employee Performance — Today</div>
       <div style="font-size:10px;color:var(--tx3)">&#11088; top 20%</div>
     </div>
     <div id="emp-perf"><div style="color:var(--tx3);font-size:12px;text-align:center;padding:20px">No sessions yet today</div></div>
@@ -634,8 +634,15 @@ async function poll(skipRefreshRetry) {
   pollStartedAt = Date.now();
   pollInFlight = true;
   try {
+    // When the CEO picks a date in the Executive Reports date picker,
+    // the entire dashboard flips to that day — Completed, Active
+    // Workers, Process Split, Employee Performance, Garment Totals,
+    // Recent Invoice Logs. Without this, those cards kept showing today
+    // even when the user had clearly asked for a past date.
+    const picked = getPickedReportDate();
+    const rangeQs = picked ? '&from=' + encodeURIComponent(picked) + '&to=' + encodeURIComponent(picked) : '';
     const url =
-      BASE + '/api/state?ts=' + Date.now() + '&r=' + Math.random().toString(36).slice(2, 10);
+      BASE + '/api/state?ts=' + Date.now() + '&r=' + Math.random().toString(36).slice(2, 10) + rangeQs;
     const r = await fetchWithRetry(url, {
       cache: 'no-store',
       headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
@@ -1179,7 +1186,16 @@ function renderAll() {
     const kpiAvg = byId('kpi-avg');
     const kpiEff = byId('kpi-eff');
     if (kpiCompleted) kpiCompleted.textContent = completed;
-    if (kpiActive) kpiActive.textContent = activeIds.length;
+    // Active Workers stays the live count regardless of picked date — a
+    // past day has nobody currently on the floor. Hide it when the user
+    // is looking at a historical day so the dashboard doesn't show 0
+    // and confuse the operator.
+    const picked = getPickedReportDate();
+    const isLive = !picked;
+    if (kpiActive) {
+      kpiActive.textContent = isLive ? activeIds.length : '\u2014';
+      kpiActive.parentNode.style.opacity = isLive ? '1' : '0.45';
+    }
     if (completed > 0) {
       if (kpiAvg) kpiAvg.textContent = fmtHMS(STATE.avg_cycle_sec_today || 0);
       const eff = Number(STATE.efficiency_today) || 0;
@@ -1198,9 +1214,25 @@ function renderAll() {
 
   safeRender('header', function () {
     const ft = STATE.factory_today || '';
+    const picked = getPickedReportDate();
+    const anchor = (STATE.kpi_anchor_ymd) || ft;
     const dd = document.getElementById('dash-date');
-    if (dd) dd.textContent =
-      (ft ? 'Factory day ' + ft + ' \u2014 ' : '') + new Date().toLocaleTimeString([], { timeZone: uiTz() });
+    if (dd) {
+      const head = picked
+        ? 'Showing picked date ' + picked + ' (factory today is ' + ft + ') \u2014 '
+        : (ft ? 'Factory day ' + ft + ' \u2014 ' : '');
+      dd.textContent = head + new Date().toLocaleTimeString([], { timeZone: uiTz() });
+    }
+    // When a date is picked, the "Today" KPIs are no longer "Today" —
+    // re-label them so the operator doesn't think they're still looking
+    // at live data.
+    const cardLabels = document.querySelectorAll('[data-kpi-label]');
+    cardLabels.forEach(function (el) {
+      const key = el.getAttribute('data-kpi-label');
+      const baseText = el.getAttribute('data-kpi-base') || el.textContent;
+      if (!el.getAttribute('data-kpi-base')) el.setAttribute('data-kpi-base', baseText);
+      el.textContent = picked ? baseText.replace(/today/i, 'on ' + picked) : baseText;
+    });
     const dn = document.getElementById('dubai-now');
     if (dn) dn.textContent = 'Dubai time: ' + uiNowString();
     const ws = document.getElementById('work-status');
@@ -1282,8 +1314,13 @@ async function openAnalytics() {
   document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
   document.getElementById('modal').classList.add('open');
   try {
+    // When the CEO picked a date, the analytics modal scopes to that day
+    // instead of the period-anchored-at-today default. This way picking
+    // Aug 17 from the date picker shows the Aug 17 process breakdown.
+    const picked = getPickedReportDate();
+    const rangeQs = picked ? '&from=' + encodeURIComponent(picked) + '&to=' + encodeURIComponent(picked) : '';
     const r = await fetchWithRetry(
-      BASE + '/api/analytics?period=' + encodeURIComponent(period) + '&local_today=' + encodeURIComponent(localYmdNow()) + '&ts=' + Date.now(),
+      BASE + '/api/analytics?period=' + encodeURIComponent(period) + '&local_today=' + encodeURIComponent(localYmdNow()) + rangeQs + '&ts=' + Date.now(),
       { cache: 'no-store' }
     );
     const d = await r.json();
@@ -1479,7 +1516,20 @@ function getPickedReportDate() {
 function resetReportDate() {
   const el = document.getElementById('report-date');
   if (el) el.value = '';
+  onReportDateChange();
 }
+
+/** The CEO picked (or cleared) a date in the Executive Reports date picker.
+ *  Re-poll /api/state right away so the dashboard flips to that day. */
+function onReportDateChange() {
+  try {
+    if (typeof poll === 'function') {
+      void poll(true);
+    }
+  } catch (_) {}
+}
+window.onReportDateChange = onReportDateChange;
+window.resetReportDate = resetReportDate;
 
 /** Roster for the "Pick a person" dropdown — fetched once per page load. */
 async function loadEmployeeDayOptions() {
