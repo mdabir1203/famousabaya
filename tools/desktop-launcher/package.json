@@ -1,6 +1,6 @@
 {
   "name": "abaya-desktop-launcher",
-  "version": "1.2.9",
+  "version": "1.2.10",
   "private": true,
   "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
   "author": "Mohammad Abir Abbas",
@@ -41,6 +41,7 @@
       "dev-app-update.yml",
       "README.md"
     ],
+    "fileAssociations": [],
     "extraResources": [
       {
         "from": "../../install",
@@ -94,7 +95,17 @@
         "filter": [
           "*.js",
           "*.json",
-          "package.json"
+          "*.cjs",
+          "*.mjs",
+          "*.txt",
+          "package.json",
+          "yarn.lock",
+          ".pnp.cjs",
+          ".pnp.loader.mjs",
+          ".yarnrc.yml",
+          ".yarn/install-state.gz",
+          ".yarn/cache/**",
+          ".yarn/unplugged/**"
         ]
       },
       {
