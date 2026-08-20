@@ -28,7 +28,21 @@ import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled
 import { handleCheckDeliveryReport, handleCheckDeliveryConfig, handleCancellationsPost, handleCancellationsList, handleCheckReport, handleCheckReportConfig } from './handlers/check-report.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
-import releaseMomentData from './data/release-moment.json';
+// Inlined instead of imported as a JSON module — Cloudflare Workers' bundler
+// doesn't always honor `assert { type: 'json' }` / `with { type: 'json' }`
+// import attributes, and a stale bundle crashed with 1027 on every request.
+// Mirror ./data/release-moment.json here whenever it changes.
+const releaseMomentData = {
+  enabled: true,
+  momentId: '2026-05-evolution-1',
+  eyebrow: 'Just evolved',
+  hook: 'The executive lens widened.',
+  outcome: 'Spot drift sooner—same Cloud pulse, calmer read.',
+  ctaLabel: 'Jump to reports',
+  ctaPath: '#exec-reports',
+  secondaryCtaLabel: '',
+  secondaryCtaPath: '',
+};
 
 function cookieHttps(request) {
   return new URL(request.url).protocol === 'https:';
