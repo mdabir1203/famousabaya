@@ -261,10 +261,14 @@ export async function handleCheckDeliveryConfig(env, url) {
   let factories = [DEFAULT_FACTORY];
   if (base) {
     try {
-      // Use a single-day window for the location probe (cheaper). If the
-      // operator hasn't logged anything today yet the locations list will
-      // fall back to a recent sample via a 7-day window.
-      const probeRes = await fetch(base + '/api/check-report?from=' + today + '&to=' + today, {
+      // Probe a 7-day window by default so a "quiet" day for one factory
+      // doesn't shrink the dropdown. (Earlier: probed today only, which
+      // collapsed the list to one factory whenever the second factory
+      // hadn't logged anything on the picked day.)
+      const from7 = new Date();
+      from7.setDate(from7.getDate() - 7);
+      const from7Ymd = new Intl.DateTimeFormat('en-CA', { timeZone: FACTORY_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(from7);
+      const probeRes = await fetch(base + '/api/check-report?from=' + from7Ymd + '&to=' + today, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(8000),
       });
