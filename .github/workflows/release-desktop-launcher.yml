@@ -131,8 +131,13 @@ jobs:
           Write-Host "Release tag:               $tag"
           Write-Host "=========================================="
 
-          "version=$raw"   | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append -NoNewline
-          "tag=$tag"       | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append -NoNewline
+          # IMPORTANT: $GITHUB_OUTPUT is a key=value-per-line file. Each
+          # value MUST end with a newline, or the next key gets glued to
+          # the previous one. Don't use -NoNewline here, or every later
+          # step that reads ${{ steps.version.outputs.version }} gets
+          # "1.2.10tag=v1.2.10" instead of "1.2.10".
+          "version=$raw" | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append
+          "tag=$tag"     | Out-File -FilePath "$env:GITHUB_OUTPUT" -Encoding utf8 -Append
 
 
       # ----------------------------------------------------------
@@ -242,6 +247,18 @@ jobs:
           Write-Host "Verifying release artifacts for $VERSION ..."
           Write-Host "=========================================="
 
+          # Sanity check the resolved step output. The earlier "Read
+          # Canonical Launcher Version" step writes to $GITHUB_OUTPUT
+          # using -NoNewline, which can glue the next key into this one
+          # (e.g. "version=1.2.10" + "tag=v1.2.10" becomes one line and
+          # $VERSION comes out as "1.2.10tag=v1.2.10"). Reject any value
+          # that doesn't look like a clean semver MAJOR.MINOR.PATCH so
+          # the failure points at the real problem.
+          if ($VERSION -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "VERSION ""$VERSION"" is not a clean semver string. The 'Read Canonical Launcher Version' step likely wrote multiple keys to the same line (use a heredoc or remove -NoNewline)."
+            exit 1
+          }
+
           $requiredFiles = @(
             "release-notes.md",
             "dist/AbaYa-Track-v${VERSION}.zip",
@@ -282,6 +299,16 @@ jobs:
 
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
+
+          # Sanity: if $GITHUB_OUTPUT was written with -NoNewline, the
+          # `tag` key gets glued to the previous `version` line and
+          # both come out wrong. Catch that here before we create a
+          # release with an empty tag.
+          if [ -z "$TAG" ] || ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: STEP_OUTPUT_INVALID version='$VERSION' tag='$TAG'"
+            echo "The 'Read Canonical Launcher Version' step is miswiring \$GITHUB_OUTPUT."
+            exit 1
+          fi
 
           echo "=========================================="
           echo "Publishing GitHub Release"
