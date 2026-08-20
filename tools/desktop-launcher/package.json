@@ -1,6 +1,6 @@
 {
   "name": "abaya-desktop-launcher",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "private": true,
   "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
   "author": "Mohammad Abir Abbas",
@@ -33,6 +33,7 @@
       "index.html",
       "main.js",
       "update-policy.cjs",
+      "env-migrate.cjs",
       "preload.js",
       "renderer.js",
       "start-electron.cjs",
@@ -66,7 +67,10 @@
       },
       {
         "from": "../../install/.env.production",
-        "to": ".env.production"
+        "to": ".env.production",
+        "filter": [
+          ".env.production"
+        ]
       },
       {
         "from": "../../public",

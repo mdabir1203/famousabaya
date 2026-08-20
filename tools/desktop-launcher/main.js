@@ -8,6 +8,7 @@ const https = require('https');
 const os = require('os');
 const { spawn, execSync, execFileSync } = require('child_process');
 const updatePolicyLib = require('./update-policy.cjs');
+const envMigrateLib = require('./env-migrate.cjs');
 
 // electron-updater is loaded lazily inside setupAutoUpdates() — it instantiates
 // its adapter (and calls require('electron').app) at module-evaluation time.
@@ -101,11 +102,71 @@ function ensureLauncherRuntimeDirs() {
       const example = path.join(REPO_ROOT, '.env.example');
       if (fs.existsSync(prod)) {
         fs.copyFileSync(prod, FACTORY_ENV_FILE);
+        appendUpdateAudit('env-seeded', { source: 'install/.env.production', path: FACTORY_ENV_FILE });
       } else if (fs.existsSync(example)) {
         fs.copyFileSync(example, FACTORY_ENV_FILE);
+        appendUpdateAudit('env-seeded', { source: '.env.example (no install/.env.production found!)', path: FACTORY_ENV_FILE });
+      } else {
+        appendUpdateAudit('env-seed-missing', {
+          note: 'Neither install/.env.production nor .env.example were bundled; fresh install starts with no .env. Auto-update will fall back to GitHub only.',
+        });
+      }
+    } else if (app && app.isPackaged) {
+      // Already seeded: still audit whether the bundled .env.production is present
+      // so an operator looking at the diagnostics dump can tell why their env is
+      // stale (the bundled file might have been filtered out by extraResources).
+      const prod = path.join(REPO_ROOT, '.env.production');
+      if (!fs.existsSync(prod)) {
+        appendUpdateAudit('env-prod-missing', {
+          note: 'install/.env.production is not bundled in this build. Future fresh installs will fall back to .env.example.',
+          path: prod,
+        });
       }
     }
+    // Heal a previously-seeded .env whose LAN mirror URL points at an IP the
+    // factory server no longer uses. Without this, a user who upgraded the
+    // factory server (or whose DHCP IP changed) keeps failing the LAN feed
+    // probe and silently falls back to the cloud — until the cloud feed also
+    // breaks (issue #37 + #39). Heal from the freshly-built .env.production so
+    // a new release of the launcher can re-point every laptop at the right
+    // factory without manual .env editing on each machine.
+    if (app && app.isPackaged) {
+      migrateStaleFactoryEnv();
+    }
   } catch (_) {}
+}
+
+/**
+ * Self-heal a stale `ABAYA_UPDATE_MIRROR_BASE_URL` (and LAN_IP) in the
+ * user-stable .env by comparing against the freshly-bundled `.env.production`.
+ * Only rewrites keys whose values actually differ — never touches CF_INGEST_SECRET
+ * or GH_TOKEN (those may have been operator-edited). Writes a single audit row
+ * for every key migrated so the diagnostics export shows exactly what changed.
+ *
+ * Why this exists: between v1.2.7 and v1.2.10 the factory's LAN IP changed
+ * (e.g. 192.168.0.101 → 192.168.0.105). A fresh .env seeded from the new
+ * build would pick up the right IP, but anyone who already had the launcher
+ * installed kept the old .env forever — every update check then probed a dead
+ * IP, the cloud feed had its own `latest.yml/latest.yml` bug, and the user
+ * saw "old issues keep recurring after install" (issue #40) because the
+ * auto-updater was effectively dead.
+ */
+function migrateStaleFactoryEnv() {
+  try {
+    if (!fs.existsSync(FACTORY_ENV_FILE)) return;
+    const prodPath = path.join(REPO_ROOT, '.env.production');
+    if (!fs.existsSync(prodPath)) return; // nothing to heal from
+    const plan = envMigrateLib.planEnvMigration(FACTORY_ENV_FILE, prodPath);
+    if (!plan.changed) return;
+    // Write atomically: temp file + rename, so a crash mid-write can't corrupt
+    // the live .env the user might be editing in another process.
+    const tmp = FACTORY_ENV_FILE + '.migrate.tmp';
+    fs.writeFileSync(tmp, plan.nextContent, 'utf8');
+    fs.renameSync(tmp, FACTORY_ENV_FILE);
+    appendUpdateAudit('env-migrated', { changes: plan.migrations, path: FACTORY_ENV_FILE });
+  } catch (e) {
+    appendUpdateAudit('env-migrate-error', { error: String(e && e.message ? e.message : e) });
+  }
 }
 
 ensureLauncherRuntimeDirs();
@@ -374,7 +435,15 @@ function applyCloudUpdaterFeed(channel) {
   const base = String(process.env.ABAYA_CLOUD_UPDATE_BASE_URL || 'https://dashboard.farewellabaya.com')
     .trim()
     .replace(/\/+$/, '');
-  const url = base + '/updates/' + channel + '/latest.yml';
+  // The electron-updater GenericProvider treats the feed URL as a *directory* and
+  // appends `<channel>.yml` itself (see util.js:newBaseUrl + getChannelFilename in
+  // electron-updater 6.x). Passing `…/updates/<channel>/latest.yml` here caused
+  // `latest.yml/latest.yml` because the URL already ended with `.yml` and the
+  // provider forced a trailing `/` and then re-appended `latest.yml` (issue #39).
+  // Use the same directory-shape helper as the LAN feed, mapped to stable/beta
+  // by ring, so LAN and cloud can't drift again.
+  const ring = channel === 'beta' ? 'beta' : 'stable';
+  const url = updatePolicyLib.buildLanGenericFeedUrl(base, ring);
   try {
     getAutoUpdater().setFeedURL({ provider: 'generic', url: url });
     return { ok: true, url: url };
