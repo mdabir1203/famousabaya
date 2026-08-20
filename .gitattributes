@@ -1,0 +1,31 @@
+# Yarn Berry lockfile + pnp loader: NEVER touch line endings.
+# Yarn 4 always writes LF + UTF-8 (no BOM). Autocrlf on Windows
+# would convert them to CRLF on commit, breaking "yarn install --immutable"
+# because the working tree (LF) no longer matches the index (CRLF) -
+# yarn's "YN0028: The lockfile would have been modified" error.
+# Marking these as -text tells git to keep them byte-for-byte.
+yarn.lock -text
+.pnp.cjs -text
+.yarn/install-state.gz -text
+
+# Generated artifacts that are pure binary and should never be re-encoded.
+install/*.exe -text -diff
+install/*.blockmap -text -diff
+data/lan-update-mirror/**/*.exe -text -diff
+data/lan-update-mirror/**/*.blockmap -text -diff
+
+# Everything else: keep git's default (autocrlf aware).
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.sh        text eol=lf
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
