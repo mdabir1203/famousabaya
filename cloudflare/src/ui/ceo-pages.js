@@ -270,6 +270,13 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .cr-status.pending{color:var(--am);background:rgba(255,178,135,.12);border:1px solid rgba(255,178,135,.3)}
 .cr-status.cancelled{color:var(--rd);background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
 .cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
+/* 14-day history strip in the per-employee day report. */
+.ed-day-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 12px}
+.ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:46px}
+.ed-day-cell:hover{transform:translateY(-1px);border-color:var(--am)}
+.ed-day-cell.is-current{border-color:var(--am);box-shadow:0 0 0 1px rgba(245,158,11,.4)}
+.ed-day-date{font-size:10px;color:var(--tx3);font-weight:600;letter-spacing:.4px}
+.ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
 .cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
 .cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
 .cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
@@ -324,7 +331,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
       <div class="exec-filter">
         <div class="exec-filter-lbl">&#128197; Pick a date</div>
         <div class="exec-filter-row">
-          <input type="date" id="report-date" class="exec-input" aria-label="Report date" onchange="onReportDateChange()">
+          <input type="date" id="report-date" class="exec-input" aria-label="Report date" onchange="onReportDateChange()" oninput="onReportDateChange()">
           <button type="button" class="exec-chip" onclick="resetReportDate()">Today</button>
         </div>
         <div class="exec-filter-hint">Reports open for this date. Leave empty for today.</div>
@@ -805,9 +812,24 @@ function windowLabelFromRange(startDate, endDate) {
 }
 
 function parseHHMMClient(s) {
-  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(s || '').trim());
-  if (!m) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
+  // No regex literal — wrangler's minifier strips backslashes from
+  // /\d/ → /d/ which throws SyntaxError on every page load. Do the
+  // HH:MM check with raw string ops instead.
+  const t = String(s == null ? '' : s).trim();
+  if (t.length !== 5 || t.charAt(2) !== ':') return null;
+  const h0 = t.charAt(0);
+  const h1 = t.charAt(1);
+  const m0 = t.charAt(3);
+  const m1 = t.charAt(4);
+  if (h0 < '0' || h0 > '9' || h1 < '0' || h1 > '9') return null;
+  if (m0 < '0' || m0 > '5' || m1 < '0' || m1 > '9') return null;
+  let h = (h0.charCodeAt(0) - 48) * 10 + (h1.charCodeAt(0) - 48);
+  let mm = (m0.charCodeAt(0) - 48) * 10 + (m1.charCodeAt(0) - 48);
+  // Hour must be 0–23. 0[0-9], 1[0-9], 2[0-3] are valid; 2[4-9] is not.
+  if (h0 === '2' && h1 > '3') return null;
+  if (h > 23) return null;
+  if (mm > 59) return null;
+  return h * 60 + mm;
 }
 
 function minuteOfDayClient(epochSec) {
@@ -1510,7 +1532,18 @@ async function runGarmentTrace() {
 function getPickedReportDate() {
   const el = document.getElementById('report-date');
   const v = el ? String(el.value || '').trim() : '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+  // No regex literal — wrangler's minifier strips backslashes from
+  // /\d/ → /d/ which throws SyntaxError on every page load. <input
+  // type="date">.value is always "YYYY-MM-DD" or "" so a 10-char
+  // length + dash positions are sufficient.
+  if (v.length !== 10) return '';
+  if (v.charAt(4) !== '-' || v.charAt(7) !== '-') return '';
+  for (let i = 0; i < 10; i++) {
+    if (i === 4 || i === 7) continue;
+    const c = v.charAt(i);
+    if (c < '0' || c > '9') return '';
+  }
+  return v;
 }
 
 function resetReportDate() {
@@ -1645,15 +1678,45 @@ function renderEmployeeDay(data) {
     new Date().toLocaleString([], { timeZone: uiTz() });
 
   // Stat cards (same cr-totals / cr-tot pattern as Check Delivery Report)
+  // Work time = completed-only by default; if the live session has accrued
+  // time and there are 0 completed units today, the live overlap is rolled
+  // in so the card doesn't read 0s when the employee is clearly working.
+  const workTimeSec = (t.units || 0) > 0
+    ? Number(t.active_time_sec || 0)
+    : Number(t.full_time_sec || t.active_time_sec || 0);
   const totalsHtml =
     '<div class="cr-totals" style="grid-template-columns:repeat(3,1fr)">' +
       '<div class="cr-tot"><div class="cr-tot-lbl">Units</div>' +
         '<div class="cr-tot-val" style="color:var(--gr)">' + (t.units || 0) + '</div></div>' +
       '<div class="cr-tot"><div class="cr-tot-lbl">Work time</div>' +
-        '<div class="cr-tot-val" style="color:var(--am)">' + esc(fmtHMS(t.active_time_sec || 0)) + '</div></div>' +
+        '<div class="cr-tot-val" style="color:var(--am)">' + esc(fmtHMS(workTimeSec)) + '</div></div>' +
       '<div class="cr-tot"><div class="cr-tot-lbl">Live now</div>' +
         '<div class="cr-tot-val" style="color:var(--bl)">' + esc(fmtHMS(t.live_active_time_sec || 0)) + '</div></div>' +
     '</div>';
+
+  // 14-day history strip (always rendered when the backend returns data).
+  // Click any cell to jump to that date. Lets the CEO spot the real
+  // workdays at a glance instead of guessing from the picker.
+  let historyHtml = '';
+  if (Array.isArray(data.recent_days) && data.recent_days.length) {
+    const cells = data.recent_days.map(function (n) {
+      const isCurrent = n.day_date === data.date;
+      const intensity = n.units >= 8 ? '1' : n.units >= 4 ? '0.7' : n.units >= 1 ? '0.45' : '0.15';
+      return '<button type="button" class="ed-day-cell' + (isCurrent ? ' is-current' : '') +
+        '" style="background:rgba(34,197,94,' + intensity + ');' +
+        (isCurrent ? 'outline:2px solid var(--am);' : '') +
+        '" title="' + esc(n.day_date) + ' · ' + n.units + ' unit' + (n.units === 1 ? '' : 's') + '"' +
+        ' onclick="openEmployeeDayForDate(' + escJs(emp.id) + ', ' + escJs(n.day_date) + ')">' +
+        '<span class="ed-day-date">' + esc(String(n.day_date).slice(5)) + '</span>' +
+        '<span class="ed-day-units">' + n.units + 'u</span>' +
+        '</button>';
+    }).join('');
+    historyHtml =
+      '<div class="cr-section" style="margin-top:8px">' +
+        '<div class="cr-section-h">Last 14 days <span class="cr-mini">click a day to jump</span></div>' +
+        '<div class="ed-day-strip">' + cells + '</div>' +
+      '</div>';
+  }
 
   // Sessions section
   const rows = data.sessions || [];
@@ -1700,7 +1763,7 @@ function renderEmployeeDay(data) {
     sessionsHtml += '</div></div>';
   }
 
-  document.getElementById('ed-body').innerHTML = totalsHtml + sessionsHtml;
+  document.getElementById('ed-body').innerHTML = totalsHtml + historyHtml + sessionsHtml;
   // Action bar: WhatsApp export, Change Date, Close
   document.getElementById('ed-actions').innerHTML =
     '<button class="btn-export" style="background:linear-gradient(135deg,#6a5fc1,#422082)" onclick="edWhatsApp()">&#128241; Send via WhatsApp</button>' +

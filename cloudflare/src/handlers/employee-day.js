@@ -199,6 +199,39 @@ export async function handleEmployeeDay(env, url) {
     }
   }
 
+  // Last 14 days for this employee (always run, cheap). Lets the
+  // day-report modal render a clickable 14-day history strip so the
+  // CEO can see at a glance which dates actually have data.
+  let recentDays = [];
+  if (empIdList.length) {
+    try {
+      const start = date || factoryToday;
+      const parts = start.split('-').map(Number);
+      const fromYmd = (function () {
+        if (!parts[0] || !parts[1] || !parts[2]) return factoryToday;
+        const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+        d.setUTCDate(d.getUTCDate() - 13);
+        return d.getUTCFullYear() + '-' +
+          String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+          String(d.getUTCDate()).padStart(2, '0');
+      })();
+      const recentRes = await env.DB.prepare(
+        `SELECT day_date, COUNT(*) AS n
+         FROM sessions
+         WHERE emp_id IN (${empIdPlaceholders}) AND day_date >= ? AND day_date <= ?
+         GROUP BY day_date
+         ORDER BY day_date DESC
+         LIMIT 14`
+      ).bind(...empIdList, fromYmd, start).all();
+      recentDays = (recentRes.results || []).map((r) => ({
+        day_date: r.day_date,
+        units: Number(r.n) || 0,
+      }));
+    } catch (e) {
+      console.error('[employee-day] recent-days query failed:', e && (e.message || e));
+    }
+  }
+
   return jsonRes(
     {
       ok: true,
@@ -215,6 +248,7 @@ export async function handleEmployeeDay(env, url) {
       },
       sessions,
       nearby_dates: nearbyDates,
+      recent_days: recentDays,
     },
     200,
     Object.assign({}, CEO_JSON_NO_STORE, {
