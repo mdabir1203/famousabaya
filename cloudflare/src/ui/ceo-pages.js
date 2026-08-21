@@ -272,11 +272,12 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
 /* 14-day history strip in the per-employee day report. */
 .ed-day-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 12px}
-.ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:46px}
+.ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:6px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:54px}
 .ed-day-cell:hover{transform:translateY(-1px);border-color:var(--am)}
 .ed-day-cell.is-current{border-color:var(--am);box-shadow:0 0 0 1px rgba(245,158,11,.4)}
 .ed-day-date{font-size:10px;color:var(--tx3);font-weight:600;letter-spacing:.4px}
-.ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.ed-day-time{font-size:10px;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.1;margin-top:1px}
 .cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
 .cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
 .cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
@@ -778,6 +779,19 @@ function fmtHMS(sec) {
   if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
   if (m > 0) return m + 'm ' + s + 's';
   return s + 's';
+}
+
+// Compact "12h 4m" / "1h 22m" / "45m" / "12s" for tight cells. Drops
+// the seconds component when the hours or minutes are already shown.
+function fmtShortHMS(sec) {
+  const n = Math.floor(Number(sec) || 0);
+  if (n < 1) return '0m';
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  if (h > 0 && m > 0) return h + 'h ' + m + 'm';
+  if (h > 0) return h + 'h';
+  if (m > 0) return m + 'm';
+  return n + 's';
 }
 
 function uiTz() {
@@ -1702,18 +1716,25 @@ function renderEmployeeDay(data) {
     const cells = data.recent_days.map(function (n) {
       const isCurrent = n.day_date === data.date;
       const intensity = n.units >= 8 ? '1' : n.units >= 4 ? '0.7' : n.units >= 1 ? '0.45' : '0.15';
+      // Time rendered compact: "12h 4m" / "1h 22m" / "<1m" / "" when zero
+      // (today's live session is not in the sessions table, so today often
+      // shows 0m — that's correct, the live time is on the stat card above).
+      const ts = Number(n.time_sec) || 0;
+      const timeLabel = ts > 0 ? fmtShortHMS(ts) : '';
       return '<button type="button" class="ed-day-cell' + (isCurrent ? ' is-current' : '') +
         '" style="background:rgba(34,197,94,' + intensity + ');' +
         (isCurrent ? 'outline:2px solid var(--am);' : '') +
-        '" title="' + esc(n.day_date) + ' · ' + n.units + ' unit' + (n.units === 1 ? '' : 's') + '"' +
+        '" title="' + esc(n.day_date) + ' · ' + n.units + ' unit' + (n.units === 1 ? '' : 's') +
+        (ts > 0 ? ' · ' + esc(fmtHMS(ts)) : '') + '"' +
         ' onclick="openEmployeeDayForDate(' + escJs(emp.id) + ', ' + escJs(n.day_date) + ')">' +
         '<span class="ed-day-date">' + esc(String(n.day_date).slice(5)) + '</span>' +
         '<span class="ed-day-units">' + n.units + 'u</span>' +
+        '<span class="ed-day-time">' + esc(timeLabel) + '</span>' +
         '</button>';
     }).join('');
     historyHtml =
       '<div class="cr-section" style="margin-top:8px">' +
-        '<div class="cr-section-h">Last 14 days <span class="cr-mini">click a day to jump</span></div>' +
+        '<div class="cr-section-h">Last 14 days <span class="cr-mini">units + time, click a day to jump</span></div>' +
         '<div class="ed-day-strip">' + cells + '</div>' +
       '</div>';
   }

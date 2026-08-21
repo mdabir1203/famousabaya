@@ -216,7 +216,7 @@ export async function handleEmployeeDay(env, url) {
           String(d.getUTCDate()).padStart(2, '0');
       })();
       const recentRes = await env.DB.prepare(
-        `SELECT day_date, COUNT(*) AS n
+        `SELECT day_date, COUNT(*) AS n, COALESCE(SUM(duration_sec), 0) AS total_sec
          FROM sessions
          WHERE emp_id IN (${empIdPlaceholders}) AND day_date >= ? AND day_date <= ?
          GROUP BY day_date
@@ -226,6 +226,7 @@ export async function handleEmployeeDay(env, url) {
       recentDays = (recentRes.results || []).map((r) => ({
         day_date: r.day_date,
         units: Number(r.n) || 0,
+        time_sec: Number(r.total_sec) || 0,
       }));
     } catch (e) {
       console.error('[employee-day] recent-days query failed:', e && (e.message || e));
