@@ -278,6 +278,21 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .ed-day-date{font-size:10px;color:var(--tx3);font-weight:600;letter-spacing:.4px}
 .ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
 .ed-day-time{font-size:10px;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.1;margin-top:1px}
+/* By-employee table in the Process & garment analytics modal. */
+.by-emp-row{cursor:pointer;transition:background-color .14s ease,transform .14s ease}
+.by-emp-row:hover{background:rgba(106,95,193,.10);transform:translateX(1px)}
+.by-emp-row:hover .by-emp-name{color:var(--am)}
+.by-emp-name{display:inline-block;text-decoration:none;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-repeat:no-repeat;background-position:0 100%;transition:background-size .25s ease,color .14s ease}
+.by-emp-row:hover .by-emp-name{background-size:100% 1px}
+.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);min-width:220px;max-width:280px;background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
+.by-emp-row:hover .by-emp-popup,.by-emp-row:focus-within .by-emp-popup{opacity:1;transform:translateY(-50%) translateX(0);pointer-events:auto}
+.by-emp-popup-name{font-size:14px;font-weight:700;color:#fff;margin-bottom:2px}
+.by-emp-popup-sub{font-size:11px;color:var(--tx3);margin-bottom:10px}
+.by-emp-popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-bottom:10px}
+.by-emp-popup-cell{background:rgba(124,111,224,.08);border:1px solid rgba(124,111,224,.18);border-radius:6px;padding:6px 8px}
+.by-emp-popup-cell-lbl{font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px}
+.by-emp-popup-cell-val{font-size:13px;font-weight:700;color:var(--tx);font-variant-numeric:tabular-nums;line-height:1.1}
+.by-emp-popup-cta{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;background:linear-gradient(135deg,#7c6fe0,#422082);color:#fff;border-radius:8px;font-size:11.5px;font-weight:600;text-decoration:none;letter-spacing:.3px}
 .cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
 .cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
 .cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
@@ -1926,21 +1941,56 @@ async function openReport(type) {
       card('Avg vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.avg_sec_delta) || 0), 'var(--bl)') +
       '</div>' +
       '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">By employee — tap a name to see their day</div>' +
-      '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden">' +
-      '<div style="display:grid;grid-template-columns:1fr 44px 62px 62px 62px 62px 62px 62px;gap:6px;padding:9px 10px;font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd)">' +
+      '<div class="by-emp-table" style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:visible">' +
+      '<div class="by-emp-head" style="display:grid;grid-template-columns:1fr 50px 70px 70px 70px 70px 70px 70px;gap:8px;padding:10px 12px;font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd);border-radius:10px 10px 0 0;background:var(--s1)">' +
       '<span>Employee</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>' +
-      '<div style="max-height:220px;overflow-y:auto">';
+      '<div class="by-emp-body" style="max-height:280px;overflow-y:auto;border-radius:0 0 10px 10px">';
 
     (data.by_employee||[]).forEach(e => {
-      html += '<div style="display:grid;grid-template-columns:1fr 44px 62px 62px 62px 62px 62px 62px;gap:6px;padding:9px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px">' +
-        '<span style="font-weight:600"><a href="javascript:void(0)" style="color:var(--tx);text-decoration:underline dotted" title="See this employee\\'s day" onclick="openEmployeeDay(decodeURIComponent(\\'\\') + encodeURIComponent(String(e.emp_id || \\'\\')) + \\'\\'))">' + esc(String(e.emp_name || e.emp_id || '')) + '</a><span style="color:var(--tx3);font-weight:400"> &middot; '+e.emp_process+'</span></span>' +
-        '<span style="text-align:right;font-weight:700">'+e.units+'</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700">'+fmtHMS(e.active_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--tx2)">'+fmtHMS(e.elapsed_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--bl)">'+fmtHMS(e.live_active_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--pu);font-weight:700">'+fmtHMS(e.full_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--am)">'+fmtHMS(e.tolerance_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700">'+fmtHMS(e.adjusted_full_time_sec)+'</span></div>';
+      const empId = String(e.emp_id || '');
+      const empName = esc(String(e.emp_name || e.emp_id || ''));
+      const empProcess = esc(String(e.emp_process || ''));
+      const empCode = esc(String(e.emp_code || ''));
+      // Each row carries the emp id as a data attribute. The container
+      // listens for clicks (event delegation) and opens the day modal —
+      // no inline onclick string, so no escape-trap JS syntax errors.
+      // A small hover popup surfaces the key numbers + a one-tap CTA so
+      // the user can see the full day without losing the table context.
+      const popupUnits = e.units || 0;
+      const popupActive = fmtHMS(e.active_time_sec || 0);
+      const popupElapsed = fmtHMS(e.elapsed_time_sec || 0);
+      const popupLive = fmtHMS(e.live_active_time_sec || 0);
+      const popupFull = fmtHMS(e.full_time_sec || 0);
+      const popupTol = fmtHMS(e.tolerance_sec || 0);
+      html += '<div class="by-emp-row" tabindex="0" data-emp-id="' + esc(empId) + '"' +
+        ' data-emp-name="' + empName + '" data-emp-process="' + empProcess + '"' +
+        ' data-emp-code="' + empCode + '"' +
+        ' style="display:grid;grid-template-columns:1fr 50px 70px 70px 70px 70px 70px 70px;gap:8px;padding:11px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:13px;align-items:center;position:relative">' +
+        '<span class="by-emp-name" style="font-weight:600;line-height:1.25;min-width:0">' +
+          '<span style="color:var(--tx)">' + empName + '</span>' +
+          '<span style="color:var(--tx3);font-weight:400;font-size:11px;display:block;margin-top:2px">'+(empProcess||'')+(empCode?' &middot; '+empCode:'')+'</span>' +
+        '</span>' +
+        '<span style="text-align:right;font-weight:700;color:var(--gr)">'+popupUnits+'</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+popupActive+'</span>' +
+        '<span style="text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums">'+popupElapsed+'</span>' +
+        '<span style="text-align:right;color:var(--bl);font-variant-numeric:tabular-nums">'+popupLive+'</span>' +
+        '<span style="text-align:right;color:var(--pu);font-weight:700;font-variant-numeric:tabular-nums">'+popupFull+'</span>' +
+        '<span style="text-align:right;color:var(--am);font-variant-numeric:tabular-nums">'+popupTol+'</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.adjusted_full_time_sec)+'</span>' +
+        '<div class="by-emp-popup" role="tooltip">' +
+          '<div class="by-emp-popup-name">'+empName+'</div>' +
+          '<div class="by-emp-popup-sub">'+(empProcess||'')+(empCode?' &middot; '+empCode:'')+'</div>' +
+          '<div class="by-emp-popup-grid">' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Units</div><div class="by-emp-popup-cell-val" style="color:var(--gr)">'+popupUnits+'</div></div>' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Active</div><div class="by-emp-popup-cell-val">'+popupActive+'</div></div>' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Elapsed</div><div class="by-emp-popup-cell-val" style="color:var(--tx2)">'+popupElapsed+'</div></div>' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Live now</div><div class="by-emp-popup-cell-val" style="color:var(--bl)">'+popupLive+'</div></div>' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Full time</div><div class="by-emp-popup-cell-val" style="color:var(--pu)">'+popupFull+'</div></div>' +
+            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Tolerance</div><div class="by-emp-popup-cell-val" style="color:var(--am)">'+popupTol+'</div></div>' +
+          '</div>' +
+          '<a class="by-emp-popup-cta" href="javascript:void(0)" data-emp-id="' + esc(empId) + '">View their day &rarr;</a>' +
+        '</div>' +
+      '</div>';
     });
     if (!data.by_employee||!data.by_employee.length) {
       html += '<div style="padding:20px;text-align:center;color:var(--tx3);font-size:12px">No data for this period</div>';
@@ -2255,11 +2305,45 @@ function showToast(msg,type) {
 }
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
+// Delegated click handler for the by-employee rows in the analytics modal.
+// The row carries data-emp-id (no inline onclick = no escape-trap syntax
+// errors). Clicks on the row OR on the popup's "View their day" CTA both
+// open the singular day report. Keyboard Enter / Space on a focused row
+// also works because the row is tabindex=0.
+function wireByEmpRowDelegation() {
+  const body = document.getElementById('modal-body');
+  if (!body || body.__byEmpWired) return;
+  body.__byEmpWired = true;
+  body.addEventListener('click', function (ev) {
+    const cta = ev.target.closest && ev.target.closest('.by-emp-popup-cta');
+    if (cta) {
+      ev.preventDefault();
+      const id = String(cta.getAttribute('data-emp-id') || '');
+      if (id) openEmployeeDay(id);
+      return;
+    }
+    const row = ev.target.closest && ev.target.closest('.by-emp-row');
+    if (row) {
+      const id = String(row.getAttribute('data-emp-id') || '');
+      if (id) openEmployeeDay(id);
+    }
+  });
+  body.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const row = ev.target.closest && ev.target.closest('.by-emp-row');
+    if (!row) return;
+    ev.preventDefault();
+    const id = String(row.getAttribute('data-emp-id') || '');
+    if (id) openEmployeeDay(id);
+  });
+}
+
 loadAbayaCatalog().then(function () {
   renderAbayaTotalsTable();
 });
 loadEmployeeDayOptions();
 schedulePollLoop();
+wireByEmpRowDelegation();
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'visible') poll();
 });

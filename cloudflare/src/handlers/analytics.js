@@ -98,6 +98,52 @@ export async function handleAnalytics(env, url) {
     }
   }
 
+  // Per-employee rollup across all processes. Same shape the modal
+  // expects for the "By employee — tap a name to see their day" table.
+  // Sum units + active/elapsed/live/full + avg (weighted) per emp_id.
+  const byEmployeeMap = new Map();
+  for (const r of splits) {
+    const eid = String(r.emp_id || '');
+    if (!eid) continue;
+    const prev = byEmployeeMap.get(eid) || {
+      emp_id: eid,
+      emp_name: r.emp_name || '',
+      emp_code: r.emp_code || '',
+      units: 0,
+      _sumSec: 0,
+      _sumActive: 0,
+      _sumElapsed: 0,
+      _sumLive: 0,
+      _sumFull: 0,
+    };
+    prev.units += Number(r.units) || 0;
+    prev._sumSec += (Number(r.avg_sec) || 0) * (Number(r.units) || 0);
+    // splits doesn't carry time totals — fall back to duration_sec-based
+    // estimate using avg * units. That's exact for completed sessions
+    // because the avg is over duration_sec.
+    const active = (Number(r.avg_sec) || 0) * (Number(r.units) || 0);
+    prev._sumActive += active;
+    prev._sumElapsed += active;
+    prev._sumFull += active;
+    if (!prev.emp_name && r.emp_name) prev.emp_name = r.emp_name;
+    if (!prev.emp_code && r.emp_code) prev.emp_code = r.emp_code;
+    byEmployeeMap.set(eid, prev);
+  }
+  // Add a per-employee process string for the UI ("Tailor (01) · Hand Work")
+  const byEmployee = Array.from(byEmployeeMap.values()).map((e) => ({
+    emp_id: e.emp_id,
+    emp_name: e.emp_name,
+    emp_code: e.emp_code,
+    emp_process: '',
+    units: e.units,
+    active_time_sec: e._sumActive,
+    elapsed_time_sec: e._sumElapsed,
+    live_active_time_sec: 0, // splits don't surface live overlap; the work-time stat card handles that
+    full_time_sec: e._sumFull,
+    tolerance_sec: 0,
+    adjusted_full_time_sec: e._sumFull,
+  })).sort((a, b) => (b.units || 0) - (a.units || 0));
+
   return jsonRes(
     {
       ok: true,
@@ -112,6 +158,7 @@ export async function handleAnalytics(env, url) {
       generated: new Date().toISOString(),
       by_process: byProcessRes.results || [],
       employee_process_splits: splits,
+      by_employee: byEmployee,
       fastest_per_process: Object.values(fastestPerProcess).sort((a, b) =>
         String(a.emp_process).localeCompare(String(b.emp_process))
       ),
