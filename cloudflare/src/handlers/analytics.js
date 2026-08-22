@@ -101,6 +101,9 @@ export async function handleAnalytics(env, url) {
   // Per-employee rollup across all processes. Same shape the modal
   // expects for the "By employee — tap a name to see their day" table.
   // Sum units + active/elapsed/live/full + avg (weighted) per emp_id.
+  // Also collect the unique process names this person has worked on
+  // in the window (e.g. "Hand Work · Tailor (02)") so the hover popup
+  // can show the multi-station view without the row needing extra width.
   const byEmployeeMap = new Map();
   for (const r of splits) {
     const eid = String(r.emp_id || '');
@@ -115,6 +118,7 @@ export async function handleAnalytics(env, url) {
       _sumElapsed: 0,
       _sumLive: 0,
       _sumFull: 0,
+      _processes: new Set(),
     };
     prev.units += Number(r.units) || 0;
     prev._sumSec += (Number(r.avg_sec) || 0) * (Number(r.units) || 0);
@@ -125,24 +129,58 @@ export async function handleAnalytics(env, url) {
     prev._sumActive += active;
     prev._sumElapsed += active;
     prev._sumFull += active;
+    if (r.emp_process) prev._processes.add(String(r.emp_process));
     if (!prev.emp_name && r.emp_name) prev.emp_name = r.emp_name;
     if (!prev.emp_code && r.emp_code) prev.emp_code = r.emp_code;
     byEmployeeMap.set(eid, prev);
   }
-  // Add a per-employee process string for the UI ("Tailor (01) · Hand Work")
-  const byEmployee = Array.from(byEmployeeMap.values()).map((e) => ({
-    emp_id: e.emp_id,
-    emp_name: e.emp_name,
-    emp_code: e.emp_code,
-    emp_process: '',
-    units: e.units,
-    active_time_sec: e._sumActive,
-    elapsed_time_sec: e._sumElapsed,
-    live_active_time_sec: 0, // splits don't surface live overlap; the work-time stat card handles that
-    full_time_sec: e._sumFull,
-    tolerance_sec: 0,
-    adjusted_full_time_sec: e._sumFull,
-  })).sort((a, b) => (b.units || 0) - (a.units || 0));
+
+  // One cheap D1 round trip: most recent finished abaya per emp_id in
+  // the window. Surfaces a row that says "Last item: AB-0041" on the
+  // popup — the kind of context the row can't fit.
+  let lastItemByEmp = {};
+  if (byEmployeeMap.size) {
+    try {
+      const empIds = Array.from(byEmployeeMap.keys());
+      const placeholders = empIds.map(() => '?').join(',');
+      const lastRes = await env.DB.prepare(
+        `SELECT emp_id, abaya_code, abaya_id, MAX(started_at) as last_at
+         FROM sessions
+         WHERE emp_id IN (${placeholders}) AND day_date >= ? AND day_date <= ?
+           AND abaya_code IS NOT NULL AND abaya_code != ''
+         GROUP BY emp_id`
+      ).bind(...empIds, range.startYmd, range.endYmd).all();
+      for (const r of (lastRes.results || [])) {
+        lastItemByEmp[String(r.emp_id)] = {
+          abaya_code: r.abaya_code,
+          abaya_id: r.abaya_id != null ? String(r.abaya_id) : '',
+          last_at: r.last_at,
+        };
+      }
+    } catch (e) {
+      console.error('[analytics] last-item query failed:', e && (e.message || e));
+    }
+  }
+
+  const byEmployee = Array.from(byEmployeeMap.values()).map((e) => {
+    const processes = Array.from(e._processes);
+    return {
+      emp_id: e.emp_id,
+      emp_name: e.emp_name,
+      emp_code: e.emp_code,
+      emp_process: processes[0] || '', // primary process for the row
+      emp_processes: processes,         // all processes for the popup
+      units: e.units,
+      active_time_sec: e._sumActive,
+      elapsed_time_sec: e._sumElapsed,
+      live_active_time_sec: 0, // splits don't surface live overlap; the work-time stat card handles that
+      full_time_sec: e._sumFull,
+      tolerance_sec: 0,
+      adjusted_full_time_sec: e._sumFull,
+      avg_sec: e.units > 0 ? Math.round(e._sumSec / e.units) : 0,
+      last_item: lastItemByEmp[e.emp_id] || null,
+    };
+  }).sort((a, b) => (b.units || 0) - (a.units || 0));
 
   return jsonRes(
     {

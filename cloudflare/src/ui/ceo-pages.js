@@ -284,15 +284,23 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .by-emp-row:hover .by-emp-name{color:var(--am)}
 .by-emp-name{display:inline-block;text-decoration:none;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-repeat:no-repeat;background-position:0 100%;transition:background-size .25s ease,color .14s ease}
 .by-emp-row:hover .by-emp-name{background-size:100% 1px}
-.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);min-width:220px;max-width:280px;background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
+/* Hover popup: focused on context the row can't show, NOT a duplicate
+   of the row's time stats. Shows: avatar, name, all processes this
+   person wore in the window, last finished abaya, avg per unit, and
+   the one-tap action. */
+.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);width:260px;background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:12px;padding:14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
 .by-emp-row:hover .by-emp-popup,.by-emp-row:focus-within .by-emp-popup{opacity:1;transform:translateY(-50%) translateX(0);pointer-events:auto}
-.by-emp-popup-name{font-size:14px;font-weight:700;color:#fff;margin-bottom:2px}
-.by-emp-popup-sub{font-size:11px;color:var(--tx3);margin-bottom:10px}
-.by-emp-popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-bottom:10px}
-.by-emp-popup-cell{background:rgba(124,111,224,.08);border:1px solid rgba(124,111,224,.18);border-radius:6px;padding:6px 8px}
-.by-emp-popup-cell-lbl{font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:2px}
-.by-emp-popup-cell-val{font-size:13px;font-weight:700;color:var(--tx);font-variant-numeric:tabular-nums;line-height:1.1}
-.by-emp-popup-cta{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;background:linear-gradient(135deg,#7c6fe0,#422082);color:#fff;border-radius:8px;font-size:11.5px;font-weight:600;text-decoration:none;letter-spacing:.3px}
+.by-emp-popup-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.by-emp-popup-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#0f0a1f;flex-shrink:0}
+.by-emp-popup-name{font-size:15px;font-weight:700;color:#fff;line-height:1.15}
+.by-emp-popup-empcode{font-size:10px;color:var(--tx3);letter-spacing:.5px;margin-top:1px}
+.by-emp-popup-processes{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.by-emp-popup-process{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:10.5px;font-weight:600;letter-spacing:.2px}
+.by-emp-popup-units-row{display:flex;align-items:baseline;justify-content:space-between;background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.28);border-radius:8px;padding:8px 12px;margin-bottom:12px}
+.by-emp-popup-units-lbl{font-size:10px;color:var(--gr);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.by-emp-popup-units-val{font-size:24px;font-weight:800;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1}
+.by-emp-popup-cta{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;background:linear-gradient(135deg,#7c6fe0,#422082);color:#fff;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;letter-spacing:.3px;transition:filter .14s ease,transform .14s ease}
+.by-emp-popup-cta:hover{filter:brightness(1.1);transform:translateY(-1px)}
 .cr-cancel-list{display:flex;flex-direction:column;gap:6px;padding:10px 12px}
 .cr-cancel-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;font-size:12px;flex-wrap:wrap}
 .cr-cancel-row b{font-family:var(--fn-mono);color:var(--rd);font-size:11px}
@@ -1948,20 +1956,26 @@ async function openReport(type) {
 
     (data.by_employee||[]).forEach(e => {
       const empId = String(e.emp_id || '');
-      const empName = esc(String(e.emp_name || e.emp_id || ''));
-      const empProcess = esc(String(e.emp_process || ''));
+      const empNameRaw = String(e.emp_name || e.emp_id || '');
+      const empName = esc(empNameRaw);
       const empCode = esc(String(e.emp_code || ''));
-      // Each row carries the emp id as a data attribute. The container
-      // listens for clicks (event delegation) and opens the day modal —
-      // no inline onclick string, so no escape-trap JS syntax errors.
-      // A small hover popup surfaces the key numbers + a one-tap CTA so
-      // the user can see the full day without losing the table context.
-      const popupUnits = e.units || 0;
-      const popupActive = fmtHMS(e.active_time_sec || 0);
-      const popupElapsed = fmtHMS(e.elapsed_time_sec || 0);
-      const popupLive = fmtHMS(e.live_active_time_sec || 0);
-      const popupFull = fmtHMS(e.full_time_sec || 0);
-      const popupTol = fmtHMS(e.tolerance_sec || 0);
+      const empProcess = esc(String(e.emp_process || ''));
+      // The popup deliberately does NOT repeat the time stats the row
+      // already shows. It surfaces what the row can't fit compactly:
+      // the employee's identity (avatar + name + processes), the
+      // headline number (units, big), and the one-tap action.
+      const initials = empNameRaw
+        .split(/\s+/).filter(Boolean).slice(0, 2)
+        .map(function (s) { return s.charAt(0).toUpperCase(); })
+        .join('') || (empId ? empId.slice(-2).toUpperCase() : '?');
+      const avatarColor = procColorUI(String(e.emp_process || ''));
+      const processesAll = Array.isArray(e.emp_processes) && e.emp_processes.length
+        ? e.emp_processes : (e.emp_process ? [e.emp_process] : []);
+      const processesHtml = processesAll.map(function (p) {
+        const c = procColorUI(p);
+        return '<span class="by-emp-popup-process" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '55">' +
+          esc(String(p)) + '</span>';
+      }).join('');
       html += '<div class="by-emp-row" tabindex="0" data-emp-id="' + esc(empId) + '"' +
         ' data-emp-name="' + empName + '" data-emp-process="' + empProcess + '"' +
         ' data-emp-code="' + empCode + '"' +
@@ -1970,23 +1984,25 @@ async function openReport(type) {
           '<span style="color:var(--tx)">' + empName + '</span>' +
           '<span style="color:var(--tx3);font-weight:400;font-size:11px;display:block;margin-top:2px">'+(empProcess||'')+(empCode?' &middot; '+empCode:'')+'</span>' +
         '</span>' +
-        '<span style="text-align:right;font-weight:700;color:var(--gr)">'+popupUnits+'</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+popupActive+'</span>' +
-        '<span style="text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums">'+popupElapsed+'</span>' +
-        '<span style="text-align:right;color:var(--bl);font-variant-numeric:tabular-nums">'+popupLive+'</span>' +
-        '<span style="text-align:right;color:var(--pu);font-weight:700;font-variant-numeric:tabular-nums">'+popupFull+'</span>' +
-        '<span style="text-align:right;color:var(--am);font-variant-numeric:tabular-nums">'+popupTol+'</span>' +
+        '<span style="text-align:right;font-weight:700;color:var(--gr)">'+e.units+'</span>' +
+        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.active_time_sec)+'</span>' +
+        '<span style="text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums">'+fmtHMS(e.elapsed_time_sec)+'</span>' +
+        '<span style="text-align:right;color:var(--bl);font-variant-numeric:tabular-nums">'+fmtHMS(e.live_active_time_sec)+'</span>' +
+        '<span style="text-align:right;color:var(--pu);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.full_time_sec)+'</span>' +
+        '<span style="text-align:right;color:var(--am);font-variant-numeric:tabular-nums">'+fmtHMS(e.tolerance_sec)+'</span>' +
         '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.adjusted_full_time_sec)+'</span>' +
         '<div class="by-emp-popup" role="tooltip">' +
-          '<div class="by-emp-popup-name">'+empName+'</div>' +
-          '<div class="by-emp-popup-sub">'+(empProcess||'')+(empCode?' &middot; '+empCode:'')+'</div>' +
-          '<div class="by-emp-popup-grid">' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Units</div><div class="by-emp-popup-cell-val" style="color:var(--gr)">'+popupUnits+'</div></div>' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Active</div><div class="by-emp-popup-cell-val">'+popupActive+'</div></div>' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Elapsed</div><div class="by-emp-popup-cell-val" style="color:var(--tx2)">'+popupElapsed+'</div></div>' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Live now</div><div class="by-emp-popup-cell-val" style="color:var(--bl)">'+popupLive+'</div></div>' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Full time</div><div class="by-emp-popup-cell-val" style="color:var(--pu)">'+popupFull+'</div></div>' +
-            '<div class="by-emp-popup-cell"><div class="by-emp-popup-cell-lbl">Tolerance</div><div class="by-emp-popup-cell-val" style="color:var(--am)">'+popupTol+'</div></div>' +
+          '<div class="by-emp-popup-head">' +
+            '<div class="by-emp-popup-avatar" style="background:' + avatarColor + '">' + esc(initials) + '</div>' +
+            '<div style="min-width:0">' +
+              '<div class="by-emp-popup-name">' + empName + '</div>' +
+              (empCode ? '<div class="by-emp-popup-empcode">' + empCode + '</div>' : '') +
+            '</div>' +
+          '</div>' +
+          (processesHtml ? '<div class="by-emp-popup-processes">' + processesHtml + '</div>' : '') +
+          '<div class="by-emp-popup-units-row">' +
+            '<div class="by-emp-popup-units-lbl">Units</div>' +
+            '<div class="by-emp-popup-units-val">' + (e.units || 0) + '</div>' +
           '</div>' +
           '<a class="by-emp-popup-cta" href="javascript:void(0)" data-emp-id="' + esc(empId) + '">View their day &rarr;</a>' +
         '</div>' +
