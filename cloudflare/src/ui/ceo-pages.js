@@ -278,17 +278,54 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .ed-day-date{font-size:10px;color:var(--tx3);font-weight:600;letter-spacing:.4px}
 .ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
 .ed-day-time{font-size:10px;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.1;margin-top:1px}
-/* By-employee table in the Process & garment analytics modal. */
-.by-emp-row{cursor:pointer;transition:background-color .14s ease,transform .14s ease}
+/* By-employee table in the Process & garment analytics modal.
+   Responsive grid: 8-col wide → 4-col medium → 2-row card on mobile. */
+.by-emp-table{background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:visible}
+.by-emp-head,.by-emp-row{display:grid;grid-template-columns:minmax(0,1fr) 50px repeat(6,minmax(60px,1fr));gap:8px;padding:10px 12px;align-items:center;position:relative}
+.by-emp-head{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd);border-radius:10px 10px 0 0;background:var(--s1)}
+.by-emp-head>span,.by-emp-row>span[data-col]{text-align:right;font-variant-numeric:tabular-nums}
+.by-emp-row{cursor:pointer;border-bottom:1px solid rgba(54,45,89,.2);font-size:13px;transition:background-color .14s ease,transform .14s ease}
+.by-emp-body>*:last-child.by-emp-row{border-bottom:0}
 .by-emp-row:hover{background:rgba(106,95,193,.10);transform:translateX(1px)}
 .by-emp-row:hover .by-emp-name{color:var(--am)}
-.by-emp-name{display:inline-block;text-decoration:none;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-repeat:no-repeat;background-position:0 100%;transition:background-size .25s ease,color .14s ease}
+.by-emp-name{display:inline-block;text-decoration:none;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-repeat:no-repeat;background-position:0 100%;transition:background-size .25s ease,color .14s ease;min-width:0}
 .by-emp-row:hover .by-emp-name{background-size:100% 1px}
+.by-emp-units-pill{display:inline-block;min-width:34px;padding:2px 8px;border-radius:999px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;text-align:center}
+.by-emp-col-hide-mid,.by-emp-col-hide-sm{display:none}
+/* Mobile-only horizontal stat strip: hidden on desktop, shown via media query */
+.by-emp-row-stats{display:none}
+
+/* Medium: <=720px — drop tolerance + live, keep units + 4 time stats */
+@media(max-width:720px){
+  .by-emp-head,.by-emp-row{grid-template-columns:minmax(0,1fr) 56px repeat(4,minmax(54px,1fr));gap:6px;padding:10px;font-size:12px}
+  .by-emp-col-hide-mid{display:none}
+}
+
+/* Small: <=520px — card layout: name+units on top row, time stats
+   below in a horizontal flex strip. No grid. No overlap. */
+@media(max-width:520px){
+  /* Give the modal a little more room on phones */
+  .modal-overlay{padding:8px}
+  .modal-box{padding:16px;border-radius:14px}
+  .by-emp-head{display:none}
+  .by-emp-row{display:block;padding:10px 12px}
+  .by-emp-row-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .by-emp-name{flex:1;min-width:0}
+  .by-emp-units-pill{flex:0 0 auto}
+  .by-emp-row-stats{display:flex;gap:6px;margin-top:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;scrollbar-width:thin}
+  .by-emp-stat{flex:0 0 auto;background:var(--s1);border:1px solid var(--bd);border-radius:6px;padding:3px 7px;font-size:10.5px;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.3;white-space:nowrap}
+  .by-emp-stat b{display:block;color:var(--tx);font-size:11.5px;font-weight:700;margin-top:1px}
+  .by-emp-col-hide-sm{display:none}
+  /* Popup drops below the row instead of off to the right */
+  .by-emp-popup{position:static;width:auto;max-width:none;transform:none!important;margin-top:8px;right:auto;top:auto}
+  .by-emp-row:hover .by-emp-popup,.by-emp-row:focus-within .by-emp-popup{transform:none!important}
+}
+
 /* Hover popup: focused on context the row can't show, NOT a duplicate
    of the row's time stats. Shows: avatar, name, all processes this
    person wore in the window, last finished abaya, avg per unit, and
    the one-tap action. */
-.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);width:260px;background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:12px;padding:14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
+.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);width:260px;max-width:calc(100% - 28px);background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:12px;padding:14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
 .by-emp-row:hover .by-emp-popup,.by-emp-row:focus-within .by-emp-popup{opacity:1;transform:translateY(-50%) translateX(0);pointer-events:auto}
 .by-emp-popup-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .by-emp-popup-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#0f0a1f;flex-shrink:0}
@@ -1949,10 +1986,18 @@ async function openReport(type) {
       card('Avg vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.avg_sec_delta) || 0), 'var(--bl)') +
       '</div>' +
       '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">By employee — tap a name to see their day</div>' +
-      '<div class="by-emp-table" style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:visible">' +
-      '<div class="by-emp-head" style="display:grid;grid-template-columns:1fr 50px 70px 70px 70px 70px 70px 70px;gap:8px;padding:10px 12px;font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd);border-radius:10px 10px 0 0;background:var(--s1)">' +
-      '<span>Employee</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>' +
-      '<div class="by-emp-body" style="max-height:280px;overflow-y:auto;border-radius:0 0 10px 10px">';
+      '<div class="by-emp-table">' +
+      '<div class="by-emp-head">' +
+        '<span>Employee</span>' +
+        '<span>Units</span>' +
+        '<span>Active</span>' +
+        '<span class="by-emp-col-hide-mid">Elapsed</span>' +
+        '<span class="by-emp-col-hide-sm">Live</span>' +
+        '<span>Full</span>' +
+        '<span class="by-emp-col-hide-sm">Tol</span>' +
+        '<span>Adj</span>' +
+      '</div>' +
+      '<div class="by-emp-body" style="max-height:340px;overflow-y:auto;border-radius:0 0 10px 10px">';
 
     (data.by_employee||[]).forEach(e => {
       const empId = String(e.emp_id || '');
@@ -1976,21 +2021,34 @@ async function openReport(type) {
         return '<span class="by-emp-popup-process" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '55">' +
           esc(String(p)) + '</span>';
       }).join('');
+      // Desktop/tablet cells (7). Each gets a class for hide rules.
+      // 'by-emp-col-hide-mid' hides at <=720px (tolerance + live)
+      // 'by-emp-col-hide-sm'  hides at <=520px (elapsed + live + tolerance)
       html += '<div class="by-emp-row" tabindex="0" data-emp-id="' + esc(empId) + '"' +
         ' data-emp-name="' + empName + '" data-emp-process="' + empProcess + '"' +
-        ' data-emp-code="' + empCode + '"' +
-        ' style="display:grid;grid-template-columns:1fr 50px 70px 70px 70px 70px 70px 70px;gap:8px;padding:11px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:13px;align-items:center;position:relative">' +
-        '<span class="by-emp-name" style="font-weight:600;line-height:1.25;min-width:0">' +
-          '<span style="color:var(--tx)">' + empName + '</span>' +
-          '<span style="color:var(--tx3);font-weight:400;font-size:11px;display:block;margin-top:2px">'+(empProcess||'')+(empCode?' &middot; '+empCode:'')+'</span>' +
+        ' data-emp-code="' + empCode + '">' +
+        '<span class="by-emp-name">' +
+          '<span style="color:var(--tx);display:block;font-weight:600;line-height:1.25">' + empName + '</span>' +
+          '<span style="color:var(--tx3);font-weight:400;font-size:11px;display:block;margin-top:2px">' + (empProcess||'') + (empCode?' &middot; '+empCode:'') + '</span>' +
         '</span>' +
-        '<span style="text-align:right;font-weight:700;color:var(--gr)">'+e.units+'</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.active_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--tx2);font-variant-numeric:tabular-nums">'+fmtHMS(e.elapsed_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--bl);font-variant-numeric:tabular-nums">'+fmtHMS(e.live_active_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--pu);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.full_time_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--am);font-variant-numeric:tabular-nums">'+fmtHMS(e.tolerance_sec)+'</span>' +
-        '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">'+fmtHMS(e.adjusted_full_time_sec)+'</span>' +
+        // Top row: name + units pill (mobile uses this)
+        // Wide layout: each cell is its own grid cell
+        '<span data-col="units"><span class="by-emp-units-pill">' + (e.units || 0) + '</span></span>' +
+        '<span data-col="active" style="color:var(--gr);font-weight:700">' + fmtHMS(e.active_time_sec) + '</span>' +
+        '<span data-col="elapsed" class="by-emp-col-hide-mid" style="color:var(--tx2)">' + fmtHMS(e.elapsed_time_sec) + '</span>' +
+        '<span data-col="live" class="by-emp-col-hide-sm" style="color:var(--bl)">' + fmtHMS(e.live_active_time_sec) + '</span>' +
+        '<span data-col="full" style="color:var(--pu);font-weight:700">' + fmtHMS(e.full_time_sec) + '</span>' +
+        '<span data-col="tol" class="by-emp-col-hide-sm" style="color:var(--am)">' + fmtHMS(e.tolerance_sec) + '</span>' +
+        '<span data-col="adj" style="color:var(--gr);font-weight:700">' + fmtHMS(e.adjusted_full_time_sec) + '</span>' +
+        // Mobile-only horizontal stat strip (CSS turns off on wide)
+        '<div class="by-emp-row-stats">' +
+          '<div class="by-emp-stat">Active<b>' + fmtHMS(e.active_time_sec) + '</b></div>' +
+          '<div class="by-emp-stat">Full<b>' + fmtHMS(e.full_time_sec) + '</b></div>' +
+          '<div class="by-emp-stat">Adj<b>' + fmtHMS(e.adjusted_full_time_sec) + '</b></div>' +
+          '<div class="by-emp-stat">Live<b>' + fmtHMS(e.live_active_time_sec) + '</b></div>' +
+          '<div class="by-emp-stat">Elpsd<b>' + fmtHMS(e.elapsed_time_sec) + '</b></div>' +
+          '<div class="by-emp-stat">Tol<b>' + fmtHMS(e.tolerance_sec) + '</b></div>' +
+        '</div>' +
         '<div class="by-emp-popup" role="tooltip">' +
           '<div class="by-emp-popup-head">' +
             '<div class="by-emp-popup-avatar" style="background:' + avatarColor + '">' + esc(initials) + '</div>' +
@@ -2017,7 +2075,8 @@ async function openReport(type) {
     if (byProcess.length) {
       html +=
         '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px">By process (decision bottlenecks)</div>' +
-        '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:14px;max-height:220px;overflow-y:auto">' +
+        '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;margin-bottom:14px;max-height:220px;overflow:auto">' +
+        '<div style="min-width:560px">' +
         '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px 58px 58px 58px 58px 58px 58px;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:9px;color:var(--tx3)">' +
         '<span>Process</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>';
       byProcess.forEach(function (p) {
@@ -2032,7 +2091,7 @@ async function openReport(type) {
           '<span style="text-align:right;color:var(--am)">' + fmtHMS(p.tolerance_sec) + '</span>' +
           '<span style="text-align:right;color:var(--gr);font-weight:700">' + fmtHMS(p.adjusted_full_time_sec) + '</span></div>';
       });
-      html += '</div>';
+      html += '</div></div>';
     }
 
     // Month-by-month breakdown (yearly report only — server sends by_month for type=yearly).
