@@ -634,6 +634,8 @@ let STATE = {
   process_split_today:{},
   hourly_today:{},
   garment_totals_today:[],
+  abaya_lifetime:{},
+  abaya_builds:{},
   working_hours:null,
   working_status:''
 };
@@ -1016,20 +1018,30 @@ function activeSecondsOnGarment(abayaId) {
   return Math.floor(Number(cache.byGarmentId[sid]) || 0);
 }
 
-// Lifetime cumulative in-window seconds for an abaya, from abaya_time_map.
-// This is the multi-day build cost: every in-window second any worker has
-// ever logged against this abaya, across the full lifetime. Multi-day
-// abaya builds are valid — never auto-close a session that started days
-// ago — so the operator expects the lifetime number on "total on item",
-// not the picked-day slice. Today the dashboard's "total on item" is
-// garmentCompletedFromState + activeSecondsOnGarment, which only counts
-// the picked day; for an abaya with a long build that's misleading.
-function abayaLifetimeSec(abayaId) {
+// Per-build (current contiguous run) total for an abaya, from
+// STATE.abaya_builds. The build is the most recent run of sessions on
+// the same abaya_id where a 24h+ gap between consecutive sessions
+// defines a build boundary. This is what the operator means by "this
+// build" -- e.g. CF111 STD-O build #2 -- and is computed server-side
+// from the sessions table (source of truth, no double-count bug).
+// Falls back to 0 if the build map has no row for this abaya_id.
+function abayaBuildSec(abayaId) {
   const sid = String(abayaId || '');
-  const map = (STATE && STATE.abaya_lifetime) || {};
+  const map = (STATE && STATE.abaya_builds) || {};
   const row = map[sid];
   if (!row) return 0;
-  return Math.floor(Number(row.cumulative_in_window_sec) || 0);
+  return Math.floor(Number(row.total_in_window_sec) || 0);
+}
+
+// Build start for an abaya, as a Unix seconds timestamp, or 0 if the
+// build map has no row. Used for the "build started YYYY-MM-DD" caption
+// on the Live row.
+function abayaBuildStartUnix(abayaId) {
+  const sid = String(abayaId || '');
+  const map = (STATE && STATE.abaya_builds) || {};
+  const row = map[sid];
+  if (!row) return 0;
+  return Math.floor(Number(row.build_start_unix) || 0);
 }
 
 function garmentTotalLiveForId(abayaId) {
@@ -1132,23 +1144,28 @@ function buildLiveSessionsHtml() {
       const s = active[id];
       const startedMs = Number(s.started_at) || Date.now();
       const elapsed = Math.floor(Number(timingCache.byEmpId[id]) || 0);
-      // "Total on item" = lifetime cumulative in-window seconds for this
-      // abaya across the full multi-day build, plus the in-shift seconds
-      // we've added this snapshot that aren't yet flushed to D1. This is
-      // the operator's expectation: how long has this abaya been on the
-      // floor overall, even if the build spans 2-3 days. Multi-day abaya
-      // builds are valid — never auto-close a session that started days ago.
-      const lifetimeSec = abayaLifetimeSec(s.abaya_id);
+      // "This build" = total in-window shift seconds on this abaya within
+      // the current contiguous build window (24h-gap rule), plus the in-
+      // shift seconds we've added this snapshot that aren't yet flushed to
+      // D1. Computed server-side from the sessions table -- same source
+      // the daily/weekly/monthly/yearly reports use for their per-day
+      // totals, just windowed by contiguity instead of by calendar day.
+      // Multi-day abaya builds are valid -- never auto-close a session
+      // that started days ago.
+      const buildSec = abayaBuildSec(s.abaya_id);
       const liveAddedThisSnapshot = activeSecondsOnGarment(s.abaya_id);
-      const totalItem = lifetimeSec + liveAddedThisSnapshot;
-      // Wall-clock seconds since this worker tapped Start. This is the
-      // "honest" elapsed time — pauses do not get stripped here. The
-      // "this step (in shift)" number is the same count with breaks and
-      // outside-shift time removed. Showing both lets the operator spot
-      // a forgotten-Finish session: if wall >> in-shift, the worker
-      // likely tapped Start and walked away.
-      const nowMs = Date.now();
-      const wallSec = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+      const buildStartUnix = abayaBuildStartUnix(s.abaya_id);
+      const totalItem = buildSec + liveAddedThisSnapshot;
+      // All time numbers on the Live row are in-window only. Outside-shift
+      // time (nights, weekends, lunch breaks) is not labor cost and must
+      // not be added to the per-shift or per-build totals. The 'wall'
+      // line that previously sat here was deleted because it counted
+      // outside-shift time by definition -- e.g. a worker who tapped
+      // Start on Aug 20 and is still on it would show 'wall 73h' even
+      // though only 26h of that was actual factory time. The forgotten-
+      // Finish signal now lives in the Stuck badge below: fires when
+      // the session has been open >2h AND we are currently outside
+      // the working window (i.e. the shift ended and nobody hit Finish).
 
       const startedLabel = new Date(startedMs).toLocaleString([], {
         timeZone: tz,
@@ -1172,15 +1189,20 @@ function buildLiveSessionsHtml() {
       const startedAtSec = Math.floor(startedMs / 1000);
       const outOfShift = !inShiftNowLive || !inWindowClient(startedAtSec);
       const outsideBadge = outOfShift
-        ? ' <span title="Time outside shift windows is not counted" style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
+        ? ' <span title="Time outside shift windows is not counted in the per-shift or per-build totals." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
         : '';
-      // A wall-vs-in-shift gap of 2+ hours is a strong signal of a
-      // forgotten-Finish — flag it so the operator knows to ping the
-      // worker without having to do the math themselves.
-      const gapSec = Math.max(0, wallSec - elapsed);
-      const stale = gapSec >= 2 * 3600;
+      // Stuck = session has been open >2h AND we are currently outside
+      // the working window. A worker who finished their shift and
+      // walked away without tapping Finish leaves the session open
+      // through the entire factory-closed period. The badge is the
+      // operator's cue to ping the worker (or close the session from
+      // the manager UI). Kept as a label, not a number, because the
+      // operator doesn't need to see the raw '47h since Start' -- they
+      // just need to know it was forgotten.
+      const ageSec = Math.max(0, nowSecLive - startedAtSec);
+      const stale = ageSec > 2 * 3600 && !inShiftNowLive;
       const staleBadge = stale
-        ? ' <span title="Worker has not tapped Finish. In-shift clock paused during breaks; wall-clock is the real elapsed time." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
+        ? ' <span title="Session has been open more than 2 hours and the factory is currently outside the working window. Likely a forgotten-Finish -- check the station and either Finish the session or have the worker re-tap Start." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
         : '';
 
       return (
@@ -1223,13 +1245,10 @@ function buildLiveSessionsHtml() {
         fmtHMS(elapsed) +
         '</div>' +
         '<div style="font-size:9px;color:var(--tx3)">this step (in shift)</div>' +
-        '<div title="Wall-clock seconds since Start. Includes breaks and outside-shift time. The gap between wall and in-shift is unaccounted time — pauses, meals, or a forgotten-Finish." style="font-size:11px;font-weight:600;color:var(--tx3);margin-top:3px;cursor:help">' +
-        'wall ' + fmtHMS(wallSec) +
-        '</div>' +
-        '<div title="Lifetime in-window seconds across the full multi-day build for this abaya, plus this snapshot\'s live contribution." style="font-size:11px;font-weight:700;color:var(--am);margin-top:6px;cursor:help">' +
+        '<div title="In-window shift seconds on this abaya within the current build (24h-gap rule, computed from the sessions table). Sourced from the same duration_sec the daily/weekly/monthly/yearly reports use, just windowed by contiguity instead of by calendar day." style="font-size:11px;font-weight:700;color:var(--am);margin-top:6px;cursor:help">' +
         fmtHMS(totalItem) +
         '</div>' +
-        '<div style="font-size:9px;color:var(--tx3)">total on item (lifetime)</div>' +
+        '<div style="font-size:9px;color:var(--tx3)">this build' + (buildStartUnix ? ' &middot; started ' + esc(new Date(buildStartUnix * 1000).toLocaleDateString([], { timeZone: tz, year: 'numeric', month: 'short', day: '2-digit' })) : '') + '</div>' +
         '</div></div>'
       );
     })
