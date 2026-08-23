@@ -443,7 +443,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   <div class="stat-row">
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">units finished</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg">Avg Cycle Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">per unit</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">Avg Session Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">median per finished step today</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
   </div>
 
@@ -630,7 +630,7 @@ function byId(primary, fallback) {
 }
 let STATE = {
   active:{}, logs:[], perf:[], daily:[],
-  factory_today:'', completed_today:0, avg_cycle_sec_today:0, efficiency_today:0,
+  factory_today:'', completed_today:0, avg_cycle_sec_today:0, median_session_sec_today:0, efficiency_today:0,
   process_split_today:{},
   hourly_today:{},
   garment_totals_today:[],
@@ -1016,6 +1016,22 @@ function activeSecondsOnGarment(abayaId) {
   return Math.floor(Number(cache.byGarmentId[sid]) || 0);
 }
 
+// Lifetime cumulative in-window seconds for an abaya, from abaya_time_map.
+// This is the multi-day build cost: every in-window second any worker has
+// ever logged against this abaya, across the full lifetime. Multi-day
+// abaya builds are valid — never auto-close a session that started days
+// ago — so the operator expects the lifetime number on "total on item",
+// not the picked-day slice. Today the dashboard's "total on item" is
+// garmentCompletedFromState + activeSecondsOnGarment, which only counts
+// the picked day; for an abaya with a long build that's misleading.
+function abayaLifetimeSec(abayaId) {
+  const sid = String(abayaId || '');
+  const map = (STATE && STATE.abaya_lifetime) || {};
+  const row = map[sid];
+  if (!row) return 0;
+  return Math.floor(Number(row.cumulative_in_window_sec) || 0);
+}
+
 function garmentTotalLiveForId(abayaId) {
   return garmentCompletedFromState(abayaId) + activeSecondsOnGarment(abayaId);
 }
@@ -1116,7 +1132,23 @@ function buildLiveSessionsHtml() {
       const s = active[id];
       const startedMs = Number(s.started_at) || Date.now();
       const elapsed = Math.floor(Number(timingCache.byEmpId[id]) || 0);
-      const totalItem = garmentTotalLiveForId(s.abaya_id);
+      // "Total on item" = lifetime cumulative in-window seconds for this
+      // abaya across the full multi-day build, plus the in-shift seconds
+      // we've added this snapshot that aren't yet flushed to D1. This is
+      // the operator's expectation: how long has this abaya been on the
+      // floor overall, even if the build spans 2-3 days. Multi-day abaya
+      // builds are valid — never auto-close a session that started days ago.
+      const lifetimeSec = abayaLifetimeSec(s.abaya_id);
+      const liveAddedThisSnapshot = activeSecondsOnGarment(s.abaya_id);
+      const totalItem = lifetimeSec + liveAddedThisSnapshot;
+      // Wall-clock seconds since this worker tapped Start. This is the
+      // "honest" elapsed time — pauses do not get stripped here. The
+      // "this step (in shift)" number is the same count with breaks and
+      // outside-shift time removed. Showing both lets the operator spot
+      // a forgotten-Finish session: if wall >> in-shift, the worker
+      // likely tapped Start and walked away.
+      const nowMs = Date.now();
+      const wallSec = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
 
       const startedLabel = new Date(startedMs).toLocaleString([], {
         timeZone: tz,
@@ -1142,6 +1174,14 @@ function buildLiveSessionsHtml() {
       const outsideBadge = outOfShift
         ? ' <span title="Time outside shift windows is not counted" style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
         : '';
+      // A wall-vs-in-shift gap of 2+ hours is a strong signal of a
+      // forgotten-Finish — flag it so the operator knows to ping the
+      // worker without having to do the math themselves.
+      const gapSec = Math.max(0, wallSec - elapsed);
+      const stale = gapSec >= 2 * 3600;
+      const staleBadge = stale
+        ? ' <span title="Worker has not tapped Finish. In-shift clock paused during breaks; wall-clock is the real elapsed time." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
+        : '';
 
       return (
         '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
@@ -1154,6 +1194,7 @@ function buildLiveSessionsHtml() {
         '<div style="font-size:13px;font-weight:600">' +
         esc(s.emp_name) +
         outsideBadge +
+        staleBadge +
         '</div>' +
         '<div style="font-size:11px;color:var(--tx3)">' +
         esc(s.emp_code) +
@@ -1178,14 +1219,17 @@ function buildLiveSessionsHtml() {
         '</span></div>' +
         '</div>' +
         '<div style="text-align:right">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--gr)">' +
+        '<div title="In-shift seconds since Start. Breaks and any outside-shift time are stripped — this is the per-shift number." style="font-size:14px;font-weight:700;color:var(--gr);cursor:help">' +
         fmtHMS(elapsed) +
         '</div>' +
         '<div style="font-size:9px;color:var(--tx3)">this step (in shift)</div>' +
-        '<div style="font-size:11px;font-weight:700;color:var(--am);margin-top:3px">' +
+        '<div title="Wall-clock seconds since Start. Includes breaks and outside-shift time. The gap between wall and in-shift is unaccounted time — pauses, meals, or a forgotten-Finish." style="font-size:11px;font-weight:600;color:var(--tx3);margin-top:3px;cursor:help">' +
+        'wall ' + fmtHMS(wallSec) +
+        '</div>' +
+        '<div title="Lifetime in-window seconds across the full multi-day build for this abaya, plus this snapshot\'s live contribution." style="font-size:11px;font-weight:700;color:var(--am);margin-top:6px;cursor:help">' +
         fmtHMS(totalItem) +
         '</div>' +
-        '<div style="font-size:9px;color:var(--tx3)">total on item</div>' +
+        '<div style="font-size:9px;color:var(--tx3)">total on item (lifetime)</div>' +
         '</div></div>'
       );
     })
@@ -1293,7 +1337,13 @@ function renderAll() {
       kpiActive.parentNode.style.opacity = isLive ? '1' : '0.45';
     }
     if (completed > 0) {
-      if (kpiAvg) kpiAvg.textContent = fmtHMS(STATE.avg_cycle_sec_today || 0);
+      // Prefer the median session time when available — it is not skewed
+      // by forgotten-Finish sessions. Fall back to the mean for the first
+      // paint before the worker pushes any sessions.
+      const median = Number(STATE.median_session_sec_today) || 0;
+      const mean = Number(STATE.avg_cycle_sec_today) || 0;
+      const display = median > 0 ? median : mean;
+      if (kpiAvg) kpiAvg.textContent = fmtHMS(display);
       const eff = Number(STATE.efficiency_today) || 0;
       if (kpiEff) {
         kpiEff.textContent = eff + '%';

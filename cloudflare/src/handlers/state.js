@@ -187,6 +187,21 @@ export async function handleState(env, url) {
       LIMIT 800
     `).bind(anchorYmd, toYmd);
 
+  // Lifetime cumulative in-window seconds per abaya from abaya_time_map.
+  // This is the "total on item" number the operator expects on the Live
+  // Active Sessions row: it counts every in-window second this abaya has
+  // ever had work logged against it, across the full multi-day build, not
+  // just the picked-day or today window. The dashboard previously showed
+  // today's `completed_sec` only, which under-reported long-running abayas
+  // and over-reported abayas with forgotten-Finish sessions in the picked
+  // day. Required for multi-day builds — never auto-close a session that
+  // started days ago, because that abaya is still being built.
+  const stmtAbayaLifetime = env.DB.prepare(`
+      SELECT abaya_id, abaya_code, cumulative_in_window_sec,
+        first_started_at, last_ended_at
+      FROM abaya_time_map
+    `);
+
   const [
     activeRes,
     logsRes,
@@ -196,6 +211,7 @@ export async function handleState(env, url) {
     procSplitRes,
     hourlyRes,
     garmentTodayRes,
+    abayaLifetimeRes,
   ] = await env.DB.batch([
     stmtActive,
     stmtLogs,
@@ -205,6 +221,7 @@ export async function handleState(env, url) {
     stmtProcSplit,
     stmtHourly,
     stmtGarment,
+    stmtAbayaLifetime,
   ]);
 
   const nowSecForActive = Math.floor(Date.now() / 1000);
@@ -251,6 +268,24 @@ export async function handleState(env, url) {
   const completedToday = Number(agg.cnt) || 0;
   const totalSecToday = Number(agg.total_sec) || 0;
   const avgCycleSecToday = completedToday > 0 ? Math.round(totalSecToday / completedToday) : 0;
+  // Median session duration for the picked day. The mean is dominated by
+  // forgotten-Finish sessions (workers who tap Start and walk away, leaving
+  // a session open for hours); the median is much closer to a real per-step
+  // cycle time and is the number the operator should look at when judging
+  // "is my floor healthy". Renamed in the UI from "Avg Cycle Time" to
+  // "Avg Session Time" with sub "median per finished step today".
+  const dayDurations = (logsRes.results || [])
+    .map((r) => Math.floor(Number(r.duration_sec) || 0))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  let medianSecToday = 0;
+  if (dayDurations.length > 0) {
+    const mid = Math.floor(dayDurations.length / 2);
+    medianSecToday =
+      dayDurations.length % 2 === 1
+        ? dayDurations[mid]
+        : Math.floor((dayDurations[mid - 1] + dayDurations[mid]) / 2);
+  }
   const targetSecToday = completedToday * 2700;
   const efficiencyToday =
     totalSecToday > 0 ? Math.min(100, Math.round((targetSecToday / totalSecToday) * 100)) : 0;
@@ -316,6 +351,23 @@ export async function handleState(env, url) {
     if (cb !== ca) return cb - ca;
     return String(a.abaya_code || a.abaya_id).localeCompare(String(b.abaya_code || b.abaya_id));
   });
+
+  // Lifetime cumulative in-window seconds per abaya. Used by the Live
+  // Active Sessions row's "total on item" so the operator sees the full
+  // multi-day build cost instead of just the picked-day slice. Multi-day
+  // builds are valid — never auto-close a session that started days ago.
+  const abayaLifetimeMap = {};
+  (abayaLifetimeRes.results || []).forEach((row) => {
+    const id = row.abaya_id;
+    if (id == null || id === '') return;
+    abayaLifetimeMap[String(id)] = {
+      abaya_id: row.abaya_id,
+      abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+      cumulative_in_window_sec: Math.floor(Number(row.cumulative_in_window_sec) || 0),
+      first_started_at: row.first_started_at != null ? Number(row.first_started_at) : null,
+      last_ended_at: row.last_ended_at != null ? Number(row.last_ended_at) : null,
+    };
+  });
   const serverNowTs = Date.now();
   const latestFinishedMs =
     ((logsRes.results || []).length && Number((logsRes.results || [])[0].ended_at) * 1000) || 0;
@@ -368,6 +420,7 @@ export async function handleState(env, url) {
       factory_today: factoryToday,
       completed_today: completedToday,
       avg_cycle_sec_today: avgCycleSecToday,
+      median_session_sec_today: medianSecToday,
       efficiency_today: efficiencyToday,
       process_split_today: processSplitToday,
       hourly_today: hourlyToday,
@@ -375,6 +428,7 @@ export async function handleState(env, url) {
       working_status: workingStatusNow(workingCfg),
       active,
       garment_totals_today,
+      abaya_lifetime: abayaLifetimeMap,
       logs: (logsRes.results || []).map((r) => ({
         ...r,
         process: r.emp_process,
