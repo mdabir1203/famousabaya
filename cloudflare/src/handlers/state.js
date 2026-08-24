@@ -8,6 +8,7 @@ import {
   windowsForDay,
   overlapSecWithWindows,
   isInWorkingWindow,
+  currentShiftStartSec,
   workingStatusNow,
 } from '../working-hours.js';
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
@@ -283,8 +284,24 @@ export async function handleState(env, url) {
   const nowSecForActive = Math.floor(Date.now() / 1000);
   const inWindowNow = isInWorkingWindow(nowSecForActive, workingCfg);
   const active = {};
+  // When the operator asks for "this step (in shift)" on a Live row, they
+  // want the time since the CURRENT shift window started, not the
+  // total in-shift time across multiple days of an open session. A
+  // worker who tapped Start at 7:34 PM yesterday and is still on the
+  // floor at 9 AM today should read "1h 6m" (since today's 8 AM shift),
+  // not "13h 40m" (yesterday's + today's in-shift sum). Cap the start
+  // of the overlap window at the current shift's start time when
+  // `now` is inside a working window; otherwise the cap does nothing
+  // and `outside_shift` below handles the rest.
+  const shiftStartSec = currentShiftStartSec(nowSecForActive, workingCfg);
   (activeRes.results || []).forEach((row) => {
-    const startedSec = Number(row.started_at) || 0;
+    const rawStartedSec = Number(row.started_at) || 0;
+    // If the session started in a previous shift window, the floor for
+    // "this step" is the start of the current shift. If it started
+    // during the current shift, the natural start is its own.
+    const startedSec = shiftStartSec != null
+      ? Math.max(rawStartedSec, shiftStartSec)
+      : rawStartedSec;
     const overlapSec = overlapSecWithWindows(startedSec, nowSecForActive, workingCfg);
     active[row.emp_id] = {
       emp_name: row.emp_name,

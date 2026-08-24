@@ -1798,13 +1798,22 @@ function openEmployeeDayForDate(empId, dateYmd) {
 window.openEmployeeDayForDate = openEmployeeDayForDate;
 
 function edFmtRange(s) {
+  // Always 12-hour with explicit AM/PM regardless of the browser's
+  // locale. The previous { hour: '2-digit', minute: '2-digit' } call
+  // inherited the locale's default and rendered as '19:34' on
+  // en-GB and as '07:34 PM' on en-US, so the CEO saw mixed formats
+  // depending on their OS. Pin it.
   const start = s.started_at
-    ? new Date(Number(s.started_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+    ? new Date(Number(s.started_at) * 1000).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true, timeZone: uiTz(),
+      })
     : '\u2014';
   const end = s.live
     ? 'now'
     : s.ended_at
-      ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+      ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString('en-US', {
+          hour: 'numeric', minute: '2-digit', hour12: true, timeZone: uiTz(),
+        })
       : '\u2014';
   return start + ' \u2013 ' + end;
 }

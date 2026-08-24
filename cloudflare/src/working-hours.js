@@ -156,6 +156,47 @@ export function isInWorkingWindow(epochSec, config) {
   return windows.some(([s, e]) => minute >= s && minute < e);
 }
 
+/**
+ * Unix-second when the working window that contains `epochSec` started
+ * (in the factory's timezone). Returns `null` if `epochSec` is not inside
+ * any working window of the current day. Used by /api/state to scope
+ * the Live Active Sessions "this step (in shift)" number to the current
+ * shift only, instead of summing in-shift seconds across multiple days
+ * of an open session (a worker who tapped Start at 7:34 PM yesterday and
+ * is still on the floor at 9 AM today should NOT read '13h 40m' in the
+ * UI -- that's yesterday + today, not 'this step').
+ *
+ * `epochSec` MUST be the 'now' value the caller will use, not a different
+ * timestamp, because minute-of-day is computed from it. The returned unix
+ * second is the start of the matching window in the factory's timezone.
+ */
+export function currentShiftStartSec(epochSec, config) {
+  const tz = (config && config.timezone) || 'Asia/Dubai';
+  const k = weekdayKeyInTz(epochSec, tz);
+  const minute = minuteOfDayInTz(epochSec, tz);
+  const windows = windowsForDay(config, k);
+  // windows are in minutes-of-day; the matching one is the first whose
+  // [start, end) contains `minute`. We then need to convert that
+  // minute-of-day back to a unix second for the factory's local day.
+  const match = windows.find(([s, e]) => minute >= s && minute < e);
+  if (!match) return null;
+  // Find the local-midnight (in tz) of the same day as `epochSec`, then
+  // add `match[0]` minutes. We do this by walking back from epochSec
+  // until ymdInTz flips -- this gives us a stable local-midnight without
+  // any Date math across DST boundaries (the factory is fixed UTC+4 so
+  // DST isn't an issue, but the approach is robust either way).
+  let lo = epochSec - 24 * 3600;
+  let hi = epochSec;
+  // binary-search-ish is overkill; 24-hour linear scan is fine
+  for (let t = lo; t <= hi; t += 60) {
+    if (ymdInTz(t, tz) === ymdInTz(epochSec, tz)) {
+      // t is the first minute of the same local day
+      return t + match[0] * 60;
+    }
+  }
+  return null;
+}
+
 export function workingStatusNow(config) {
   const now = Math.floor(Date.now() / 1000);
   const tz = (config && config.timezone) || 'Asia/Dubai';
