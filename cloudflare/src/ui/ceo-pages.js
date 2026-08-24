@@ -1187,8 +1187,17 @@ function buildLiveSessionsHtml() {
       const nowSecLive = Math.floor(Date.now() / 1000);
       const inShiftNowLive = inWindowClient(nowSecLive);
       const startedAtSec = Math.floor(startedMs / 1000);
+      const ageSec = Math.max(0, nowSecLive - startedAtSec);
+      const stale = ageSec > 2 * 3600 && !inShiftNowLive;
+      // Only show "Outside shift" when the session is not also stuck.
+      // Stuck already tells the operator the worker is outside shift AND
+      // has been for >2h, so adding "Outside shift" on top is just
+      // visual noise (the row used to read "Outside shift | Stuck" on
+      // every forgotten-Finish session). For a fresh session that
+      // happens to straddle the shift boundary, "Outside shift" alone
+      // still makes sense and is shown.
       const outOfShift = !inShiftNowLive || !inWindowClient(startedAtSec);
-      const outsideBadge = outOfShift
+      const outsideBadge = (outOfShift && !stale)
         ? ' <span title="Time outside shift windows is not counted in the per-shift or per-build totals." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
         : '';
       // Stuck = session has been open >2h AND we are currently outside
@@ -1198,9 +1207,8 @@ function buildLiveSessionsHtml() {
       // operator's cue to ping the worker (or close the session from
       // the manager UI). Kept as a label, not a number, because the
       // operator doesn't need to see the raw '47h since Start' -- they
-      // just need to know it was forgotten.
-      const ageSec = Math.max(0, nowSecLive - startedAtSec);
-      const stale = ageSec > 2 * 3600 && !inShiftNowLive;
+      // just need to know it was forgotten. (ageSec and stale computed
+      // above so we can suppress the redundant "Outside shift" badge.)
       const staleBadge = stale
         ? ' <span title="Session has been open more than 2 hours and the factory is currently outside the working window. Likely a forgotten-Finish -- check the station and either Finish the session or have the worker re-tap Start." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
         : '';
