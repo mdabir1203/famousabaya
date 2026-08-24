@@ -157,42 +157,76 @@ export function isInWorkingWindow(epochSec, config) {
 }
 
 /**
- * Unix-second when the working window that contains `epochSec` started
- * (in the factory's timezone). Returns `null` if `epochSec` is not inside
- * any working window of the current day. Used by /api/state to scope
- * the Live Active Sessions "this step (in shift)" number to the current
- * shift only, instead of summing in-shift seconds across multiple days
- * of an open session (a worker who tapped Start at 7:34 PM yesterday and
- * is still on the floor at 9 AM today should NOT read '13h 40m' in the
- * UI -- that's yesterday + today, not 'this step').
+ * Find the local-midnight (in tz) of the same day as `epochSec`. Walks
+ * back from epochSec until ymdInTz flips, then returns the first
+ * minute of the local day. Robust to DST boundaries (the factory is
+ * fixed UTC+4 so DST isn't an issue, but the approach is correct either
+ * way). Capped at a 48h backward walk so a malformed `epochSec` can't
+ * loop forever.
+ */
+function localMidnightSec(epochSec, tz) {
+  const lo = epochSec - 48 * 3600;
+  const hi = epochSec;
+  const ymdTarget = ymdInTz(epochSec, tz);
+  for (let t = lo; t <= hi; t += 60) {
+    if (ymdInTz(t, tz) === ymdTarget) {
+      return t;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find the most recent PAST working window's start time.
  *
- * `epochSec` MUST be the 'now' value the caller will use, not a different
- * timestamp, because minute-of-day is computed from it. The returned unix
- * second is the start of the matching window in the factory's timezone.
+ * Walks backwards from `epochSec` by 1-minute steps. For each past
+ * minute, asks "which window of which day contains this minute?".
+ * The first hit is the answer -- that window's start time, in the
+ * factory's timezone, as a unix second.
+ *
+ * If `epochSec` is itself inside a window, that window's start is
+ * returned (Case 1).
+ *
+ * If `epochSec` is between windows (lunch break, or after last
+ * window of the day but before midnight), the immediately preceding
+ * window's start is returned (Case 2).
+ *
+ * If `epochSec` is before any window of today (e.g. 6 AM on a
+ * normal weekday before the 9 AM morning shift, or any time on a
+ * Friday morning before 15:00), the most recent window of the
+ * preceding day is returned (Case 3). This is the one we care
+ * about for the "Stuck on a 14h session across the shift boundary"
+ * case: a worker started at 7:34 PM yesterday and is still on the
+ * floor at 2 AM today should be capped at yesterday's 19:34 evening
+ * shift start, not show 0 and not show the full 14h.
+ *
+ * Capped at 48h of backward walk so a malformed epochSec can't loop
+ * forever. Returns `null` if no past window is found in that window.
+ *
+ * `epochSec` MUST be the 'now' value the caller will use, not a
+ * different timestamp, because minute-of-day is computed from it.
  */
 export function currentShiftStartSec(epochSec, config) {
   const tz = (config && config.timezone) || 'Asia/Dubai';
-  const k = weekdayKeyInTz(epochSec, tz);
-  const minute = minuteOfDayInTz(epochSec, tz);
-  const windows = windowsForDay(config, k);
-  // windows are in minutes-of-day; the matching one is the first whose
-  // [start, end) contains `minute`. We then need to convert that
-  // minute-of-day back to a unix second for the factory's local day.
-  const match = windows.find(([s, e]) => minute >= s && minute < e);
-  if (!match) return null;
-  // Find the local-midnight (in tz) of the same day as `epochSec`, then
-  // add `match[0]` minutes. We do this by walking back from epochSec
-  // until ymdInTz flips -- this gives us a stable local-midnight without
-  // any Date math across DST boundaries (the factory is fixed UTC+4 so
-  // DST isn't an issue, but the approach is robust either way).
-  let lo = epochSec - 24 * 3600;
-  let hi = epochSec;
-  // binary-search-ish is overkill; 24-hour linear scan is fine
-  for (let t = lo; t <= hi; t += 60) {
-    if (ymdInTz(t, tz) === ymdInTz(epochSec, tz)) {
-      // t is the first minute of the same local day
-      return t + match[0] * 60;
+  // Walk backwards by 1-minute steps. 48h is more than enough to
+  // cover any "shift just ended, where's the most recent window" case
+  // even on a Friday with a morning gap.
+  for (let t = epochSec; t >= epochSec - 48 * 3600; t -= 60) {
+    const k = weekdayKeyInTz(t, tz);
+    const m = minuteOfDayInTz(t, tz);
+    const ws = windowsForDay(config, k);
+    if (!ws.length) continue;
+    // Find the window containing `m`. The windows are sorted and
+    // non-overlapping, so at most one matches.
+    for (let i = 0; i < ws.length; i++) {
+      const [s, e] = ws[i];
+      if (m >= s && m < e) {
+        const midnight = localMidnightSec(t, tz);
+        if (midnight == null) return null;
+        return midnight + s * 60;
+      }
     }
+    // No window at this minute on this weekday. Keep walking back.
   }
   return null;
 }
