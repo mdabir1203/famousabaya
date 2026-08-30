@@ -8,6 +8,7 @@ import {
   windowsForDay,
   overlapSecWithWindows,
   isInWorkingWindow,
+  currentShiftStartSec,
   workingStatusNow,
 } from '../working-hours.js';
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
@@ -187,6 +188,21 @@ export async function handleState(env, url) {
       LIMIT 800
     `).bind(anchorYmd, toYmd);
 
+  // Lifetime cumulative in-window seconds per abaya from abaya_time_map.
+  // This is the "total on item" number the operator expects on the Live
+  // Active Sessions row: it counts every in-window second this abaya has
+  // ever had work logged against it, across the full multi-day build, not
+  // just the picked-day or today window. The dashboard previously showed
+  // today's `completed_sec` only, which under-reported long-running abayas
+  // and over-reported abayas with forgotten-Finish sessions in the picked
+  // day. Required for multi-day builds — never auto-close a session that
+  // started days ago, because that abaya is still being built.
+  const stmtAbayaLifetime = env.DB.prepare(`
+      SELECT abaya_id, abaya_code, cumulative_in_window_sec,
+        first_started_at, last_ended_at
+      FROM abaya_time_map
+    `);
+
   const [
     activeRes,
     logsRes,
@@ -196,6 +212,7 @@ export async function handleState(env, url) {
     procSplitRes,
     hourlyRes,
     garmentTodayRes,
+    abayaLifetimeRes,
   ] = await env.DB.batch([
     stmtActive,
     stmtLogs,
@@ -205,13 +222,86 @@ export async function handleState(env, url) {
     stmtProcSplit,
     stmtHourly,
     stmtGarment,
+    stmtAbayaLifetime,
   ]);
+
+  // Per-build aggregation for live abayas. The operator's mental model is
+  // "this build of CF111" = the most recent contiguous run of sessions on
+  // the same abaya_id, where a build boundary is a 24h+ gap between
+  // consecutive sessions. Computing from `sessions` (source of truth, no
+  // double-count bug) gives a sane number; the legacy abaya_time_map
+  // cumulative mixes multiple builds and is inflated by the replay-dedup
+  // bug, so we keep that field for back-compat and add this one for
+  // "this build" on the Live row.
+  //
+  // We have to do this as a second D1 call (not part of the batch) because
+  // the live abaya_ids only exist once the first batch returns. Cheap
+  // anyway -- a single window-function query bounded to ~5-10 abayas.
+  const liveAbayaIds = Array.from(
+    new Set(
+      (activeRes.results || [])
+        .map((r) => (r.abaya_id != null && String(r.abaya_id) !== '' ? String(r.abaya_id) : ''))
+        .filter(Boolean)
+    )
+  );
+  let abayaBuildsRes = { results: [] };
+  if (liveAbayaIds.length > 0) {
+    const placeholders = liveAbayaIds.map(() => '?').join(',');
+    abayaBuildsRes = await env.DB
+      .prepare(
+        `WITH ordered AS (
+          SELECT abaya_id, abaya_code, started_at, ended_at, duration_sec,
+            LAG(ended_at) OVER (PARTITION BY abaya_id ORDER BY started_at) AS prev_end
+          FROM sessions
+          WHERE abaya_id IN (${placeholders})
+        ),
+        with_boundary AS (
+          SELECT *,
+            CASE WHEN prev_end IS NULL OR (started_at - prev_end) >= 86400 THEN 1 ELSE 0 END AS is_new_build
+          FROM ordered
+        ),
+        with_seq AS (
+          SELECT *, SUM(is_new_build) OVER (PARTITION BY abaya_id ORDER BY started_at) AS build_seq
+          FROM with_boundary
+        ),
+        latest AS (
+          SELECT abaya_id, MAX(build_seq) AS last_seq FROM with_seq GROUP BY abaya_id
+        )
+        SELECT s.abaya_id, s.abaya_code,
+          COUNT(*) AS units,
+          COALESCE(SUM(s.duration_sec), 0) AS total_in_window_sec,
+          MIN(s.started_at) AS build_start_unix,
+          MAX(s.ended_at) AS last_session_unix,
+          MAX(s.ended_at) - MIN(s.started_at) AS wall_clock_span_sec
+        FROM with_seq s
+        JOIN latest l ON l.abaya_id = s.abaya_id AND l.last_seq = s.build_seq
+        GROUP BY s.abaya_id`
+      )
+      .bind(...liveAbayaIds)
+      .all();
+  }
 
   const nowSecForActive = Math.floor(Date.now() / 1000);
   const inWindowNow = isInWorkingWindow(nowSecForActive, workingCfg);
   const active = {};
+  // When the operator asks for "this step (in shift)" on a Live row, they
+  // want the time since the CURRENT shift window started, not the
+  // total in-shift time across multiple days of an open session. A
+  // worker who tapped Start at 7:34 PM yesterday and is still on the
+  // floor at 9 AM today should read "1h 6m" (since today's 8 AM shift),
+  // not "13h 40m" (yesterday's + today's in-shift sum). Cap the start
+  // of the overlap window at the current shift's start time when
+  // `now` is inside a working window; otherwise the cap does nothing
+  // and `outside_shift` below handles the rest.
+  const shiftStartSec = currentShiftStartSec(nowSecForActive, workingCfg);
   (activeRes.results || []).forEach((row) => {
-    const startedSec = Number(row.started_at) || 0;
+    const rawStartedSec = Number(row.started_at) || 0;
+    // If the session started in a previous shift window, the floor for
+    // "this step" is the start of the current shift. If it started
+    // during the current shift, the natural start is its own.
+    const startedSec = shiftStartSec != null
+      ? Math.max(rawStartedSec, shiftStartSec)
+      : rawStartedSec;
     const overlapSec = overlapSecWithWindows(startedSec, nowSecForActive, workingCfg);
     active[row.emp_id] = {
       emp_name: row.emp_name,
@@ -251,6 +341,24 @@ export async function handleState(env, url) {
   const completedToday = Number(agg.cnt) || 0;
   const totalSecToday = Number(agg.total_sec) || 0;
   const avgCycleSecToday = completedToday > 0 ? Math.round(totalSecToday / completedToday) : 0;
+  // Median session duration for the picked day. The mean is dominated by
+  // forgotten-Finish sessions (workers who tap Start and walk away, leaving
+  // a session open for hours); the median is much closer to a real per-step
+  // cycle time and is the number the operator should look at when judging
+  // "is my floor healthy". Renamed in the UI from "Avg Cycle Time" to
+  // "Avg Session Time" with sub "median per finished step today".
+  const dayDurations = (logsRes.results || [])
+    .map((r) => Math.floor(Number(r.duration_sec) || 0))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  let medianSecToday = 0;
+  if (dayDurations.length > 0) {
+    const mid = Math.floor(dayDurations.length / 2);
+    medianSecToday =
+      dayDurations.length % 2 === 1
+        ? dayDurations[mid]
+        : Math.floor((dayDurations[mid - 1] + dayDurations[mid]) / 2);
+  }
   const targetSecToday = completedToday * 2700;
   const efficiencyToday =
     totalSecToday > 0 ? Math.min(100, Math.round((targetSecToday / totalSecToday) * 100)) : 0;
@@ -316,6 +424,74 @@ export async function handleState(env, url) {
     if (cb !== ca) return cb - ca;
     return String(a.abaya_code || a.abaya_id).localeCompare(String(b.abaya_code || b.abaya_id));
   });
+
+  // Lifetime cumulative in-window seconds per abaya. Used by the Live
+  // Active Sessions row's "total on item" so the operator sees the full
+  // multi-day build cost instead of just the picked-day slice. Multi-day
+  // builds are valid — never auto-close a session that started days ago.
+  const abayaLifetimeMap = {};
+  (abayaLifetimeRes.results || []).forEach((row) => {
+    const id = row.abaya_id;
+    if (id == null || id === '') return;
+    abayaLifetimeMap[String(id)] = {
+      abaya_id: row.abaya_id,
+      abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+      cumulative_in_window_sec: Math.floor(Number(row.cumulative_in_window_sec) || 0),
+      first_started_at: row.first_started_at != null ? Number(row.first_started_at) : null,
+      last_ended_at: row.last_ended_at != null ? Number(row.last_ended_at) : null,
+    };
+  });
+
+  // Per-build (current contiguous run) stats for every abaya that has a
+  // live session right now. Computed from `sessions` with a 24h-gap
+  // build-boundary rule. The legacy abaya_time_map cumulative above mixes
+  // multiple builds of the same abaya_code and is inflated by a replay-
+  // dedup bug; this map is the source of truth for "this build" on the
+  // Live row. For live abayas the active session is folded in as a virtual
+  // last row (added below).
+  const abayaBuildsMap = {};
+  (abayaBuildsRes.results || []).forEach((row) => {
+    const id = row.abaya_id;
+    if (id == null || id === '') return;
+    abayaBuildsMap[String(id)] = {
+      abaya_id: row.abaya_id,
+      abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+      units: Math.floor(Number(row.units) || 0),
+      total_in_window_sec: Math.floor(Number(row.total_in_window_sec) || 0),
+      build_start_unix: row.build_start_unix != null ? Number(row.build_start_unix) : null,
+      last_session_unix: row.last_session_unix != null ? Number(row.last_session_unix) : null,
+      wall_clock_span_sec: Math.floor(Number(row.wall_clock_span_sec) || 0),
+    };
+  });
+  // Live sessions are NOT folded into total_in_window_sec on the server.
+  // The client adds the live contribution via activeSecondsOnGarment()
+  // (= server's windowed_elapsed_sec snapshot + seconds since last poll).
+  // Folding here would double-count the snapshot. We only need the live
+  // session's started_at to decide if it belongs to the current build
+  // (i.e. within 24h of the most recent finished session).
+  (activeRes.results || []).forEach((row) => {
+    const id = row.abaya_id;
+    if (id == null || String(id) === '') return;
+    const sid = String(id);
+    const startedSec = Number(row.started_at) || 0;
+    if (!startedSec) return;
+    const b = abayaBuildsMap[sid];
+    if (!b) {
+      // No finished sessions for this abaya yet -- the live session is the
+      // start of a brand new build. Emit an empty build entry (no finished
+      // segments yet) so the Live row can still show a "build started"
+      // caption and the client can add the live contribution.
+      abayaBuildsMap[sid] = {
+        abaya_id: row.abaya_id,
+        abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+        units: 0,
+        total_in_window_sec: 0,
+        build_start_unix: startedSec,
+        last_session_unix: startedSec,
+        wall_clock_span_sec: 0,
+      };
+    }
+  });
   const serverNowTs = Date.now();
   const latestFinishedMs =
     ((logsRes.results || []).length && Number((logsRes.results || [])[0].ended_at) * 1000) || 0;
@@ -368,6 +544,7 @@ export async function handleState(env, url) {
       factory_today: factoryToday,
       completed_today: completedToday,
       avg_cycle_sec_today: avgCycleSecToday,
+      median_session_sec_today: medianSecToday,
       efficiency_today: efficiencyToday,
       process_split_today: processSplitToday,
       hourly_today: hourlyToday,
@@ -375,6 +552,8 @@ export async function handleState(env, url) {
       working_status: workingStatusNow(workingCfg),
       active,
       garment_totals_today,
+      abaya_lifetime: abayaLifetimeMap,
+      abaya_builds: abayaBuildsMap,
       logs: (logsRes.results || []).map((r) => ({
         ...r,
         process: r.emp_process,

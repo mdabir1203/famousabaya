@@ -443,7 +443,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
   <div class="stat-row">
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">units finished</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg">Avg Cycle Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">per unit</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">Avg Session Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">median per finished step today</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
   </div>
 
@@ -630,10 +630,12 @@ function byId(primary, fallback) {
 }
 let STATE = {
   active:{}, logs:[], perf:[], daily:[],
-  factory_today:'', completed_today:0, avg_cycle_sec_today:0, efficiency_today:0,
+  factory_today:'', completed_today:0, avg_cycle_sec_today:0, median_session_sec_today:0, efficiency_today:0,
   process_split_today:{},
   hourly_today:{},
   garment_totals_today:[],
+  abaya_lifetime:{},
+  abaya_builds:{},
   working_hours:null,
   working_status:''
 };
@@ -1016,6 +1018,32 @@ function activeSecondsOnGarment(abayaId) {
   return Math.floor(Number(cache.byGarmentId[sid]) || 0);
 }
 
+// Per-build (current contiguous run) total for an abaya, from
+// STATE.abaya_builds. The build is the most recent run of sessions on
+// the same abaya_id where a 24h+ gap between consecutive sessions
+// defines a build boundary. This is what the operator means by "this
+// build" -- e.g. CF111 STD-O build #2 -- and is computed server-side
+// from the sessions table (source of truth, no double-count bug).
+// Falls back to 0 if the build map has no row for this abaya_id.
+function abayaBuildSec(abayaId) {
+  const sid = String(abayaId || '');
+  const map = (STATE && STATE.abaya_builds) || {};
+  const row = map[sid];
+  if (!row) return 0;
+  return Math.floor(Number(row.total_in_window_sec) || 0);
+}
+
+// Build start for an abaya, as a Unix seconds timestamp, or 0 if the
+// build map has no row. Used for the "build started YYYY-MM-DD" caption
+// on the Live row.
+function abayaBuildStartUnix(abayaId) {
+  const sid = String(abayaId || '');
+  const map = (STATE && STATE.abaya_builds) || {};
+  const row = map[sid];
+  if (!row) return 0;
+  return Math.floor(Number(row.build_start_unix) || 0);
+}
+
 function garmentTotalLiveForId(abayaId) {
   return garmentCompletedFromState(abayaId) + activeSecondsOnGarment(abayaId);
 }
@@ -1116,7 +1144,24 @@ function buildLiveSessionsHtml() {
       const s = active[id];
       const startedMs = Number(s.started_at) || Date.now();
       const elapsed = Math.floor(Number(timingCache.byEmpId[id]) || 0);
-      const totalItem = garmentTotalLiveForId(s.abaya_id);
+      // "This build" AGE = wall-clock seconds since the current contiguous
+      // build started on this abaya (24h-gap rule). Rendered as a live-
+      // ticking number like "40h 30m 24s" with a "started Aug 26, 2026"
+      // sub-label. The in-shift number (windowedActiveTimeSec + this
+      // snapshot's live contribution) still exists server-side and is
+      // used by the Daily/Weekly/Monthly/Yearly reports and the per-abaya
+      // totals panel — the live row just renders the calendar age.
+      const buildStartUnix = abayaBuildStartUnix(s.abaya_id);
+      // All time numbers on the Live row are in-window only. Outside-shift
+      // time (nights, weekends, lunch breaks) is not labor cost and must
+      // not be added to the per-shift or per-build totals. The 'wall'
+      // line that previously sat here was deleted because it counted
+      // outside-shift time by definition -- e.g. a worker who tapped
+      // Start on Aug 20 and is still on it would show 'wall 73h' even
+      // though only 26h of that was actual factory time. The forgotten-
+      // Finish signal now lives in the Stuck badge below: fires when
+      // the session has been open >2h AND we are currently outside
+      // the working window (i.e. the shift ended and nobody hit Finish).
 
       const startedLabel = new Date(startedMs).toLocaleString([], {
         timeZone: tz,
@@ -1138,9 +1183,30 @@ function buildLiveSessionsHtml() {
       const nowSecLive = Math.floor(Date.now() / 1000);
       const inShiftNowLive = inWindowClient(nowSecLive);
       const startedAtSec = Math.floor(startedMs / 1000);
+      const ageSec = Math.max(0, nowSecLive - startedAtSec);
+      const stale = ageSec > 2 * 3600 && !inShiftNowLive;
+      // Only show "Outside shift" when the session is not also stuck.
+      // Stuck already tells the operator the worker is outside shift AND
+      // has been for >2h, so adding "Outside shift" on top is just
+      // visual noise (the row used to read "Outside shift | Stuck" on
+      // every forgotten-Finish session). For a fresh session that
+      // happens to straddle the shift boundary, "Outside shift" alone
+      // still makes sense and is shown.
       const outOfShift = !inShiftNowLive || !inWindowClient(startedAtSec);
-      const outsideBadge = outOfShift
-        ? ' <span title="Time outside shift windows is not counted" style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
+      const outsideBadge = (outOfShift && !stale)
+        ? ' <span title="Time outside shift windows is not counted in the per-shift or per-build totals." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
+        : '';
+      // Stuck = session has been open >2h AND we are currently outside
+      // the working window. A worker who finished their shift and
+      // walked away without tapping Finish leaves the session open
+      // through the entire factory-closed period. The badge is the
+      // operator's cue to ping the worker (or close the session from
+      // the manager UI). Kept as a label, not a number, because the
+      // operator doesn't need to see the raw '47h since Start' -- they
+      // just need to know it was forgotten. (ageSec and stale computed
+      // above so we can suppress the redundant "Outside shift" badge.)
+      const staleBadge = stale
+        ? ' <span title="Session has been open more than 2 hours and the factory is currently outside the working window. Likely a forgotten-Finish -- check the station and either Finish the session or have the worker re-tap Start." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
         : '';
 
       return (
@@ -1154,6 +1220,7 @@ function buildLiveSessionsHtml() {
         '<div style="font-size:13px;font-weight:600">' +
         esc(s.emp_name) +
         outsideBadge +
+        staleBadge +
         '</div>' +
         '<div style="font-size:11px;color:var(--tx3)">' +
         esc(s.emp_code) +
@@ -1178,14 +1245,45 @@ function buildLiveSessionsHtml() {
         '</span></div>' +
         '</div>' +
         '<div style="text-align:right">' +
-        '<div style="font-size:14px;font-weight:700;color:var(--gr)">' +
-        fmtHMS(elapsed) +
-        '</div>' +
-        '<div style="font-size:9px;color:var(--tx3)">this step (in shift)</div>' +
-        '<div style="font-size:11px;font-weight:700;color:var(--am);margin-top:3px">' +
-        fmtHMS(totalItem) +
-        '</div>' +
-        '<div style="font-size:9px;color:var(--tx3)">total on item</div>' +
+        // Exact last-finish time for this worker (the most recent COMPLETED
+        // session for this emp_id from D1). Rendered in the factory's working-
+        // hours timezone so the operator sees a wall-clock they recognise.
+        // Replaces the previous "this step (in shift)" live counter, which
+        // didn't add useful signal: the live row already has Started + this
+        // build age, and operators said the live ticking was distracting.
+        (function () {
+          const lf = Number(s.last_finish_at_ms) || 0;
+          if (!lf) {
+            return '<div style="font-size:14px;font-weight:700;color:var(--tx3);font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
+              '<div style="font-size:9px;color:var(--tx3)">last finished</div>';
+          }
+          const t = new Date(lf).toLocaleTimeString([], {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+          });
+          const d = new Date(lf).toLocaleDateString([], {
+            timeZone: tz, day: '2-digit', month: 'short',
+          });
+          return '<div title="Exact moment the worker last tapped Finish on this abaya (most recent ended_at for this emp_id in the D1 sessions table). Shown instead of a live counter so the operator can see at a glance when the previous session closed." style="font-size:14px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' + esc(t) + '</div>' +
+            '<div style="font-size:9px;color:var(--tx3)">last finished &middot; ' + esc(d) + '</div>';
+        })() +
+        // Wall-clock AGE of the current build (24h-gap rule). Replaces the
+        // previous "in-window shift seconds" cell — operators want the
+        // calendar answer for "how old is this build" (e.g. "40h 30m 24s
+        // for the abaya that's been on the floor since Aug 26"). The
+        // server sends buildStartUnix (seconds) per active row, so this
+        // is wall-clock NOW - buildStartUnix, no shift-window walk. Ticks
+        // live on every poll. The in-shift number still lives on the
+        // Daily/Weekly/Monthly/Yearly reports and the per-abaya totals
+        // panel for productivity calculations.
+        (function () {
+          if (!buildStartUnix || buildStartUnix <= 0) {
+            return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
+              '<div style="font-size:9px;color:var(--tx3)">this build</div>';
+          }
+          const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - buildStartUnix));
+          return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + '</div>' +
+            '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + esc(new Date(buildStartUnix * 1000).toLocaleDateString([], { timeZone: tz, year: 'numeric', month: 'short', day: '2-digit' })) + '</div>';
+        })() +
         '</div></div>'
       );
     })
@@ -1293,7 +1391,13 @@ function renderAll() {
       kpiActive.parentNode.style.opacity = isLive ? '1' : '0.45';
     }
     if (completed > 0) {
-      if (kpiAvg) kpiAvg.textContent = fmtHMS(STATE.avg_cycle_sec_today || 0);
+      // Prefer the median session time when available — it is not skewed
+      // by forgotten-Finish sessions. Fall back to the mean for the first
+      // paint before the worker pushes any sessions.
+      const median = Number(STATE.median_session_sec_today) || 0;
+      const mean = Number(STATE.avg_cycle_sec_today) || 0;
+      const display = median > 0 ? median : mean;
+      if (kpiAvg) kpiAvg.textContent = fmtHMS(display);
       const eff = Number(STATE.efficiency_today) || 0;
       if (kpiEff) {
         kpiEff.textContent = eff + '%';
@@ -1729,13 +1833,22 @@ function openEmployeeDayForDate(empId, dateYmd) {
 window.openEmployeeDayForDate = openEmployeeDayForDate;
 
 function edFmtRange(s) {
+  // Always 12-hour with explicit AM/PM regardless of the browser's
+  // locale. The previous { hour: '2-digit', minute: '2-digit' } call
+  // inherited the locale's default and rendered as '19:34' on
+  // en-GB and as '07:34 PM' on en-US, so the CEO saw mixed formats
+  // depending on their OS. Pin it.
   const start = s.started_at
-    ? new Date(Number(s.started_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+    ? new Date(Number(s.started_at) * 1000).toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true, timeZone: uiTz(),
+      })
     : '\u2014';
   const end = s.live
     ? 'now'
     : s.ended_at
-      ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: uiTz() })
+      ? new Date(Number(s.ended_at) * 1000).toLocaleTimeString('en-US', {
+          hour: 'numeric', minute: '2-digit', hour12: true, timeZone: uiTz(),
+        })
       : '\u2014';
   return start + ' \u2013 ' + end;
 }
