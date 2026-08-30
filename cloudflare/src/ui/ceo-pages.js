@@ -1105,6 +1105,18 @@ function abayaBuildStartUnix(abayaId) {
   return Math.floor(Number(row.build_start_unix) || 0);
 }
 
+// True when the abaya's catalog row is marked is_custom=1. Custom
+// abayas (e.g. CF111 STD-O) can legitimately stay on the floor for
+// weeks, so the live row's "this build" cell shows a "Custom" pill
+// so the operator doesn't read a 373h build age as a bug.
+function abayaIsCustom(abayaId) {
+  const sid = String(abayaId || '');
+  const map = (STATE && STATE.abaya_builds) || {};
+  const row = map[sid];
+  return !!(row && row.is_custom);
+}
+}
+
 function garmentTotalLiveForId(abayaId) {
   return garmentCompletedFromState(abayaId) + activeSecondsOnGarment(abayaId);
 }
@@ -1216,6 +1228,7 @@ function buildLiveSessionsHtml() {
       const buildSec = abayaBuildSec(s.abaya_id);
       const liveAddedThisSnapshot = activeSecondsOnGarment(s.abaya_id);
       const buildStartUnix = abayaBuildStartUnix(s.abaya_id);
+      const isCustom = abayaIsCustom(s.abaya_id);
       const totalItem = buildSec + liveAddedThisSnapshot;
       // All time numbers on the Live row are in-window only. Outside-shift
       // time (nights, weekends, lunch breaks) is not labor cost and must
@@ -1351,13 +1364,18 @@ function buildLiveSessionsHtml() {
         // Daily/Weekly/Monthly/Yearly reports and the per-abaya totals
         // panel for productivity calculations.
         (function () {
-          const buildTitle = 'Wall-clock age of the current build, counted from its first session (24h-gap rule). Not capped to shift windows and not the per-session timer. The in-shift working time is on the Daily / Weekly / Monthly / Yearly reports.';
+          const buildTitle = isCustom
+            ? 'Custom abaya — wall-clock age of the current build. This code is a multi-week style that can legitimately span many 24h-gap build windows. The big number is real, not a bug.'
+            : 'Wall-clock age of the current build, counted from its first session (24h-gap rule). Not capped to shift windows and not the per-session timer. The in-shift working time is on the Daily / Weekly / Monthly / Yearly reports.';
+          const customPill = isCustom
+            ? ' <span title="Marked is_custom=1 in abaya_catalog. Multi-week build is expected for this style." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
+            : '';
           if (!buildStartUnix || buildStartUnix <= 0) {
-            return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
+            return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—' + customPill + '</div>' +
               '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           }
           const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - buildStartUnix));
-          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + '</div>' +
+          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + customPill + '</div>' +
             '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + esc(new Date(buildStartUnix * 1000).toLocaleDateString([], { timeZone: tz, year: 'numeric', month: 'short', day: '2-digit' })) + '</div>';
         })() +
         '</div></div>'

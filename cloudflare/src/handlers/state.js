@@ -285,6 +285,12 @@ export async function handleState(env, url) {
   // agree for any recent row; the MIN protects the build total from
   // the legacy bad data that exists for some abayas.
   let abayaBuildRowsRes = { results: [] };
+  // Look up the catalog's `is_custom` flag for every live abaya so the
+  // front-end can show a "Custom" pill in the live row's "this build"
+  // cell. Custom codes (e.g. CF111 STD-O) can have a single physical
+  // abaya on the floor for weeks; without the pill, an operator reading
+  // "this build 373h" without context might think it's a bug.
+  let isCustomById = {};
   if (liveAbayaIds.length > 0) {
     const placeholders = liveAbayaIds.map(() => '?').join(',');
     abayaBuildRowsRes = await env.DB
@@ -315,6 +321,18 @@ export async function handleState(env, url) {
       )
       .bind(...liveAbayaIds)
       .all();
+    // Catalog lookup keyed by abaya_id (which is the catalog's `id`).
+    // Returns the is_custom flag for each live abaya. A LEFT JOIN-style
+    // scan via IN(...) keeps the query O(n) on the indexed catalog PK.
+    const customRes = await env.DB
+      .prepare(
+        `SELECT id, is_custom FROM abaya_catalog WHERE id IN (${placeholders})`
+      )
+      .bind(...liveAbayaIds)
+      .all();
+    (customRes.results || []).forEach((r) => {
+      isCustomById[String(r.id)] = Number(r.is_custom) === 1;
+    });
   }
 
   const nowSecForActive = Math.floor(Date.now() / 1000);
@@ -559,6 +577,7 @@ export async function handleState(env, url) {
       bucket = abayaBuildsMap[sid] = {
         abaya_id: row.abaya_id,
         abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+        is_custom: isCustomById[sid] === true,
         units: 0,
         total_in_window_sec: 0,
         build_start_unix: startedAt,
@@ -603,6 +622,7 @@ export async function handleState(env, url) {
       abayaBuildsMap[sid] = {
         abaya_id: row.abaya_id,
         abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+        is_custom: isCustomById[sid] === true,
         units: 0,
         total_in_window_sec: 0,
         build_start_unix: startedSec,
