@@ -712,7 +712,14 @@ function timeoutSignal(ms) {
 }
 
 async function fetchWithRetry(url, init, maxRetries) {
-  maxRetries = maxRetries == null ? 3 : maxRetries;
+  // Cloudflare's Git integration briefly returns 503 to in-flight requests
+  // during a Worker version swap (typical 5-10s, occasionally up to ~30s).
+  // The previous default of 3 retries with 1+2s backoff only covered ~3s
+  // of that window -- any deploy longer than that surfaced 503s in the
+  // dashboard's network panel. Bump to 5 retries with 1+2+4+8s backoff
+  // (15s total retry budget) so a typical Cloudflare deploy is invisible
+  // to the polling client.
+  maxRetries = maxRetries == null ? 5 : maxRetries;
   init = init || {};
   var lastErr;
   for (var attempt = 0; attempt < maxRetries; attempt++) {
@@ -721,7 +728,7 @@ async function fetchWithRetry(url, init, maxRetries) {
       for (var k in init) {
         if (Object.prototype.hasOwnProperty.call(init, k) && k !== 'signal') opts[k] = init[k];
       }
-      opts.signal = timeoutSignal(8000);
+      opts.signal = timeoutSignal(15000);
       var res = await fetch(url, opts);
       if (res.ok) return res;
       if (res.status === 429 || res.status >= 500) {
