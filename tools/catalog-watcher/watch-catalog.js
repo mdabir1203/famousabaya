@@ -342,6 +342,14 @@ async function main() {
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 800, pollInterval: 100 },
   });
+  // chokidar emits 'error' on permission/path/ENOSPC failures. Without this
+  // handler the error becomes an unhandled exception and the process dies.
+  // PM2 will then crash-loop forever (max_restarts: 50) — visible as the
+  // watcher "getting exited" on the office laptop. Log and stay alive so
+  // the next periodic sync (default 30 min) has a chance to recover.
+  watcher.on('error', (err) => {
+    console.error('[catalog-watcher] chokidar error (will retry on next event or periodic sync):', err && err.message ? err.message : err);
+  });
   watcher.on('add', debounced);
   watcher.on('change', debounced);
   watcher.on('unlink', debounced);
