@@ -1743,9 +1743,14 @@ function summarizeLogsByEmployee(logs, empById) {
   (logs || []).forEach(function (l) {
     if (!l || !l.emp_id) return;
     const id = String(l.emp_id);
+    // Skip sessions whose employee is not in the real roster — keeps smoke-test
+    // and synthetic IDs (e.g. e13, test-smoke-emp) out of the per-employee
+    // summary, matching the cloud Worker which only ever sees pushed sessions
+    // from real employees.
+    if (empById && !empById[id]) return;
     if (!by[id]) by[id] = { empId: id, empName: id, units: 0, totalSec: 0, avgSec: 0 };
     const row = by[id];
-    const emp = empById[id];
+    const emp = empById && empById[id];
     row.empName = emp && emp.name ? String(emp.name) : id;
     row.units += 1;
     row.totalSec += logDurationSec(l);
@@ -1769,7 +1774,12 @@ function employeeFilterOptions(logs, empById) {
   const seen = Object.create(null);
   (logs || []).forEach(function (l) {
     if (!l || !l.emp_id) return;
-    seen[String(l.emp_id)] = true;
+    const id = String(l.emp_id);
+    // Match the summarizeLogsByEmployee filter: only roster-known employees
+    // appear in the "All employees" filter dropdown, so the daily report
+    // matches the cloud dashboard's per-employee view.
+    if (empById && !empById[id]) return;
+    seen[id] = true;
   });
   return Object.keys(seen)
     .map(function (id) {
