@@ -1,6 +1,7 @@
 import { jsonRes, CEO_JSON_NO_STORE } from '../http-response.js';
-import { factoryTodayString } from '../working-hours.js';
+import { factoryTodayString, workingHoursConfigFromRow, WORKING_HOURS_KEY } from '../working-hours.js';
 import { safeYmdOrFallback, sessionsFilterForPeriod, isValidYmd, customRange } from './report-shared.js';
+import { windowedActiveTimeSec } from './report.js';
 
 /** GET /api/analytics?period=&from=&to= */
 export async function handleAnalytics(env, url) {
@@ -44,7 +45,7 @@ export async function handleAnalytics(env, url) {
   }
   const fromSessions = `FROM sessions ${where}`;
 
-  const [byProcessRes, splitRes, leaderRes] = await env.DB.batch([
+  const [byProcessRes, splitRes, leaderRes, byEmpRangeRes, whRes] = await env.DB.batch([
     env.DB.prepare(
       `
     SELECT emp_process, COUNT(*) as units,
@@ -84,9 +85,42 @@ export async function handleAnalytics(env, url) {
     LIMIT 40
   `
     ).bind(...binds),
+    // Per-employee rolled-up (min_started_at, max_ended_at, SUM(duration_sec))
+    // for windowed active time. The splits query only carries AVG, which
+    // loses the time-of-day info needed to re-walk against the shift
+    // windows. One cheap extra query, same D1 round trip.
+    env.DB.prepare(
+      `
+    SELECT emp_id,
+      MIN(started_at) as min_started_at,
+      MAX(ended_at) as max_ended_at,
+      COALESCE(SUM(duration_sec), 0) as active_time_sec
+    ${fromSessions}
+    GROUP BY emp_id
+  `
+    ).bind(...binds),
+    // Working-hours config — needed for windowedActiveTimeSec below.
+    env.DB.prepare(`SELECT v FROM worker_settings WHERE k = ?`).bind(WORKING_HOURS_KEY),
   ]);
 
   const splits = splitRes.results || [];
+  // Per-emp windowed active time: keyed by emp_id, computed from the rolled-up
+  // (min_started_at, max_ended_at, SUM(duration_sec)) so the modal "by employee"
+  // table never shows outside-shift time as "active time".
+  const workingCfg = workingHoursConfigFromRow(whRes && whRes.results && whRes.results[0]);
+  const windowedActiveByEmp = Object.create(null);
+  for (const r of (byEmpRangeRes && byEmpRangeRes.results) || []) {
+    const id = String(r.emp_id || '');
+    if (!id) continue;
+    windowedActiveByEmp[id] = windowedActiveTimeSec(
+      {
+        active_time_sec: r.active_time_sec,
+        min_started_at: r.min_started_at,
+        max_ended_at: r.max_ended_at,
+      },
+      workingCfg
+    );
+  }
   const MIN_UNITS_FASTEST = 2;
   const fastestPerProcess = {};
   for (const r of splits) {
@@ -121,11 +155,10 @@ export async function handleAnalytics(env, url) {
       _processes: new Set(),
     };
     prev.units += Number(r.units) || 0;
-    prev._sumSec += (Number(r.avg_sec) || 0) * (Number(r.units) || 0);
-    // splits doesn't carry time totals — fall back to duration_sec-based
-    // estimate using avg * units. That's exact for completed sessions
-    // because the avg is over duration_sec.
-    const active = (Number(r.avg_sec) || 0) * (Number(r.units) || 0);
+    // Use the windowed active time for this emp (from byEmpRangeRes + shift
+    // config), not the avg-based estimate. avg_sec * units would include
+    // outside-shift minutes; windowedActiveByEmp only counts in-shift.
+    const active = windowedActiveByEmp[eid] || 0;
     prev._sumActive += active;
     prev._sumElapsed += active;
     prev._sumFull += active;

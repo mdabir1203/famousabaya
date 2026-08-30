@@ -5,6 +5,7 @@ import {
   factoryTodayString,
   getWorkingHoursConfig,
   weekdayKeyInTz,
+  ymdInTz,
   windowsForDay,
   overlapSecWithWindows,
   isInWorkingWindow,
@@ -168,6 +169,19 @@ export async function handleState(env, url) {
       SELECT COUNT(*) as cnt, COALESCE(SUM(duration_sec), 0) as total_sec
       FROM sessions WHERE day_date >= ? AND day_date <= ?
     `).bind(anchorYmd, toYmd);
+  // Distinct abayas that touched the line in the KPI window. The
+  // existing `completed_today` counts finished sessions; this counts
+  // distinct abaya_ids and is the "Abayas Delivered" KPI -- one
+  // garment = one count regardless of how many process steps it cleared.
+  // The operator's question "how many abayas did we deliver?" is
+  // answered by this number, not the session count.
+  // Excludes sessions with no abaya_id (a few historical rows have NULL).
+  const stmtAbayasDelivered = env.DB.prepare(`
+      SELECT COUNT(DISTINCT abaya_id) as abayas_delivered
+      FROM sessions
+      WHERE day_date >= ? AND day_date <= ?
+        AND abaya_id IS NOT NULL AND abaya_id != ''
+    `).bind(anchorYmd, toYmd);
   const stmtProcSplit = env.DB.prepare(`
       SELECT emp_process, COUNT(*) as cnt FROM sessions
       WHERE day_date >= ? AND day_date <= ? GROUP BY emp_process
@@ -213,6 +227,7 @@ export async function handleState(env, url) {
     hourlyRes,
     garmentTodayRes,
     abayaLifetimeRes,
+    abayasDeliveredRes,
   ] = await env.DB.batch([
     stmtActive,
     stmtLogs,
@@ -223,6 +238,7 @@ export async function handleState(env, url) {
     stmtHourly,
     stmtGarment,
     stmtAbayaLifetime,
+    stmtAbayasDelivered,
   ]);
 
   // Per-build aggregation for live abayas. The operator's mental model is
@@ -244,10 +260,23 @@ export async function handleState(env, url) {
         .filter(Boolean)
     )
   );
-  let abayaBuildsRes = { results: [] };
+  // Fetch the per-session rows for every live abaya, plus enough info to
+  // determine the current build (24h-gap rule). We used to do the
+  // SUM/COUNT in D1 against each row's stamped duration_sec, but that
+  // value was written at finish time using the local server's
+  // `overlapSecWithWindows` — which is the *correct* clamp for the
+  // schedule that was active at finish time, but if the cloud's
+  // working_hours config ever drifted from the local server's (cloud
+  // feed down, schedule change mid-day, etc.), those raw per-row
+  // values became stale and the "this build" total inflated. We now
+  // re-clamp each row at read time with the *current* working_hours
+  // config, taking MIN(stamped, overlap_now). The two values should
+  // agree for any recent row; the MIN protects the build total from
+  // the legacy bad data that exists for some abayas.
+  let abayaBuildRowsRes = { results: [] };
   if (liveAbayaIds.length > 0) {
     const placeholders = liveAbayaIds.map(() => '?').join(',');
-    abayaBuildsRes = await env.DB
+    abayaBuildRowsRes = await env.DB
       .prepare(
         `WITH ordered AS (
           SELECT abaya_id, abaya_code, started_at, ended_at, duration_sec,
@@ -268,14 +297,10 @@ export async function handleState(env, url) {
           SELECT abaya_id, MAX(build_seq) AS last_seq FROM with_seq GROUP BY abaya_id
         )
         SELECT s.abaya_id, s.abaya_code,
-          COUNT(*) AS units,
-          COALESCE(SUM(s.duration_sec), 0) AS total_in_window_sec,
-          MIN(s.started_at) AS build_start_unix,
-          MAX(s.ended_at) AS last_session_unix,
-          MAX(s.ended_at) - MIN(s.started_at) AS wall_clock_span_sec
+          s.started_at, s.ended_at, s.duration_sec
         FROM with_seq s
         JOIN latest l ON l.abaya_id = s.abaya_id AND l.last_seq = s.build_seq
-        GROUP BY s.abaya_id`
+        ORDER BY s.abaya_id ASC, s.started_at ASC`
       )
       .bind(...liveAbayaIds)
       .all();
@@ -284,25 +309,69 @@ export async function handleState(env, url) {
   const nowSecForActive = Math.floor(Date.now() / 1000);
   const inWindowNow = isInWorkingWindow(nowSecForActive, workingCfg);
   const active = {};
-  // When the operator asks for "this step (in shift)" on a Live row, they
-  // want the time since the CURRENT shift window started, not the
-  // total in-shift time across multiple days of an open session. A
-  // worker who tapped Start at 7:34 PM yesterday and is still on the
-  // floor at 9 AM today should read "1h 6m" (since today's 8 AM shift),
-  // not "13h 40m" (yesterday's + today's in-shift sum). Cap the start
-  // of the overlap window at the current shift's start time when
-  // `now` is inside a working window; otherwise the cap does nothing
-  // and `outside_shift` below handles the rest.
+  // The local factory server is the source of truth for the cross-day cap
+  // and the live in-shift elapsed. It ships effective_started_at,
+  // windowed_elapsed_sec, outside_shift, and is_cross_day in the
+  // session_start payload and stores them in active_sessions (migration
+  // 0016). We re-walk from effective_started_at at read time so the
+  // timer keeps ticking in real time, but the CAP ANCHOR comes from
+  // the local — so both screens show the same number for the same row.
+  //
+  // For rows that pre-date migration 0016 (legacy data, no live-state
+  // columns), we fall back to the v1.2.12 cap-aware re-walk so old
+  // forgotten-Finish sessions still display correctly.
+  const tzActive = (workingCfg && workingCfg.timezone) || 'Asia/Dubai';
+  const todayYmdActive = ymdInTz(nowSecForActive, tzActive);
   const shiftStartSec = currentShiftStartSec(nowSecForActive, workingCfg);
+
+  // Pre-pass: build a quick map of {emp_id -> most-recent ended_at (sec)}
+  // from the already-fetched `logsRes`. The logs query is ORDER BY
+  // ended_at DESC LIMIT N, so the first hit per emp_id is the latest
+  // finished session. We only consider sessions that ended BEFORE the
+  // current active row's started_at — so a session that ran 10s and then
+  // the worker tapped Start again is the "last finish" for that worker,
+  // and a 6-hour-stale unfinished row never gets a last-finish time.
+  // Falls back to the most-recent regardless when no prior exists.
+  const lastFinishByEmp = Object.create(null);
+  const logsForLastFinish = logsRes.results || [];
+  for (let li = 0; li < logsForLastFinish.length; li++) {
+    const lg = logsForLastFinish[li];
+    const eid = lg && lg.emp_id;
+    const eend = Number(lg && lg.ended_at);
+    if (!eid || !Number.isFinite(eend) || eend <= 0) continue;
+    if (lastFinishByEmp[eid] == null) lastFinishByEmp[eid] = eend;
+  }
+
   (activeRes.results || []).forEach((row) => {
     const rawStartedSec = Number(row.started_at) || 0;
-    // If the session started in a previous shift window, the floor for
-    // "this step" is the start of the current shift. If it started
-    // during the current shift, the natural start is its own.
-    const startedSec = shiftStartSec != null
-      ? Math.max(rawStartedSec, shiftStartSec)
-      : rawStartedSec;
-    const overlapSec = overlapSecWithWindows(startedSec, nowSecForActive, workingCfg);
+    const hasLiveCols = Number.isFinite(Number(row.effective_started_at))
+      && Number(row.effective_started_at) > 0;
+    let startedSec;
+    let overlapSec;
+    let outsideShift;
+    let isCrossDay = !!row.is_cross_day;
+    if (hasLiveCols) {
+      // Local-canonical path: use the cap-aware anchor the local pushed.
+      startedSec = Number(row.effective_started_at);
+      overlapSec = overlapSecWithWindows(startedSec, nowSecForActive, workingCfg);
+      // Prefer the live flag the local pushed; fall back to local recompute.
+      outsideShift = row.outside_shift
+        ? true
+        : (!inWindowNow || overlapSec === 0);
+    } else {
+      // Legacy fallback: v1.2.12 cap-aware re-walk from raw started_at.
+      const startYmd = ymdInTz(rawStartedSec, tzActive);
+      isCrossDay = startYmd !== todayYmdActive;
+      startedSec = (isCrossDay && shiftStartSec != null)
+        ? Math.max(rawStartedSec, shiftStartSec)
+        : rawStartedSec;
+      overlapSec = overlapSecWithWindows(startedSec, nowSecForActive, workingCfg);
+      outsideShift = !inWindowNow || overlapSec === 0;
+    }
+    // last_finish_at_ms: exact millisecond of the worker's most recent
+    // prior Finish tap (the session that ended just before this Start).
+    // 0 when the worker has never finished a session.
+    const lastFinishSec = lastFinishByEmp[row.emp_id] || 0;
     active[row.emp_id] = {
       emp_name: row.emp_name,
       emp_code: row.emp_code,
@@ -314,8 +383,11 @@ export async function handleState(env, url) {
       abaya_code: row.abaya_code,
       station: row.station,
       started_at: row.started_at * 1000,
+      effective_started_at: startedSec * 1000,
       windowed_elapsed_sec: overlapSec,
-      outside_shift: !inWindowNow || overlapSec === 0,
+      outside_shift: outsideShift,
+      is_cross_day: isCrossDay,
+      last_finish_at_ms: lastFinishSec > 0 ? lastFinishSec * 1000 : 0,
     };
   });
 
@@ -446,29 +518,65 @@ export async function handleState(env, url) {
   // live session right now. Computed from `sessions` with a 24h-gap
   // build-boundary rule. The legacy abaya_time_map cumulative above mixes
   // multiple builds of the same abaya_code and is inflated by a replay-
-  // dedup bug; this map is the source of truth for "this build" on the
-  // Live row. For live abayas the active session is folded in as a virtual
-  // last row (added below).
+  // Re-derive the in-shift seconds for every session row by walking
+  // minute-by-minute at read time, instead of trusting the per-row
+  // `duration_sec` that was stamped at finish time. This is the only
+  // way to guarantee the operator's "between start and finish taps,
+  // only count in-shift time" rule for sessions that span a break or
+  // are touched by a schedule change. The stamped value is also
+  // re-clamped (MIN(stamped, overlap_now)) to defend against any legacy
+  // rows where the local server's overlapSecWithWindows was
+  // misconfigured.
   const abayaBuildsMap = {};
-  (abayaBuildsRes.results || []).forEach((row) => {
+  (abayaBuildRowsRes.results || []).forEach((row) => {
     const id = row.abaya_id;
-    if (id == null || id === '') return;
-    abayaBuildsMap[String(id)] = {
-      abaya_id: row.abaya_id,
-      abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
-      units: Math.floor(Number(row.units) || 0),
-      total_in_window_sec: Math.floor(Number(row.total_in_window_sec) || 0),
-      build_start_unix: row.build_start_unix != null ? Number(row.build_start_unix) : null,
-      last_session_unix: row.last_session_unix != null ? Number(row.last_session_unix) : null,
-      wall_clock_span_sec: Math.floor(Number(row.wall_clock_span_sec) || 0),
-    };
+    if (id == null || String(id) === '') return;
+    const sid = String(id);
+    const startedAt = Number(row.started_at) || 0;
+    const endedAt = Number(row.ended_at) || 0;
+    if (!startedAt || !endedAt) return;
+    const stamped = Math.max(0, Math.floor(Number(row.duration_sec) || 0));
+    // Walk minute-by-minute against the *current* schedule. The local
+    // server stamps the same way at finish time, so for a clean row
+    // these agree to the second. They can disagree for two reasons:
+    // (a) the schedule was edited after the row was stamped, or
+    // (b) the row was stamped with a misconfigured schedule.
+    const overlapNow = Math.max(0, Math.floor(overlapSecWithWindows(startedAt, endedAt, workingCfg)));
+    const clamped = Math.min(stamped, overlapNow);
+    let bucket = abayaBuildsMap[sid];
+    if (!bucket) {
+      bucket = abayaBuildsMap[sid] = {
+        abaya_id: row.abaya_id,
+        abaya_code: row.abaya_code != null ? String(row.abaya_code) : '',
+        units: 0,
+        total_in_window_sec: 0,
+        build_start_unix: startedAt,
+        last_session_unix: endedAt,
+        wall_clock_span_sec: 0,
+      };
+    }
+    bucket.units += 1;
+    bucket.total_in_window_sec += clamped;
+    if (startedAt < bucket.build_start_unix) bucket.build_start_unix = startedAt;
+    if (endedAt > bucket.last_session_unix) bucket.last_session_unix = endedAt;
   });
+  // After aggregation, freeze the wall_clock_span from the build's
+  // first start to its last end. A build that spanned a 30-day-old
+  // forgotten-Finish session would otherwise report 30 days, but
+  // since we re-clamped per-row to in-shift only, the total_in_window
+  // is now the operator's real number. wall_clock_span is a separate
+  // "how long has this abaya been on the floor" diagnostic.
+  for (const sid of Object.keys(abayaBuildsMap)) {
+    const b = abayaBuildsMap[sid];
+    b.wall_clock_span_sec = Math.max(0, b.last_session_unix - b.build_start_unix);
+    b.total_in_window_sec = Math.floor(b.total_in_window_sec);
+  }
   // Live sessions are NOT folded into total_in_window_sec on the server.
   // The client adds the live contribution via activeSecondsOnGarment()
   // (= server's windowed_elapsed_sec snapshot + seconds since last poll).
   // Folding here would double-count the snapshot. We only need the live
-  // session's started_at to decide if it belongs to the current build
-  // (i.e. within 24h of the most recent finished session).
+  // session's started_at to seed the build map for a fresh abaya that
+  // has no finished sessions yet.
   (activeRes.results || []).forEach((row) => {
     const id = row.abaya_id;
     if (id == null || String(id) === '') return;
@@ -490,6 +598,27 @@ export async function handleState(env, url) {
         last_session_unix: startedSec,
         wall_clock_span_sec: 0,
       };
+      return;
+    }
+    // If the live session was started more than 24h after the most
+    // recent finished session in the current build, the SQL CTE
+    // considered it the start of a *new* build (its `prev_end` is
+    // the last finished row, and the gap is >= 86400). In that case
+    // the live session is the new build's only row, and the finished
+    // rows from the previous build should NOT be in `b`. But the
+    // SQL also won't return them (the `latest` CTE filters by
+    // build_seq = MAX). So if the live session is older than the
+    // current build's `build_start_unix` by more than 24h, we reset
+    // the build to be just the live row. (Forgotten-Finish that
+    // nobody fixed across a weekend.)
+    if (startedSec - b.build_start_unix >= 86400) {
+      b.units = 0;
+      b.total_in_window_sec = 0;
+      b.build_start_unix = startedSec;
+      b.last_session_unix = startedSec;
+      b.wall_clock_span_sec = 0;
+    } else if (startedSec < b.build_start_unix) {
+      b.build_start_unix = startedSec;
     }
   });
   const serverNowTs = Date.now();
@@ -543,6 +672,10 @@ export async function handleState(env, url) {
       },
       factory_today: factoryToday,
       completed_today: completedToday,
+      abayas_delivered_today:
+        (abayasDeliveredRes && abayasDeliveredRes.results && abayasDeliveredRes.results[0]
+          ? Number(abayasDeliveredRes.results[0].abayas_delivered) || 0
+          : 0),
       avg_cycle_sec_today: avgCycleSecToday,
       median_session_sec_today: medianSecToday,
       efficiency_today: efficiencyToday,

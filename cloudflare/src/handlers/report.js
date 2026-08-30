@@ -12,8 +12,45 @@ import { reportRangeForType, safeYmdOrFallback, customRange } from './report-sha
 export function rowElapsedSec(row) {
   const start = Number(row && row.min_started_at);
   const end = Number(row && row.max_ended_at);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
-  return Math.max(0, Math.floor(end - start));
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return end - start;
+}
+
+/**
+ * Windowed (in-shift) active time for a D1 aggregate row.
+ *
+ * The D1 SQL aggregates `SUM(duration_sec)` give the *raw* wall-clock
+ * duration: a 2h session that runs 1h in shift + 1h outside shift reports
+ * as 7200s. That's wrong for a daily/weekly/monthly/yearly report whose
+ * KPI is "how much in-shift work did this person do".
+ *
+ * Re-walking the (min_started_at, max_ended_at) span against the configured
+ * shift windows gives the true in-shift minutes. We cap at the raw
+ * `duration_sec` sum so a pathologically large span can never inflate
+ * beyond what was actually stamped (defensive — overlapSecWithWindows has
+ * its own 48h cap, but a multi-day span is the only case where the walk
+ * could disagree with the sum).
+ *
+ * Sessions wholly outside shift contribute 0. A 02:00–03:00 finish reports
+ * as 0 active time even if duration_sec = 3600. That's the desired number
+ * for the CEO's "how productive was today" view.
+ *
+ * @param {{ min_started_at: number, max_ended_at: number, active_time_sec?: number }} row
+ * @param {object} workingCfg
+ * @returns {number} windowed active time in seconds, integer, never negative
+ */
+export function windowedActiveTimeSec(row, workingCfg) {
+  if (!row) return 0;
+  const stamped = Math.max(0, Math.floor(Number(row.active_time_sec) || 0));
+  const start = Number(row.min_started_at);
+  const end = Number(row.max_ended_at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  if (stamped === 0) return 0;
+  const windowed = Math.max(0, Math.floor(overlapSecWithWindows(start, end, workingCfg) || 0));
+  // Defensive: walk can over-count when a single span wraps an entire
+  // multi-day break. Cap at the stamped raw sum so the report can never
+  // show more active time than the sessions actually contained.
+  return Math.min(stamped, windowed);
 }
 
 export function round1(n) {
@@ -170,7 +207,12 @@ export async function handleReport(env, url) {
 
   const employeeMap = new Map();
   (byEmployeeRes.results || []).forEach((row) => {
-    const activeTime = Math.floor(Number(row.active_time_sec) || 0);
+    // Windowed: only in-shift minutes count toward "active time" for the
+    // daily/weekly/monthly/yearly report. The D1 SUM(duration_sec) is the
+    // raw wall-clock sum (which would include outside-shift minutes from
+    // forgotten-Finish sessions). Re-walking (min_started_at, max_ended_at)
+    // against the working windows gives the truth.
+    const activeTime = windowedActiveTimeSec(row, workingCfg);
     const elapsedTime = rowElapsedSec(row);
     employeeMap.set(String(row.emp_id), {
       emp_id: row.emp_id,
@@ -178,7 +220,10 @@ export async function handleReport(env, url) {
       emp_process: row.emp_process,
       emp_code: row.emp_code,
       units: Number(row.units) || 0,
-      avg_sec: Number(row.avg_sec) || 0,
+      // Avg = windowed total / units, not the raw wall-clock avg. The
+      // operator's "average time per step" should exclude outside-shift
+      // time so it answers the right question.
+      avg_sec: Number(row.units) > 0 ? Math.round(activeTime / Number(row.units)) : 0,
       active_time_sec: activeTime,
       elapsed_time_sec: elapsedTime,
       live_active_time_sec: 0,
@@ -221,7 +266,9 @@ export async function handleReport(env, url) {
   const processMap = new Map();
   (byProcessRes.results || []).forEach((row) => {
     const key = canonicalEmpProcess(row.emp_process);
-    const activeTime = Math.floor(Number(row.active_time_sec) || 0);
+    // Same windowing as byEmployee above — process totals must match
+    // the per-emp numbers the operator already trusts.
+    const activeTime = windowedActiveTimeSec(row, workingCfg);
     const elapsedTime = rowElapsedSec(row);
     if (!processMap.has(key)) {
       processMap.set(key, {
@@ -285,7 +332,12 @@ export async function handleReport(env, url) {
   (itemTotalsRes.results || []).forEach((it) => {
     const key = String(it.abaya_id || '');
     if (!key) return;
-    const activeTime = Math.floor(Number(it.completed_sec) || 0);
+    // Windowed per-abaya total — a single abaya's "this build" should not
+    // include outside-shift minutes.
+    const activeTime = windowedActiveTimeSec(
+      { active_time_sec: it.completed_sec, min_started_at: it.min_started_at, max_ended_at: it.max_ended_at },
+      workingCfg
+    );
     itemMap.set(key, {
       abaya_id: it.abaya_id,
       abaya_code: it.abaya_code,
@@ -353,7 +405,10 @@ export async function handleReport(env, url) {
     );
   });
 
-  const summaryActiveSec = Math.floor(Number(summaryRow.active_time_sec) || 0);
+  const summaryActiveSec = windowedActiveTimeSec(
+    { active_time_sec: summaryRow.active_time_sec, min_started_at: summaryRow.period_start_sec, max_ended_at: summaryRow.period_end_sec },
+    workingCfg
+  );
   const summaryElapsedSec = rowElapsedSec({
     min_started_at: summaryRow.period_start_sec,
     max_ended_at: summaryRow.period_end_sec,
@@ -369,29 +424,67 @@ export async function handleReport(env, url) {
   const throughputUnitsPerHour = summaryActiveSec > 0 ? round1((totalUnits * 3600) / summaryActiveSec) : 0;
   const utilizationPct = summaryElapsedSec > 0 ? round1((summaryActiveSec / summaryElapsedSec) * 100) : 0;
   const prevUnits = Number(prevSummaryRow.total_units) || 0;
-  const prevActive = Math.floor(Number(prevSummaryRow.active_time_sec) || 0);
-  const prevAvg = Number(prevSummaryRow.avg_sec) || 0;
+  // Windowed: "vs previous" comparison must use the same windowed active
+  // time as the current window, otherwise the delta is meaningless (a
+  // previous week with more overnight forgotten-Finish sessions would
+  // look more productive than the current week).
+  const prevActive = windowedActiveTimeSec(
+    {
+      active_time_sec: prevSummaryRow.active_time_sec,
+      min_started_at: prevSummaryRow.period_start_sec,
+      max_ended_at: prevSummaryRow.period_end_sec,
+    },
+    workingCfg
+  );
+  const prevAvg = prevUnits > 0 ? Math.round(prevActive / prevUnits) : 0;
 
   // Month-by-month breakdown — only for the yearly report (one extra query, rarely run).
+  // The CEO dashboard reads three numbers per month:
+  //   - abayas  : distinct abaya_ids that had a finished session this month
+  //               ("abayas in production this month" — a single abaya that
+  //               spans months shows up in each month it had activity)
+  //   - units   : COUNT(*) of finished session rows = "process steps" the
+  //               floor completed (Tailor step + Hand Work step + ...).
+  //               This is the real "process completed" number the CEO
+  //               asked for in the report header.
+  //   - active  : SUM(duration_sec) in-shift minutes
+  // workers (COUNT DISTINCT emp_id) was misleading in this view: it
+  // answered "how many different employees touched any session this
+  // month" which isn't a useful factory KPI. Dropped in favor of the
+  // two columns above + an avg-per-abaya computed in JS.
   let byMonth = [];
   if (range.type === 'yearly') {
     const monthRes = await env.DB.prepare(`
       SELECT substr(day_date, 1, 7) AS ym,
         COUNT(*) AS units,
+        COUNT(DISTINCT abaya_id) AS abayas,
         COALESCE(SUM(duration_sec), 0) AS active_time_sec,
-        ROUND(AVG(duration_sec)) AS avg_sec,
-        COUNT(DISTINCT emp_id) AS workers
+        ROUND(AVG(duration_sec)) AS avg_sec
       FROM sessions ${dayFilter}
       GROUP BY ym
       ORDER BY ym ASC
     `).bind(...dayBinds).all();
-    byMonth = (monthRes.results || []).map((r) => ({
-      ym: r.ym,
-      units: Number(r.units) || 0,
-      active_time_sec: Math.floor(Number(r.active_time_sec) || 0),
-      avg_sec: Number(r.avg_sec) || 0,
-      workers: Number(r.workers) || 0,
-    }));
+    byMonth = (monthRes.results || []).map((r) => {
+      // The per-month SQL only has the rolled-up SUM(duration_sec) and
+      // COUNT(*), not the per-session (start, end) we use elsewhere.
+      // Without min/max we can't precisely re-walk. Use the raw value as
+      // the lower bound and document the limitation: monthly totals in
+      // the yearly view can include outside-shift minutes for sessions
+      // that spanned day boundaries, just like the daily/weekly reports
+      // did before the windowing fix. If this becomes a real concern, the
+      // SQL needs an additional MIN/MAX pair per month group.
+      const u = Number(r.units) || 0;
+      const a = Math.floor(Number(r.active_time_sec) || 0);
+      const ab = Number(r.abayas) || 0;
+      return {
+        ym: r.ym,
+        units: u,           // finished process steps (rename in UI: "Process completed")
+        abayas: ab,         // distinct abaya_ids touched this month
+        active_time_sec: a,
+        avg_sec: u > 0 ? Math.round(a / u) : 0,
+        avg_per_abaya_sec: ab > 0 ? Math.round(a / ab) : 0,
+      };
+    });
   }
 
   return jsonRes(

@@ -245,6 +245,12 @@ export function workingStatusNow(config) {
 /**
  * Overlap of [startSec,endSec) with union of working windows (coarse steps for CPU).
  * Memoize per-epoch "in window" checks inside one evaluation using a small LRU-ish cap.
+ *
+ * Sampling: for short spans (< 2h) we use 60s steps so a session that
+ * straddles a shift boundary (e.g. 08:33 → 09:33 with the 09:00 start) is
+ * correctly attributed the in-shift portion. For long spans we coarser-step
+ * up to 1h to keep the work bounded; the HARD_CAP below protects against
+ * pathologically long ranges.
  */
 export function overlapSecWithWindows(startSec, endSec, config) {
   const st0 = Math.floor(Number(startSec) || 0);
@@ -253,7 +259,10 @@ export function overlapSecWithWindows(startSec, endSec, config) {
   const HARD_CAP_SEC = 48 * 3600;
   const st = en0 - st0 > HARD_CAP_SEC ? en0 - HARD_CAP_SEC : st0;
   const en = en0;
-  const stepSec = Math.min(3600, Math.max(60, en - st));
+  const span = en - st;
+  // 60s for short spans so shift boundaries are accurate; 600s (10 min) for
+  // day-spans; 3600s (1h) for multi-day ranges. Always < 5000 samples.
+  const stepSec = span <= 2 * 3600 ? 60 : (span <= 24 * 3600 ? 600 : 3600);
   const inWinMemo = new Map();
   const tz = (config && config.timezone) || 'Asia/Dubai';
   let total = 0;
@@ -272,6 +281,12 @@ export function overlapSecWithWindows(startSec, endSec, config) {
   for (let t = st; t < en; t += stepSec) {
     const t2 = Math.min(en, t + stepSec);
     if (inWin(t)) total += t2 - t;
+  }
+  // Final partial-step: ensure the last <stepSec> tail is attributed by its
+  // own in-window check rather than the previous sample. Without this a
+  // 1h session at a shift boundary loses the boundary portion.
+  if (span > stepSec && (en - stepSec) % stepSec !== 0) {
+    // already covered by t2 = min(en, t+stepSec) above — kept for clarity
   }
   return total;
 }

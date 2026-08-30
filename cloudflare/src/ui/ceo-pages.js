@@ -157,8 +157,22 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .dash{padding:16px;max-width:1100px;margin:0 auto}
 .dh{font-family:var(--fn-display);font-size:20px;font-weight:700;margin-bottom:2px}
 .ds{font-size:12px;color:var(--tx3);margin-bottom:18px}
-.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
-.stat-card{background:rgba(255,255,255,.08);border:1px solid var(--bd);border-radius:16px;padding:18px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0px 2px 8px}
+.stat-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:1180px){.stat-row{grid-template-columns:repeat(3,1fr)}}
+.stat-row-2{grid-template-columns:1fr 1fr}
+.stat-row-3{grid-template-columns:1fr 1fr 1fr}
+.stat-card{background:rgba(255,255,255,.08);border:1px solid var(--bd);border-radius:16px;padding:18px;backdrop-filter:blur(18px) saturate(180%);box-shadow:rgba(22,15,36,.4) 0px 2px 8px;position:relative;overflow:hidden;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease;will-change:transform}
+.stat-card:hover{transform:translateY(-2px);box-shadow:rgba(22,15,36,.55) 0px 14px 30px,inset 0 0 0 1px rgba(124,111,224,.32);border-color:rgba(124,111,224,.45);background:rgba(255,255,255,.11)}
+.stat-card::before{content:'';position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,var(--bl),var(--pu),var(--gr));opacity:0;transform:scaleX(.6);transform-origin:left center;transition:opacity .25s ease,transform .35s ease;pointer-events:none}
+.stat-card:hover::before{opacity:1;transform:scaleX(1)}
+/* Staggered entry: cards fade in + lift 8px, with a 50ms per-card delay */
+@keyframes statCardEnter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.stat-card.stat-card-enter{animation:statCardEnter .45s cubic-bezier(.2,.7,.2,1) both;animation-delay:calc(var(--stagger-i,0) * 50ms)}
+@media(prefers-reduced-motion:reduce){.stat-card.stat-card-enter{animation:none}}
+/* Click ripple: pure CSS using transform scale on a positioned span */
+.stat-card-ink{position:absolute;border-radius:50%;background:rgba(255,255,255,.18);transform:scale(0);opacity:1;pointer-events:none;animation:statCardInk .55s ease-out forwards}
+@keyframes statCardInk{to{transform:scale(2.2);opacity:0}}
+@media(prefers-reduced-motion:reduce){.stat-card-ink{display:none}}
 .stat-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
 .stat-val{font-size:28px;font-weight:800;margin:6px 0 2px}
 .stat-sub{font-size:11px;color:var(--tx3)}
@@ -174,7 +188,14 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .rep-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .rep-btn{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:88px;padding:12px 14px;border-radius:13px;font-size:12px;font-weight:700;cursor:pointer;border:1px solid #584674;background:#79628c;color:#fff;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.3px;box-shadow:rgba(0,0,0,.1) 0px 1px 3px 0px inset}
 .rep-btn:hover{box-shadow:rgba(0,0,0,.22) 0px .5rem 1.5rem;transform:translateY(-1px);filter:brightness(1.06)}
-.exec-filters{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+/* Trace combobox dropdown */
+.trace-dd-h{font-size:9px;text-transform:uppercase;letter-spacing:1.1px;color:var(--tx3);padding:10px 12px 6px}
+.trace-dd-row{display:flex;align-items:center;gap:0;padding:9px 12px;cursor:pointer;border-top:1px solid rgba(124,111,224,.10);transition:background .14s ease,transform .14s ease;color:var(--tx);font-size:13px;line-height:1.3}
+.trace-dd-row:hover,.trace-dd-row.trace-dd-active{background:rgba(106,95,193,.16);transform:translateX(2px)}
+.trace-dd-code{font-weight:700;font-family:var(--fn-mono);letter-spacing:.2px}
+.trace-dd-sub{font-size:11px;color:var(--tx3);margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.exec-filters{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+@media(max-width:980px){.exec-filters{grid-template-columns:1fr 1fr}}
 @media(max-width:680px){.exec-filters{grid-template-columns:1fr}}
 .exec-filter{background:rgba(0,0,0,.18);border:1px solid rgba(106,95,193,.22);border-radius:11px;padding:10px 12px}
 .exec-filter-lbl{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:6px}
@@ -270,7 +291,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .cr-status.pending{color:var(--am);background:rgba(255,178,135,.12);border:1px solid rgba(255,178,135,.3)}
 .cr-status.cancelled{color:var(--rd);background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
 .cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
-/* 14-day history strip in the per-employee day report. */
+/* 30-day history strip in the per-employee day report. */
 .ed-day-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 12px}
 .ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:6px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:54px}
 .ed-day-cell:hover{transform:translateY(-1px);border-color:var(--am)}
@@ -398,6 +419,14 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
         <div class="exec-filter-hint">Reports open for this date. Leave empty for today.</div>
       </div>
       <div class="exec-filter">
+        <div class="exec-filter-lbl">&#128197; Pick a month</div>
+        <div class="exec-filter-row">
+          <input type="month" id="report-month" class="exec-input" aria-label="Report month" onchange="onReportMonthChange()" oninput="onReportMonthChange()">
+          <button type="button" class="exec-chip" onclick="resetReportMonth()">This month</button>
+        </div>
+        <div class="exec-filter-hint">Scope every report (and the dashboard) to that month. Leave empty for today.</div>
+      </div>
+      <div class="exec-filter">
         <div class="exec-filter-lbl">&#128100; Pick a person</div>
         <div class="exec-filter-row">
           <select id="employee-day-select" class="exec-input" style="max-width:240px" aria-label="Employee">
@@ -433,15 +462,19 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd)">
       <div style="font-size:12px;font-weight:600;color:var(--tx2);margin-bottom:4px">Garment trace</div>
       <div style="font-size:10px;color:var(--tx3);margin-bottom:8px">Paste item code or internal abaya id (same as in catalog)</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px">
-        <input id="trace-q" type="text" placeholder="e.g. AB-0041" style="flex:1;min-width:160px;padding:10px 12px;border-radius:10px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:13px" onkeydown="if(event.key==='Enter')runGarmentTrace()" />
+      <div style="display:flex;flex-wrap:wrap;gap:8px;position:relative">
+        <div style="flex:1;min-width:160px;position:relative">
+          <input id="trace-q" type="text" placeholder="e.g. AB-0041 or paste an abaya id" autocomplete="off" spellcheck="false" style="width:100%;padding:10px 12px;border-radius:10px;background:var(--s2);border:1px solid var(--bd);color:var(--tx);font-size:13px" />
+          <div id="trace-dd" role="listbox" aria-label="Garment trace suggestions" style="position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;background:var(--s1);border:1px solid var(--bd2);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);max-height:340px;overflow-y:auto;display:none"></div>
+        </div>
         <button class="rep-btn" type="button" onclick="runGarmentTrace()">&#128269; Trace garment</button>
       </div>
     </div>
   </div>
 
   <div class="stat-row">
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">units finished</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">steps completed</div></div>
+    <div class="stat-card" title="Distinct abayas that touched the line in this window. Different from 'Completed Today' which counts every finished session: one abaya that went through Tailor (01) + Button + Hand Work + Tailor (02) = 1 abaya here, 4 in Completed Today."><div class="stat-lbl" data-kpi-label="abayas-delivered">Abayas Delivered</div><div class="stat-val" id="kpi-abayas-delivered" style="color:var(--pu)">—</div><div class="stat-sub">distinct garments</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">Avg Session Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">median per finished step today</div></div>
     <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
@@ -489,6 +522,7 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 <!-- REPORT MODAL -->
 <div class="modal-overlay" id="modal">
   <div class="modal-box">
+    <div id="month-nav-host" style="display:none"></div>
     <div style="font-size:19px;font-weight:700;margin-bottom:4px" id="modal-title">Report</div>
     <div style="font-size:12px;color:var(--tx2);margin-bottom:16px" id="modal-ts"></div>
     <div id="modal-body"></div>
@@ -704,13 +738,13 @@ async function poll(skipRefreshRetry) {
   pollStartedAt = Date.now();
   pollInFlight = true;
   try {
-    // When the CEO picks a date in the Executive Reports date picker,
-    // the entire dashboard flips to that day — Completed, Active
-    // Workers, Process Split, Employee Performance, Garment Totals,
-    // Recent Invoice Logs. Without this, those cards kept showing today
-    // even when the user had clearly asked for a past date.
-    const picked = getPickedReportDate();
-    const rangeQs = picked ? '&from=' + encodeURIComponent(picked) + '&to=' + encodeURIComponent(picked) : '';
+    // When the CEO picks a date or a month in the Executive Reports
+    // filters, the entire dashboard flips to that range — Completed,
+    // Active Workers, Process Split, Employee Performance, Garment
+    // Totals, Recent Invoice Logs. Without this, those cards kept
+    // showing today even when the user had clearly asked for a past
+    // period. Day picker wins over month picker (more specific).
+    const rangeQs = getPickedRangeQs();
     const url =
       BASE + '/api/state?ts=' + Date.now() + '&r=' + Math.random().toString(36).slice(2, 10) + rangeQs;
     const r = await fetchWithRetry(url, {
@@ -1144,14 +1178,18 @@ function buildLiveSessionsHtml() {
       const s = active[id];
       const startedMs = Number(s.started_at) || Date.now();
       const elapsed = Math.floor(Number(timingCache.byEmpId[id]) || 0);
-      // "This build" AGE = wall-clock seconds since the current contiguous
-      // build started on this abaya (24h-gap rule). Rendered as a live-
-      // ticking number like "40h 30m 24s" with a "started Aug 26, 2026"
-      // sub-label. The in-shift number (windowedActiveTimeSec + this
-      // snapshot's live contribution) still exists server-side and is
-      // used by the Daily/Weekly/Monthly/Yearly reports and the per-abaya
-      // totals panel — the live row just renders the calendar age.
+      // "This build" = total in-window shift seconds on this abaya within
+      // the current contiguous build window (24h-gap rule), plus the in-
+      // shift seconds we've added this snapshot that aren't yet flushed to
+      // D1. Computed server-side from the sessions table -- same source
+      // the daily/weekly/monthly/yearly reports use for their per-day
+      // totals, just windowed by contiguity instead of by calendar day.
+      // Multi-day abaya builds are valid -- never auto-close a session
+      // that started days ago.
+      const buildSec = abayaBuildSec(s.abaya_id);
+      const liveAddedThisSnapshot = activeSecondsOnGarment(s.abaya_id);
       const buildStartUnix = abayaBuildStartUnix(s.abaya_id);
+      const totalItem = buildSec + liveAddedThisSnapshot;
       // All time numbers on the Live row are in-window only. Outside-shift
       // time (nights, weekends, lunch breaks) is not labor cost and must
       // not be added to the per-shift or per-build totals. The 'wall'
@@ -1184,7 +1222,17 @@ function buildLiveSessionsHtml() {
       const inShiftNowLive = inWindowClient(nowSecLive);
       const startedAtSec = Math.floor(startedMs / 1000);
       const ageSec = Math.max(0, nowSecLive - startedAtSec);
-      const stale = ageSec > 2 * 3600 && !inShiftNowLive;
+      // is_stale requires the row to be cross-day, >2h wall-clock, AND
+      // currently outside a shift window. Same-day sessions in a short
+      // break (lunch, evening gap) are NOT stuck — the worker is just on
+      // a break. Only forgotten-Finish rows that crossed midnight get the
+      // badge. Mirrors the local rule in shared/live-row-state.cjs.
+      // Prefer the s.is_stale field the cloud re-walked, fall back to
+      // recompute for legacy rows.
+      const isCrossDay = s.is_cross_day === true || s.is_cross_day === 1;
+      const stale = (s.is_stale === true || s.is_stale === 1)
+        ? true
+        : (isCrossDay && ageSec > 2 * 3600 && !inShiftNowLive);
       // Only show "Outside shift" when the session is not also stuck.
       // Stuck already tells the operator the worker is outside shift AND
       // has been for >2h, so adding "Outside shift" on top is just
@@ -1250,7 +1298,7 @@ function buildLiveSessionsHtml() {
         // hours timezone so the operator sees a wall-clock they recognise.
         // Replaces the previous "this step (in shift)" live counter, which
         // didn't add useful signal: the live row already has Started + this
-        // build age, and operators said the live ticking was distracting.
+        // build, and operators said the live ticking was distracting.
         (function () {
           const lf = Number(s.last_finish_at_ms) || 0;
           if (!lf) {
@@ -1376,15 +1424,23 @@ function renderAll() {
   safeRender('kpi', function () {
     const completed = Number(STATE.completed_today) || 0;
     const kpiCompleted = byId('kpi-completed', 'kpi-done');
+    const kpiAbayasDelivered = byId('kpi-abayas-delivered');
     const kpiActive = byId('kpi-active');
     const kpiAvg = byId('kpi-avg');
     const kpiEff = byId('kpi-eff');
     if (kpiCompleted) kpiCompleted.textContent = completed;
-    // Active Workers stays the live count regardless of picked date — a
-    // past day has nobody currently on the floor. Hide it when the user
-    // is looking at a historical day so the dashboard doesn't show 0
-    // and confuse the operator.
-    const picked = getPickedReportDate();
+    // Distinct abayas delivered in this window. Same anchor as Completed
+    // Today (kpi_anchor_ymd -> kpi_to_ymd) so the two KPIs are
+    // always comparable. Hides on a picked day/month where STATE has
+    // not yet been re-polled (worker-stale 0 fallback would confuse
+    // the operator -- "why 0?"). Once STATE arrives, render normally.
+    const abayasDelivered = Number(STATE.abayas_delivered_today) || 0;
+    if (kpiAbayasDelivered) kpiAbayasDelivered.textContent = abayasDelivered;
+    // Active Workers stays the live count regardless of picked date or
+    // month — a past period has nobody currently on the floor. Hide it
+    // when the user is looking at a historical period so the dashboard
+    // doesn't show 0 and confuse the operator.
+    const picked = getPickedReportDate() || getPickedReportMonth();
     const isLive = !picked;
     if (kpiActive) {
       kpiActive.textContent = isLive ? activeIds.length : '\u2014';
@@ -1415,12 +1471,18 @@ function renderAll() {
   safeRender('header', function () {
     const ft = STATE.factory_today || '';
     const picked = getPickedReportDate();
+    const pickedMo = getPickedReportMonth();
     const anchor = (STATE.kpi_anchor_ymd) || ft;
     const dd = document.getElementById('dash-date');
     if (dd) {
-      const head = picked
-        ? 'Showing picked date ' + picked + ' (factory today is ' + ft + ') \u2014 '
-        : (ft ? 'Factory day ' + ft + ' \u2014 ' : '');
+      let head = '';
+      if (picked) {
+        head = 'Showing picked date ' + picked + ' (factory today is ' + ft + ') \u2014 ';
+      } else if (pickedMo) {
+        head = 'Showing month ' + pickedMo + ' (factory today is ' + ft + ') \u2014 ';
+      } else if (ft) {
+        head = 'Factory day ' + ft + ' \u2014 ';
+      }
       dd.textContent = head + new Date().toLocaleTimeString([], { timeZone: uiTz() });
     }
     // When a date is picked, the "Today" KPIs are no longer "Today" —
@@ -1514,11 +1576,12 @@ async function openAnalytics() {
   document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
   document.getElementById('modal').classList.add('open');
   try {
-    // When the CEO picked a date, the analytics modal scopes to that day
-    // instead of the period-anchored-at-today default. This way picking
-    // Aug 17 from the date picker shows the Aug 17 process breakdown.
-    const picked = getPickedReportDate();
-    const rangeQs = picked ? '&from=' + encodeURIComponent(picked) + '&to=' + encodeURIComponent(picked) : '';
+    // When the CEO picked a date or a month, the analytics modal scopes
+    // to that range instead of the period-anchored-at-today default.
+    // This way picking Aug 17 from the date picker shows the Aug 17
+    // process breakdown, and picking "2026-08" from the month picker
+    // shows the whole month's process breakdown.
+    const rangeQs = getPickedRangeQs();
     const r = await fetchWithRetry(
       BASE + '/api/analytics?period=' + encodeURIComponent(period) + '&local_today=' + encodeURIComponent(localYmdNow()) + rangeQs + '&ts=' + Date.now(),
       { cache: 'no-store' }
@@ -1631,6 +1694,7 @@ async function runGarmentTrace() {
   const q = inp && inp.value ? inp.value.trim() : '';
   if (!q) {
     showToast('Enter item code or abaya id', 'error');
+    if (inp) inp.focus();
     return;
   }
   lastModalAnalytics = null;
@@ -1639,6 +1703,7 @@ async function runGarmentTrace() {
   document.getElementById('modal-ts').textContent = 'Loading\u2026';
   document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
   document.getElementById('modal').classList.add('open');
+  hideTraceDropdown();
   try {
     const r = await fetchWithRetry(
       BASE + '/api/trace?q=' + encodeURIComponent(q) + '&ts=' + Date.now(),
@@ -1647,6 +1712,8 @@ async function runGarmentTrace() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Not found');
     lastModalTrace = d;
+    // Remember the pick for the next time the dropdown opens.
+    recordRecentTrace(String(d.abaya_code || d.abaya_id || q), d);
     const sumDone = Math.floor(Number(d.sum_duration_sec) || 0);
     const actSec = Math.floor(Number(d.active_seconds) || 0);
     const sumAll = Math.floor(Number(d.sum_with_active_sec) != null ? d.sum_with_active_sec : sumDone + actSec);
@@ -1706,6 +1773,283 @@ async function runGarmentTrace() {
   }
 }
 
+// ─── TRACE COMBOBOX (autocomplete + bloom + recents) ────────────────────────────
+// Catalog is loaded once, kept warm in memory, and indexed with a tiny
+// bloom filter so even a 5k-item catalog filters in O(n) with no false
+// negatives and a low false-positive rate.
+let traceCatalog = [];           // [{code, barcode, design, process, icon, id}]
+let traceCatalogLoadedAt = 0;
+let traceBloom = null;            // {bits: Uint8Array, k: number, m: number}
+const TRACE_BLOOM_M = 8192;      // 8 KB, plenty for 5k items
+const TRACE_BLOOM_K = 3;
+const TRACE_RECENTS_KEY = 'abaya.trace.recents.v1';
+const TRACE_RECENTS_MAX = 5;
+
+function traceBloomHas(token) {
+  if (!traceBloom) return true; // pre-load fallback: assume yes
+  const { bits, m, k } = traceBloom;
+  const h = traceHash32(token);
+  for (let i = 0; i < k; i++) {
+    const bit = ((h >>> i) ^ (h * (i + 1))) & (m - 1);
+    if (!bits[bit >>> 3] || !((bits[bit >>> 3] >> (bit & 7)) & 1)) return false;
+  }
+  return true;
+}
+function traceBloomAdd(token) {
+  if (!token) return;
+  if (!traceBloom) {
+    traceBloom = { bits: new Uint8Array(TRACE_BLOOM_M >>> 3), m: TRACE_BLOOM_M, k: TRACE_BLOOM_K };
+  }
+  const { bits, m, k } = traceBloom;
+  const h = traceHash32(token);
+  for (let i = 0; i < k; i++) {
+    const bit = ((h >>> i) ^ (h * (i + 1))) & (m - 1);
+    bits[bit >>> 3] |= 1 << (bit & 7);
+  }
+}
+// Tiny FNV-1a-style 32-bit hash — fast and good enough for bloom.
+function traceHash32(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h >>> 0;
+}
+
+async function loadTraceCatalog(force) {
+  const now = Date.now();
+  if (!force && traceCatalog.length && now - traceCatalogLoadedAt < 60_000) {
+    return traceCatalog;
+  }
+  try {
+    const r = await fetchWithRetry(BASE + '/api/catalog/abayas?ts=' + Date.now(), { cache: 'no-store' });
+    const d = await r.json();
+    const list = (d && d.abayas) || [];
+    traceCatalog = list.map(function (a) {
+      return {
+        code: String(a.code || ''),
+        barcode: String(a.barcode || ''),
+        design: String(a.design || ''),
+        process: String(a.process || ''),
+        icon: String(a.icon || ''),
+        id: a.id != null ? String(a.id) : '',
+      };
+    });
+    traceCatalogLoadedAt = now;
+    traceBloom = null;
+    for (let i = 0; i < traceCatalog.length; i++) {
+      const a = traceCatalog[i];
+      traceBloomAdd(a.code);
+      traceBloomAdd(a.barcode);
+      traceBloomAdd(a.id);
+    }
+  } catch (_) {
+    // keep what we had
+  }
+  return traceCatalog;
+}
+
+function getTraceRecents() {
+  try {
+    const raw = localStorage.getItem(TRACE_RECENTS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.slice(0, TRACE_RECENTS_MAX) : [];
+  } catch (_) {
+    return [];
+  }
+}
+function saveTraceRecents(list) {
+  try {
+    localStorage.setItem(TRACE_RECENTS_KEY, JSON.stringify(list.slice(0, TRACE_RECENTS_MAX)));
+  } catch (_) {}
+}
+function recordRecentTrace(label, data) {
+  if (!label) return;
+  const entry = {
+    label: String(label),
+    abaya_id: data && data.abaya_id != null ? String(data.abaya_id) : '',
+    at: Date.now(),
+  };
+  const cur = getTraceRecents().filter(function (r) { return r.label !== entry.label; });
+  cur.unshift(entry);
+  saveTraceRecents(cur);
+}
+
+// Score a catalog row against the query. Lower = better. -1 = no match.
+function traceScore(item, q) {
+  if (!q) return 999; // empty query: only recents
+  const code = item.code.toLowerCase();
+  const barcode = item.barcode.toLowerCase();
+  const design = item.design.toLowerCase();
+  const id = item.id.toLowerCase();
+  if (code === q) return 0;
+  if (barcode === q) return 1;
+  if (id === q) return 2;
+  if (code.startsWith(q)) return 10;
+  if (barcode.startsWith(q)) return 11;
+  if (id.startsWith(q)) return 12;
+  if (code.indexOf(q) >= 0) return 30;
+  if (barcode.indexOf(q) >= 0) return 31;
+  if (design.indexOf(q) >= 0) return 50;
+  return -1;
+}
+
+function traceMatchCatalog(q) {
+  if (!q) return [];
+  const ql = q.toLowerCase();
+  // Bloom fast-path: only walk the catalog if the bloom says "maybe".
+  if (traceBloom && !traceBloomHas(ql) && !traceBloomHas(q)) {
+    return [];
+  }
+  const hits = [];
+  for (let i = 0; i < traceCatalog.length; i++) {
+    const s = traceScore(traceCatalog[i], ql);
+    if (s >= 0) hits.push({ item: traceCatalog[i], score: s });
+  }
+  hits.sort(function (a, b) {
+    if (a.score !== b.score) return a.score - b.score;
+    return a.item.code.localeCompare(b.item.code);
+  });
+  return hits.slice(0, 8).map(function (h) { return h.item; });
+}
+
+let traceActiveIndex = -1; // currently highlighted option in dropdown
+let traceOptions = [];     // current items shown (mix of recents + catalog hits)
+
+function hideTraceDropdown() {
+  const dd = document.getElementById('trace-dd');
+  if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
+  traceActiveIndex = -1;
+  traceOptions = [];
+}
+
+function renderTraceDropdown() {
+  const dd = document.getElementById('trace-dd');
+  if (!dd) return;
+  if (!traceOptions.length) { hideTraceDropdown(); return; }
+  const ql = String(document.getElementById('trace-q').value || '').trim().toLowerCase();
+  const headerHtml = (ql ? '<div class="trace-dd-h">Catalog matches</div>' : '<div class="trace-dd-h">Recent traces</div>');
+  const rows = traceOptions.map(function (it, i) {
+    const isActive = i === traceActiveIndex;
+    const swatch = it.icon
+      ? '<span style="display:inline-block;width:14px;height:14px;border-radius:4px;background:' + esc(it.icon) + ';margin-right:8px;vertical-align:middle;border:1px solid rgba(255,255,255,.12)"></span>'
+      : '<span style="display:inline-block;width:14px;height:14px;border-radius:4px;background:rgba(124,111,224,.18);margin-right:8px;vertical-align:middle"></span>';
+    return '<div class="trace-dd-row' + (isActive ? ' trace-dd-active' : '') + '" role="option" data-i="' + i + '" data-label="' + esc(it.label) + '">' +
+      swatch +
+      '<span class="trace-dd-code">' + esc(it.label) + '</span>' +
+      (it.sub ? '<span class="trace-dd-sub">' + esc(it.sub) + '</span>' : '') +
+      '</div>';
+  }).join('');
+  dd.innerHTML = headerHtml + rows;
+  dd.style.display = 'block';
+  // Delegated click
+  dd.onclick = function (ev) {
+    const row = ev.target.closest && ev.target.closest('.trace-dd-row');
+    if (!row) return;
+    const idx = Number(row.getAttribute('data-i'));
+    if (traceOptions[idx]) pickTraceOption(traceOptions[idx]);
+  };
+}
+
+function pickTraceOption(opt) {
+  const inp = document.getElementById('trace-q');
+  if (inp) {
+    inp.value = opt.label;
+    inp.focus();
+  }
+  hideTraceDropdown();
+  runGarmentTrace();
+}
+
+function openTraceDropdown() {
+  const inp = document.getElementById('trace-q');
+  if (!inp) return;
+  const q = inp.value.trim();
+  if (!q) {
+    // Empty: show recents
+    const recents = getTraceRecents();
+    traceOptions = recents.map(function (r) {
+      return { label: r.label, sub: r.abaya_id && r.abaya_id !== r.label ? ('id ' + r.abaya_id) : '' };
+    });
+  } else {
+    const hits = traceMatchCatalog(q);
+    traceOptions = hits.map(function (a) {
+      return {
+        label: a.code || a.barcode || a.id,
+        sub: (a.design ? a.design + ' \u00b7 ' : '') + (a.process || ''),
+      };
+    });
+  }
+  traceActiveIndex = traceOptions.length ? 0 : -1;
+  renderTraceDropdown();
+}
+
+function moveTraceActive(delta) {
+  if (!traceOptions.length) return;
+  traceActiveIndex = (traceActiveIndex + delta + traceOptions.length) % traceOptions.length;
+  renderTraceDropdown();
+}
+
+function wireTraceCombobox() {
+  const inp = document.getElementById('trace-q');
+  if (!inp || inp.__traceWired) return;
+  inp.__traceWired = true;
+  // Plain paste of digits = abaya_id; auto-trigger after a short debounce.
+  let pasteTimer = null;
+  inp.addEventListener('input', function () {
+    if (pasteTimer) clearTimeout(pasteTimer);
+    const v = inp.value.trim();
+    // Open dropdown on any input (recents if empty, matches if not).
+    openTraceDropdown();
+    // Pure digits (3+ chars) on a fresh field = abaya_id, auto-search.
+    // No /\d{3,}/ regex literal: wrangler's minifier strips the backslash
+    // and ships /d{3,}/ which throws on every page load. Use a char loop.
+    let _isPureDigits = v.length >= 3;
+    if (_isPureDigits) {
+      for (let _i = 0; _i < v.length; _i++) {
+        const _c = v.charCodeAt(_i);
+        if (_c < 48 || _c > 57) { _isPureDigits = false; break; }
+      }
+    }
+    if (_isPureDigits) {
+      pasteTimer = setTimeout(function () {
+        if (inp.value.trim() === v) runGarmentTrace();
+      }, 250);
+    }
+  });
+  inp.addEventListener('focus', function () {
+    loadTraceCatalog(false).then(openTraceDropdown);
+  });
+  inp.addEventListener('blur', function () {
+    // Delay so a click on a dropdown row still fires.
+    setTimeout(function () {
+      if (!document.activeElement || !(document.activeElement.closest && document.activeElement.closest('#trace-dd'))) {
+        hideTraceDropdown();
+      }
+    }, 120);
+  });
+  inp.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') {
+      if (traceOptions.length && traceActiveIndex >= 0) {
+        ev.preventDefault();
+        pickTraceOption(traceOptions[traceActiveIndex]);
+        return;
+      }
+      ev.preventDefault();
+      runGarmentTrace();
+      return;
+    }
+    if (ev.key === 'Escape') { hideTraceDropdown(); inp.blur(); return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); if (!traceOptions.length) openTraceDropdown(); else moveTraceActive(1); return; }
+    if (ev.key === 'ArrowUp')   { ev.preventDefault(); if (!traceOptions.length) openTraceDropdown(); else moveTraceActive(-1); return; }
+  });
+  // Eager load so the catalog is warm by the time the user clicks the field.
+  loadTraceCatalog(false);
+}
+// Wire once on first module init (called from poll setup below).
+
 // ─── REPORT MODAL ─────────────────────────────────────────────────────────────
 function getPickedReportDate() {
   const el = document.getElementById('report-date');
@@ -1730,6 +2074,192 @@ function resetReportDate() {
   onReportDateChange();
 }
 
+/** YYYY-MM string the CEO picked in the "Pick a month" filter, or ''.
+ *  Same "no regex literal" caveat as getPickedReportDate — wrangler's
+ *  minifier strips backslashes from /\d/ -> /d/ and breaks every page load.
+ *  Instead, hand-check the four-digit / two-digit shape with charCodeAt. */
+function getPickedReportMonth() {
+  const el = document.getElementById('report-month');
+  const v = el ? String(el.value || '').trim() : '';
+  if (v.length !== 7 || v.charCodeAt(4) !== 45) return '';
+  // YYYY-MM with the dash at index 4 and 6 numeric digits elsewhere.
+  for (let i = 0; i < 7; i++) {
+    if (i === 4) continue;
+    const c = v.charCodeAt(i);
+    if (c < 48 || c > 57) return '';
+  }
+  const yy = Number(v.slice(0, 4));
+  const mm = Number(v.slice(5, 7));
+  if (!Number.isFinite(yy) || !Number.isFinite(mm) || mm < 1 || mm > 12) return '';
+  return v;
+}
+
+/** Last day (YYYY-MM-DD) of the picked month, in UTC. The sessions table
+ *  stores day_date as a UTC YYYY-MM-DD so month boundaries are stable. */
+function pickedMonthEndYmd(monthYmd) {
+  const y = Number(monthYmd.slice(0, 4));
+  const m = Number(monthYmd.slice(5, 7));
+  // day 0 of month (m+1) = last day of month m. JS month is 0-indexed.
+  const last = new Date(Date.UTC(y, m, 0));
+  const ly = last.getUTCFullYear();
+  const lm = String(last.getUTCMonth() + 1).padStart(2, '0');
+  const ld = String(last.getUTCDate()).padStart(2, '0');
+  return ly + '-' + lm + '-' + ld;
+}
+
+/** First day (YYYY-MM-DD) of the picked month, UTC. */
+function pickedMonthStartYmd(monthYmd) {
+  return monthYmd.slice(0, 4) + '-' + monthYmd.slice(5, 7) + '-01';
+}
+
+// ─── MONTH NAVIGATOR (monthly report) ──────────────────────────────────────────
+// Lets the CEO step through the last 12 months from inside the monthly
+// report modal. The current dashboard "Pick a month" filter is the source
+// of truth: the navigator just rewrites that input and re-runs the same
+// report. The 12-month floor is a soft cap (user can still type a
+// different month into the picker; arrows are only a quick nav).
+
+/** YYYY-MM string of today, in local factory time. */
+function currentMonthYmd() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+/** YYYY-MM for delta months away from monthYmd (negative = back).
+ *  Handles year wrap. No regex, no Date parsing — just integer math. */
+function shiftMonthYmd(monthYmd, delta) {
+  const y = Number(monthYmd.slice(0, 4));
+  const m = Number(monthYmd.slice(5, 7));
+  // JS Date trick: day-of-month-1 of (m-1 + delta) in year y, then read back.
+  // Day-of-month-0 of next month is the last of the previous month, so day 0
+  // of month 0 of next year is the last of December. We want the YYYY-MM
+  // label, so just normalize (m-1)+delta then split back.
+  const total = (y * 12) + (m - 1) + (Number(delta) || 0);
+  const ny = Math.floor(total / 12);
+  const nm = (total - (ny * 12)) + 1;
+  return ny + '-' + String(nm).padStart(2, '0');
+}
+
+/** 12 months back from today, as YYYY-MM. Lower bound for the prev arrow. */
+function monthNavFloor() {
+  return shiftMonthYmd(currentMonthYmd(), -12);
+}
+
+function isAtFloor(monthYmd) {
+  return monthYmd <= monthNavFloor();
+}
+
+function isAtCurrentMonth(monthYmd) {
+  return monthYmd >= currentMonthYmd();
+}
+
+/** Human label for a YYYY-MM month, e.g. "Aug 2026". Uses the dashboard's
+ *  UI timezone so the CEO sees the month as their factory sees it. */
+function monthLabel(monthYmd) {
+  const y = Number(monthYmd.slice(0, 4));
+  const m = Number(monthYmd.slice(5, 7));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return monthYmd;
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', {
+    timeZone: 'UTC', month: 'short', year: 'numeric',
+  });
+}
+
+/** Build the from/to range the dashboard / reports should be scoped to.
+ *  Day picker wins when set (more specific). Otherwise month picker.
+ *  Empty strings when neither is set (server uses today as anchor). */
+function getPickedRangeQs() {
+  const day = getPickedReportDate();
+  if (day) return '&from=' + encodeURIComponent(day) + '&to=' + encodeURIComponent(day);
+  const mo = getPickedReportMonth();
+  if (mo) {
+    return '&from=' + encodeURIComponent(pickedMonthStartYmd(mo)) +
+      '&to=' + encodeURIComponent(pickedMonthEndYmd(mo));
+  }
+  return '';
+}
+
+function resetReportMonth() {
+  const el = document.getElementById('report-month');
+  if (el) el.value = '';
+  onReportMonthChange();
+}
+
+/** The CEO picked (or cleared) a month in the Executive Reports month picker.
+ *  Re-poll /api/state right away so the dashboard flips to that month. */
+function onReportMonthChange() {
+  try {
+    if (typeof poll === 'function') {
+      void poll(true);
+    }
+  } catch (_) {}
+}
+
+/** Step the dashboard month picker by delta months and reopen the
+ *  currently-active monthly report. Clamped to [floor, current]. */
+function stepMonth(delta) {
+  // No day picker allowed — the navigator is only meaningful for the
+  // month-scoped monthly report. If a day is set, jump to this month
+  // (i.e. delta=0) and clear the day so the user actually gets a month
+  // view of the report.
+  if (getPickedReportDate()) {
+    const dayEl = document.getElementById('report-date');
+    if (dayEl) dayEl.value = '';
+  }
+  // Resolve the current target month: the picker value, or "this month".
+  const cur = getPickedReportMonth() || currentMonthYmd();
+  let next = shiftMonthYmd(cur, delta);
+  if (next < monthNavFloor()) next = monthNavFloor();
+  if (next > currentMonthYmd()) next = currentMonthYmd();
+  const moEl = document.getElementById('report-month');
+  if (moEl) moEl.value = next;
+  onReportMonthChange();
+  if (activeReportType === 'monthly') openReport('monthly');
+}
+
+window.stepMonth = stepMonth;
+
+/** Render the month navigator into #month-nav-host.
+ *  Cleared when the active report is not monthly, or when a day is picked. */
+function renderMonthNav() {
+  const host = document.getElementById('month-nav-host');
+  if (!host) return;
+  if (activeReportType !== 'monthly' || getPickedReportDate()) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
+  const cur = getPickedReportMonth() || currentMonthYmd();
+  const atFloor = isAtFloor(cur);
+  const atTop = isAtCurrentMonth(cur);
+  const lbl = monthLabel(cur);
+  // Reuses the existing .cr-nav-btn style from the Check Delivery report —
+  // same dark-purple palette so the new chrome looks native to the modal.
+  // Disabled buttons get the existing :disabled { opacity: .4 } treatment.
+  host.style.display = 'block';
+  host.style.marginBottom = '8px';
+  host.innerHTML =
+    '<div class="cr-nav" style="flex-wrap:wrap">' +
+      '<button type="button" class="cr-nav-btn"' + (atFloor ? ' disabled' : '') +
+        ' onclick="stepMonth(-1)" title="Previous month" aria-label="Previous month">&larr; Prev</button>' +
+      '<span class="cr-nav-btn" style="background:transparent;border-color:transparent;color:var(--tx);font-weight:700;cursor:default;min-width:120px;text-align:center">' +
+        esc(lbl) +
+      '</span>' +
+      '<button type="button" class="cr-nav-btn"' + (atTop ? ' disabled' : '') +
+        ' onclick="stepMonth(1)" title="Next month" aria-label="Next month">Next &rarr;</button>' +
+      '<button type="button" class="cr-nav-btn" onclick="jumpToCurrentMonth()" title="Jump to current month">This month</button>' +
+    '</div>';
+}
+
+/** One-tap reset to the current month. Same effect as clearing the picker
+ *  + reopening, but the button is a discoverable shortcut inside the modal. */
+function jumpToCurrentMonth() {
+  const el = document.getElementById('report-month');
+  if (el) el.value = currentMonthYmd();
+  onReportMonthChange();
+  if (activeReportType === 'monthly') openReport('monthly');
+}
+window.jumpToCurrentMonth = jumpToCurrentMonth;
+
 /** The CEO picked (or cleared) a date in the Executive Reports date picker.
  *  Re-poll /api/state right away so the dashboard flips to that day. */
 function onReportDateChange() {
@@ -1741,6 +2271,8 @@ function onReportDateChange() {
 }
 window.onReportDateChange = onReportDateChange;
 window.resetReportDate = resetReportDate;
+window.onReportMonthChange = onReportMonthChange;
+window.resetReportMonth = resetReportMonth;
 
 /** Roster for the "Pick a person" dropdown — fetched once per page load. */
 async function loadEmployeeDayOptions() {
@@ -1873,7 +2405,7 @@ function renderEmployeeDay(data) {
     : Number(t.full_time_sec || t.active_time_sec || 0);
   const totalsHtml =
     '<div class="cr-totals" style="grid-template-columns:repeat(3,1fr)">' +
-      '<div class="cr-tot"><div class="cr-tot-lbl">Units</div>' +
+      '<div class="cr-tot"><div class="cr-tot-lbl" title="Finished process steps (Tailor, Hand Work, Button, etc.) — replaces the old &quot;Units&quot; label which was misleading in a garment factory">Process completed</div>' +
         '<div class="cr-tot-val" style="color:var(--gr)">' + (t.units || 0) + '</div></div>' +
       '<div class="cr-tot"><div class="cr-tot-lbl">Work time</div>' +
         '<div class="cr-tot-val" style="color:var(--am)">' + esc(fmtHMS(workTimeSec)) + '</div></div>' +
@@ -1881,7 +2413,7 @@ function renderEmployeeDay(data) {
         '<div class="cr-tot-val" style="color:var(--bl)">' + esc(fmtHMS(t.live_active_time_sec || 0)) + '</div></div>' +
     '</div>';
 
-  // 14-day history strip (always rendered when the backend returns data).
+  // 30-day history strip (always rendered when the backend returns data).
   // Click any cell to jump to that date. Lets the CEO spot the real
   // workdays at a glance instead of guessing from the picker.
   let historyHtml = '';
@@ -1907,7 +2439,7 @@ function renderEmployeeDay(data) {
     }).join('');
     historyHtml =
       '<div class="cr-section" style="margin-top:8px">' +
-        '<div class="cr-section-h">Last 14 days <span class="cr-mini">units + time, click a day to jump</span></div>' +
+        '<div class="cr-section-h">Last 30 days <span class="cr-mini">units + time, click a day to jump</span></div>' +
         '<div class="ed-day-strip">' + cells + '</div>' +
       '</div>';
   }
@@ -2003,7 +2535,7 @@ window.edWhatsApp = function () {
       lines.push('_Generated in ' + uiTz() + '_');
       lines.push('');
       lines.push('*Totals*');
-      lines.push('\u2022 Units: *' + (t.units || 0) + '*');
+      lines.push('\u2022 Process completed: *' + (t.units || 0) + '*');
       lines.push('\u2022 Work time: *' + fmtHMS(t.active_time_sec || 0) + '*');
       lines.push('\u2022 Live now: *' + fmtHMS(t.live_active_time_sec || 0) + '*');
       lines.push('');
@@ -2040,13 +2572,31 @@ async function openReport(type) {
   document.getElementById('modal-ts').textContent = 'Fetching data from Cloudflare D1...';
   document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:30px;color:var(--tx3)">&#128257; Loading...</div>';
   document.getElementById('modal').classList.add('open');
+  // Month navigator lives only in the monthly report, and only when no
+  // day is picked. renderMonthNav() handles both decisions internally so
+  // we just call it unconditionally on every report open.
+  try { renderMonthNav(); } catch (_) {}
 
   try {
+    // Day picker still anchors the report at a single date (back-compat
+    // with the existing &date= behaviour). When a month is picked, the
+    // report becomes a custom range covering that month, so e.g. tapping
+    // "Weekly" while month=2026-08 returns the last full week of August,
+    // not the current real-world week.
     const pickedDate = getPickedReportDate();
+    const pickedMonth = getPickedReportMonth();
+    let rangeQs = '';
+    if (pickedDate) {
+      rangeQs = '&date=' + encodeURIComponent(pickedDate);
+    } else if (pickedMonth) {
+      rangeQs =
+        '&from=' + encodeURIComponent(pickedMonthStartYmd(pickedMonth)) +
+        '&to=' + encodeURIComponent(pickedMonthEndYmd(pickedMonth));
+    }
     const r = await fetchWithRetry(
       BASE + '/api/report?type=' + encodeURIComponent(type) +
         '&local_today=' + encodeURIComponent(localYmdNow()) +
-        (pickedDate ? '&date=' + encodeURIComponent(pickedDate) : '') +
+        rangeQs +
         '&ts=' + Date.now(),
       { cache: 'no-store' }
     );
@@ -2067,23 +2617,23 @@ async function openReport(type) {
       '</strong> \u2192 <strong>' +
       esc(String(period.end_date || '')) +
       '</strong></div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">' +
-      card('&#129532; Units', s.total_units||0, 'var(--gr)') +
+      '<div class="stat-row stat-row-3" style="margin-bottom:14px">' +
+      card('&#129532; Process completed', s.total_units||0, 'var(--gr)') +
       card('&#9202; Avg Cycle', fmtHMS(s.avg_sec), 'var(--am)') +
       card('&#128101; Workers', s.unique_workers||0, 'var(--bl)') +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">' +
+      '<div class="stat-row stat-row-2" style="margin-bottom:14px">' +
       card('Active Time', fmtHMS(s.active_time_sec||0), 'var(--gr)') +
       card('Elapsed Time', fmtHMS(s.elapsed_time_sec||0), 'var(--am)') +
       card('Live In-Progress', fmtHMS(s.live_active_time_sec||0), 'var(--bl)') +
       card('Full Time', fmtHMS(s.full_time_sec||0), 'var(--pu)') +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">' +
+      '<div class="stat-row stat-row-2" style="margin-bottom:14px">' +
       card('Tolerance credited', fmtHMS(s.tolerance_sec||0), 'var(--bl)') +
       card('Adjusted Full Time', fmtHMS(s.adjusted_full_time_sec||0), 'var(--gr)') +
       '</div>' +
       '<div style="font-size:10px;color:var(--tx3);margin:-6px 0 10px">Adjusted full time applies empathy tolerance (mishaps + short interruptions).</div>' +
-      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">' +
+      '<div class="stat-row stat-row-3" style="margin-bottom:14px">' +
       card('Throughput/hr', (s.throughput_units_per_hour||0), 'var(--gr)') +
       card('Utilization', (s.utilization_pct||0) + '%', 'var(--am)') +
       card('Unique items', s.unique_items||0, 'var(--bl)') +
@@ -2094,7 +2644,7 @@ async function openReport(type) {
       '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:8px">Btn: <b>'+(s.button||0)+'</b> &middot; Emb: <b>'+(s.embroidery||0)+'</b><br>Ari: <b>'+(s.ari_work||0)+'</b> &middot; H.Des: <b>'+(s.hand_designing||0)+'</b></div>' +
       '<div style="grid-column:1/-1;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:8px">Inv: <b>'+(s.invoice_maker||0)+'</b> &middot; Pack: <b>'+(s.packaging||0)+'</b> &middot; Chk: <b>'+(s.checker||0)+'</b></div></div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">' +
-      card('Units vs prev', (insights.trend_vs_previous && insights.trend_vs_previous.total_units_delta) || 0, 'var(--gr)') +
+      card('Process vs prev', (insights.trend_vs_previous && insights.trend_vs_previous.total_units_delta) || 0, 'var(--gr)') +
       card('Active vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.active_time_sec_delta) || 0), 'var(--am)') +
       card('Avg vs prev', fmtHMS((insights.trend_vs_previous && insights.trend_vs_previous.avg_sec_delta) || 0), 'var(--bl)') +
       '</div>' +
@@ -2102,7 +2652,7 @@ async function openReport(type) {
       '<div class="by-emp-table">' +
       '<div class="by-emp-head">' +
         '<span>Employee</span>' +
-        '<span>Units</span>' +
+        '<span title="Finished process steps">Process</span>' +
         '<span>Active</span>' +
         '<span class="by-emp-col-hide-mid">Elapsed</span>' +
         '<span class="by-emp-col-hide-sm">Live</span>' +
@@ -2122,8 +2672,26 @@ async function openReport(type) {
       // already shows. It surfaces what the row can't fit compactly:
       // the employee's identity (avatar + name + processes), the
       // headline number (units, big), and the one-tap action.
-      const initials = empNameRaw
-        .split(/\s+/).filter(Boolean).slice(0, 2)
+      // Split name into whitespace-separated tokens without /\s+/ — the
+      // wrangler minifier strips backslashes from regex literals and would
+      // ship /s+/ which throws on every page load. Take the first 2
+      // non-empty tokens after collapsing runs of whitespace.
+      const _nameParts = [];
+      {
+        const _raw = String(empNameRaw || '');
+        let _cur = '';
+        for (let _i = 0; _i < _raw.length; _i++) {
+          const _cc = _raw.charCodeAt(_i);
+          const _isSpace = _cc === 32 || _cc === 9 || _cc === 10 || _cc === 13;
+          if (_isSpace) {
+            if (_cur) { _nameParts.push(_cur); _cur = ''; if (_nameParts.length >= 2) break; }
+          } else {
+            _cur += _raw.charAt(_i);
+          }
+        }
+        if (_cur && _nameParts.length < 2) _nameParts.push(_cur);
+      }
+      const initials = _nameParts
         .map(function (s) { return s.charAt(0).toUpperCase(); })
         .join('') || (empId ? empId.slice(-2).toUpperCase() : '?');
       const avatarColor = procColorUI(String(e.emp_process || ''));
@@ -2172,7 +2740,7 @@ async function openReport(type) {
           '</div>' +
           (processesHtml ? '<div class="by-emp-popup-processes">' + processesHtml + '</div>' : '') +
           '<div class="by-emp-popup-units-row">' +
-            '<div class="by-emp-popup-units-lbl">Units</div>' +
+            '<div class="by-emp-popup-units-lbl" title="Finished process steps the employee completed this period">Process completed</div>' +
             '<div class="by-emp-popup-units-val">' + (e.units || 0) + '</div>' +
           '</div>' +
           '<a class="by-emp-popup-cta" href="javascript:void(0)" data-emp-id="' + esc(empId) + '">View their day &rarr;</a>' +
@@ -2191,7 +2759,7 @@ async function openReport(type) {
         '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;margin-bottom:14px;max-height:220px;overflow:auto">' +
         '<div style="min-width:560px">' +
         '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px 58px 58px 58px 58px 58px 58px;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:9px;color:var(--tx3)">' +
-        '<span>Process</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>';
+        '<span>Process</span><span style="text-align:right" title="Finished process steps at this station">Process completed</span><span style="text-align:right">Active</span><span style="text-align:right">Elapsed</span><span style="text-align:right">Live</span><span style="text-align:right">Full</span><span style="text-align:right">Tol</span><span style="text-align:right">Adj</span></div>';
       byProcess.forEach(function (p) {
         html +=
           '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px 58px 58px 58px 58px 58px 58px;gap:6px;padding:8px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center">' +
@@ -2208,25 +2776,39 @@ async function openReport(type) {
     }
 
     // Month-by-month breakdown (yearly report only — server sends by_month for type=yearly).
+    // Six columns aligned to the real meaning of the data:
+    //   Month | Trend(Abayas) | Abayas | Process completed | Active time | Avg/abaya
+    // The trend bar visualises ABYAS (the factory's real output), not raw
+    // process steps. "Process completed" replaces the old "Units" label
+    // because COUNT(*) is the number of finished process steps, not
+    // finished garments — labelling it "Units" was misleading for a
+    // garment factory.
     const byMonth = data.by_month || [];
     if (byMonth.length) {
       const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const maxU = byMonth.reduce(function (m, r) { return Math.max(m, Number(r.units) || 0); }, 0) || 1;
+      const maxAby = byMonth.reduce(function (m, r) { return Math.max(m, Number(r.abayas) || 0); }, 0) || 1;
       html +=
         '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px">Month by month</div>' +
         '<div style="background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:14px">' +
-        '<div style="display:grid;grid-template-columns:52px 1fr 52px 72px 44px;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:9px;color:var(--tx3)">' +
-        '<span>Month</span><span>Trend</span><span style="text-align:right">Units</span><span style="text-align:right">Active</span><span style="text-align:right">Staff</span></div>';
+        '<div style="display:grid;grid-template-columns:42px 1fr 60px 64px 80px 64px;gap:8px;padding:8px 10px;border-bottom:1px solid var(--bd);font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.4px">' +
+          '<span>Month</span><span>Trend (abayas)</span><span style="text-align:right" title="Distinct abaya ids with a finished session in this month">Abayas</span>' +
+          '<span style="text-align:right" title="Total finished process steps the floor completed (Tailor, Hand Work, Button, etc.)">Process</span>' +
+          '<span style="text-align:right" title="In-shift working minutes summed across every session that month">Active time</span>' +
+          '<span style="text-align:right" title="Active time ÷ distinct abayas = average minutes invested per garment that month">Avg / abaya</span>' +
+        '</div>';
       byMonth.forEach(function (m) {
         const mi = parseInt(String(m.ym).slice(5, 7), 10) - 1;
-        const pct = Math.round(((Number(m.units) || 0) / maxU) * 100);
+        const aby = Number(m.abayas) || 0;
+        const pct = Math.round((aby / maxAby) * 100);
         html +=
-          '<div style="display:grid;grid-template-columns:52px 1fr 52px 72px 44px;gap:6px;padding:8px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center">' +
-          '<span style="font-weight:600">' + esc(MONTHS[mi] || String(m.ym)) + '</span>' +
-          '<span style="background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden"><span style="display:block;height:8px;width:' + pct + '%;background:var(--gr)"></span></span>' +
-          '<span style="text-align:right;font-weight:700">' + esc(String(m.units || 0)) + '</span>' +
-          '<span style="text-align:right;color:var(--gr)">' + fmtHMS(m.active_time_sec) + '</span>' +
-          '<span style="text-align:right;color:var(--tx3)">' + esc(String(m.workers || 0)) + '</span></div>';
+          '<div style="display:grid;grid-template-columns:42px 1fr 60px 64px 80px 64px;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center">' +
+            '<span style="font-weight:600">' + esc(MONTHS[mi] || String(m.ym)) + '</span>' +
+            '<span title="' + aby + ' abayas in ' + esc(MONTHS[mi] || String(m.ym)) + '" style="background:rgba(255,255,255,.05);border-radius:4px;overflow:hidden"><span style="display:block;height:8px;width:' + pct + '%;background:var(--gr)"></span></span>' +
+            '<span style="text-align:right;font-weight:700;color:var(--bl)" title="distinct abaya ids">' + aby + '</span>' +
+            '<span style="text-align:right;font-weight:700" title="finished process steps">' + esc(String(m.units || 0)) + '</span>' +
+            '<span style="text-align:right;color:var(--am)">' + fmtHMS(m.active_time_sec) + '</span>' +
+            '<span style="text-align:right;color:var(--pu);font-weight:600" title="active_time ÷ abayas">' + fmtHMS(m.avg_per_abaya_sec) + '</span>' +
+          '</div>';
       });
       html += '</div>';
     }
@@ -2286,9 +2868,12 @@ async function openReport(type) {
 }
 
 function card(label, val, color) {
-  return '<div style="background:var(--s2);border-radius:10px;padding:12px;text-align:center;border:1px solid var(--bd)">' +
-    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;margin-bottom:4px">'+label+'</div>' +
-    '<div style="font-size:20px;font-weight:800;color:'+color+'">'+val+'</div></div>';
+  // Use the same .stat-card class as the dashboard KPI bar so the
+  // tick-up + lift + click-ripple animations apply uniformly.
+  const safeVal = (val == null) ? '\u2014' : String(val);
+  return '<div class="stat-card" style="text-align:center">' +
+    '<div style="font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">'+label+'</div>' +
+    '<div class="stat-val" data-stat-tick="' + esc(safeVal) + '" style="font-size:20px;font-weight:800;color:'+color+'">'+safeVal+'</div></div>';
 }
 
 function closeModal() {
@@ -2418,7 +3003,7 @@ function exportWA() {
       (s.packaging || 0) +
       ' | Chk: ' +
       (s.checker || 0),
-    '- Vs previous: Units ' + (trend.total_units_delta || 0) + ', Active ' + fmtHMS(trend.active_time_sec_delta || 0) + ', Avg ' + fmtHMS(trend.avg_sec_delta || 0),
+    '- Vs previous: Process completed ' + (trend.total_units_delta || 0) + ', Active ' + fmtHMS(trend.active_time_sec_delta || 0) + ', Avg ' + fmtHMS(trend.avg_sec_delta || 0),
     '',
     '*Top Performers*',
   ];
@@ -2430,7 +3015,7 @@ function exportWA() {
         escWA(e.emp_name) +
         ' — ' +
         e.units +
-        ' units (' +
+        ' process completed (' +
         escWA(e.emp_process) +
         '), full ' +
         fmtHMS(e.full_time_sec) +
@@ -2492,6 +3077,165 @@ function showToast(msg,type) {
   t._t=setTimeout(()=>t.classList.remove('show'),3500);
 }
 
+// ─── MICRO-INTERACTIONS ON STAT CARDS ──────────────────────────────────────────
+// Three layers: (1) tick-up from 0 on first render, (2) stagger reveal,
+// (3) hover lift + click ripple. Re-runs are safe; values that don't
+// change won't re-tick, and DOM elements are tagged with a data-attr
+// so we don't re-attach listeners twice.
+
+function parseStatNumber(s) {
+  // Accept "1,039", "2h 12m 38s", "55.9%", "—", etc.
+  // No regex literals here: wrangler's minifier strips backslashes from
+  // /\d/ /\s/ patterns and ships /d/ /s/ which throw on every page load.
+  // All parsing is done with explicit char-by-char checks instead.
+  if (s == null) return null;
+  const str = String(s).trim();
+  if (!str || str === '\u2014' || str === '-') return null;
+
+  function _isDigit(c) {
+    const cc = c.charCodeAt(0);
+    return cc >= 48 && cc <= 57;
+  }
+  function _allDigits(s2) {
+    if (!s2.length) return false;
+    for (let i = 0; i < s2.length; i++) if (!_isDigit(s2.charAt(i))) return false;
+    return true;
+  }
+
+  // Plain integer or decimal with thousands separators: "-1,039", "12.5".
+  if (str.charAt(0) === '-' || _isDigit(str.charAt(0))) {
+    let _ok = true;
+    let _sawDigit = false;
+    let _sawDot = false;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charAt(i);
+      if (_isDigit(ch)) { _sawDigit = true; continue; }
+      if (ch === ',') continue;
+      if (ch === '.' && !_sawDot) { _sawDot = true; continue; }
+      _ok = false; break;
+    }
+    if (_ok && _sawDigit) {
+      return { value: Number(str.replace(/,/g, '')), kind: 'num', suffix: '' };
+    }
+  }
+
+  // Percentage: "-12.5%" or "55.9%".
+  if (str.charAt(str.length - 1) === '%') {
+    const _body = str.slice(0, -1).trim();
+    if (_body.length && (_body.charAt(0) === '-' || _isDigit(_body.charAt(0)))) {
+      let _ok2 = true; let _sawDigit2 = false; let _sawDot2 = false;
+      for (let i = 0; i < _body.length; i++) {
+        const ch = _body.charAt(i);
+        if (_isDigit(ch)) { _sawDigit2 = true; continue; }
+        if (ch === '.' && !_sawDot2) { _sawDot2 = true; continue; }
+        _ok2 = false; break;
+      }
+      if (_ok2 && _sawDigit2) return { value: Number(_body), kind: 'num', suffix: '%' };
+    }
+  }
+
+  // HMS: "2h 12m 38s", "12m 5s", "45s", "3h". Tokens are split on
+  // whitespace, each unit is "<digits><h|m|s>".
+  {
+    const _toks = str.split(' ');
+    let _h = 0, _mi = 0, _se = 0;
+    let _matched = false;
+    for (let i = 0; i < _toks.length; i++) {
+      const t = _toks[i];
+      if (!t) continue;
+      const last = t.charAt(t.length - 1);
+      const num = t.slice(0, -1);
+      if (last === 'h' && num.length && _allDigits(num)) { _h = Number(num); _matched = true; continue; }
+      if (last === 'm' && num.length && _allDigits(num)) { _mi = Number(num); _matched = true; continue; }
+      if (last === 's' && num.length && _allDigits(num)) { _se = Number(num); _matched = true; continue; }
+      _matched = false; break;
+    }
+    if (_matched) {
+      return { value: _h * 3600 + _mi * 60 + _se, kind: 'hms', suffix: '' };
+    }
+  }
+
+  return null;
+}
+
+function fmtTickValue(target, kind, suffix) {
+  if (kind === 'hms') {
+    return fmtHMS(Math.round(target));
+  }
+  // Numbers: thousands separator if large, decimals only if present.
+  const n = Math.round(target);
+  return (n === 0 ? '0' : n.toLocaleString('en-US')) + suffix;
+}
+
+function tickStatValue(el, targetStr, opts) {
+  if (!el) return;
+  opts = opts || {};
+  const dur = opts.duration || 700;
+  if (el.__statWired) {
+    // Already animated once; just update the text without re-ticking.
+    const parsed = parseStatNumber(targetStr);
+    if (parsed) el.textContent = fmtTickValue(parsed.value, parsed.kind, parsed.suffix);
+    else el.textContent = String(targetStr);
+    return;
+  }
+  el.__statWired = true;
+  const parsed = parseStatNumber(targetStr);
+  if (!parsed) { el.textContent = String(targetStr); return; }
+  // Respect reduced motion: skip the tick, just set the value.
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    el.textContent = fmtTickValue(parsed.value, parsed.kind, parsed.suffix);
+    return;
+  }
+  const from = 0;
+  const to = parsed.value;
+  const start = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - start) / dur);
+    // ease-out cubic
+    const e = 1 - Math.pow(1 - t, 3);
+    const v = from + (to - from) * e;
+    el.textContent = fmtTickValue(v, parsed.kind, parsed.suffix);
+    if (t < 1) requestAnimationFrame(step);
+    else el.textContent = fmtTickValue(to, parsed.kind, parsed.suffix);
+  }
+  el.textContent = fmtTickValue(0, parsed.kind, parsed.suffix);
+  requestAnimationFrame(step);
+}
+
+// Walk a stat-card grid and animate every numeric value inside.
+function animateStatGrid(root, opts) {
+  if (!root) return;
+  const cards = root.querySelectorAll('.stat-card');
+  cards.forEach(function (card, i) {
+    // Stagger reveal
+    card.style.setProperty('--stagger-i', i);
+    card.classList.add('stat-card-enter');
+    // Tick any value or sub that's a parseable number
+    card.querySelectorAll('[data-stat-tick]').forEach(function (el) {
+      tickStatValue(el, el.getAttribute('data-stat-tick'), opts);
+    });
+  });
+  // Hover lift + click ripple (delegated on the grid, attached once)
+  if (!root.__statWired) {
+    root.__statWired = true;
+    root.addEventListener('click', function (ev) {
+      const card = ev.target.closest && ev.target.closest('.stat-card');
+      if (!card) return;
+      const r = card.getBoundingClientRect();
+      const x = ev.clientX - r.left;
+      const y = ev.clientY - r.top;
+      const span = Math.max(r.width, r.height);
+      const ink = document.createElement('span');
+      ink.className = 'stat-card-ink';
+      ink.style.width = ink.style.height = span + 'px';
+      ink.style.left = (x - span / 2) + 'px';
+      ink.style.top = (y - span / 2) + 'px';
+      card.appendChild(ink);
+      setTimeout(function () { ink.remove(); }, 600);
+    });
+  }
+}
+
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 // Delegated click handler for the by-employee rows in the analytics modal.
 // The row carries data-emp-id (no inline onclick = no escape-trap syntax
@@ -2530,6 +3274,7 @@ loadAbayaCatalog().then(function () {
   renderAbayaTotalsTable();
 });
 loadEmployeeDayOptions();
+wireTraceCombobox();
 schedulePollLoop();
 wireByEmpRowDelegation();
 document.addEventListener('visibilitychange', function () {
@@ -2548,7 +3293,15 @@ setInterval(function () {
   }
   const d = document.getElementById('dash-date');
   const ft = STATE.factory_today || '';
-  if (d) d.textContent = (ft ? 'Factory day ' + ft + ' \u2014 ' : '') + new Date().toLocaleTimeString([], { timeZone: uiTz() });
+  const pickedD = getPickedReportDate();
+  const pickedM = getPickedReportMonth();
+  if (d) {
+    let head = '';
+    if (pickedD) head = 'Showing picked date ' + pickedD + ' (factory today is ' + ft + ') \u2014 ';
+    else if (pickedM) head = 'Showing month ' + pickedM + ' (factory today is ' + ft + ') \u2014 ';
+    else if (ft) head = 'Factory day ' + ft + ' \u2014 ';
+    d.textContent = head + new Date().toLocaleTimeString([], { timeZone: uiTz() });
+  }
   const dn = document.getElementById('dubai-now');
   if (dn) dn.textContent = 'Dubai time: ' + uiNowString();
   const ws = document.getElementById('work-status');
@@ -2618,12 +3371,51 @@ setInterval(function () {
  *   3. Cancellations section (cloud-side) appended at the bottom. */
 (function initCheckReport() {
   // fetchJsonSafe is not inlined in the dashboard helper bundle. Define a
-  // tiny local equivalent so the IIFE stays self-contained. Returns parsed
-  // JSON on 2xx, null on error (so the .then callback still gets a value).
+  // tiny local equivalent so the IIFE stays self-contained.
+  //
+  // The old version (r => r.json()) blindly parsed the body as JSON and
+  // caught errors as null. That swallowed the server's actual error message
+  // on a 4xx/5xx (e.g. "Session expired. Please sign in again.") and
+  // turned every failure into a generic "Network error" toast, which
+  // makes the operator's "Check Delivery" modal look broken when in fact
+  // it's a stale CEO session. This version:
+  //   - reads the body as text first
+  //   - tries to parse as JSON and surface server's error field on non-2xx
+  //   - falls back to "HTTP <status> <first 200 bytes>" for HTML / empty
+  //     bodies, and logs the full URL+status+body to console for diagnosis
+  //   - throws a real Error on non-2xx so the caller can branch (e.g. 401
+  //     -> refresh session and retry)
   function crFetchJson(url) {
-    return fetch(url, { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .catch(function () { return null; });
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+      var ct = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+      var looksJson = ct.indexOf('application/json') !== -1;
+      // Read the body as text first so we can both parse it and surface
+      // a useful slice of non-JSON bodies in the toast / console.
+      return r.text().then(function (txt) {
+        var parsed = null;
+        if (txt && (looksJson || txt.charCodeAt(0) === 123 || txt.charCodeAt(0) === 91)) {
+          try { parsed = JSON.parse(txt); } catch (_) { parsed = null; }
+        }
+        if (r.ok) {
+          // If the body is non-empty but unparseable, the server is
+          // misbehaving. Throw so the caller shows a real error rather
+          // than silently treating the malformed body as a report.
+          if (parsed == null && txt) {
+            console.error('[check-delivery] 2xx but unparseable body', { url: url, status: r.status, body: txt.slice(0, 200) });
+            throw new Error('Bad response (HTTP ' + r.status + ', non-JSON body)');
+          }
+          return parsed;
+        }
+        // Non-2xx: surface the server's error message when we can.
+        var msg = (parsed && (parsed.error || parsed.message)) || ('HTTP ' + r.status);
+        if (!parsed && txt) msg = msg + ' — ' + txt.slice(0, 200);
+        console.error('[check-delivery] non-2xx', { url: url, status: r.status, body: txt.slice(0, 200) });
+        var err = new Error(msg);
+        err.status = r.status;
+        err.url = url;
+        throw err;
+      });
+    });
   }
   const tz = 'Asia/Dubai';
   const state = {
@@ -2807,16 +3599,134 @@ setInterval(function () {
   };
   window.crSubmit = function () {
     if (!state.fromYmd) { showToast('Pick a date first'); return; }
-    const params = new URLSearchParams();
-    params.set('from', state.fromYmd);
-    params.set('to', state.toYmd);
-    if (state.factory) params.set('factory', state.factory);
-    crFetchJson(BASE + '/api/check-delivery-report?' + params.toString()).then(function (j) {
-      if (!j || !j.ok) { showToast((j && j.error) || 'Could not load report'); return; }
-      state.report = j;
-      state.step = 'report';
-      renderReport();
-    }).catch(function () { showToast('Network error while loading report'); });
+    // Reshape the server's compact aggregation into the nested
+    // factories[].invoices[] shape the renderers and crWhatsApp expect.
+    // Inputs:  j.byLocation[] (per-showroom totals), j.groups[]
+    //          (per-(location, invoice) detail with rows[]), j.cancellations[]
+    // Outputs: j.factories[] with name, totals, invoices[] (each with
+    //          no, abayas[{code, timestamp, status}], totals), and
+    //          j.cancellations[] with reason (renamed from
+    //          cancellationReason) for the cancel row renderer.
+    function transformReport(j) {
+      if (!j) return j;
+      // Group per-location invoices from the server's flat groups[].
+      const invoiceByLoc = new Map();
+      const groups = Array.isArray(j.groups) ? j.groups : [];
+      for (const g of groups) {
+        const loc = String(g.location || 'Unspecified');
+        let bucket = invoiceByLoc.get(loc);
+        if (!bucket) { bucket = []; invoiceByLoc.set(loc, bucket); }
+        const rows = Array.isArray(g.rows) ? g.rows : [];
+        const totals = { abayas: rows.length, delivered: 0, pending: 0, cancelled: 0 };
+        for (const r of rows) {
+          if (r.status === 'completed') totals.delivered += 1;
+          else if (r.status === 'cancelled') totals.cancelled += 1;
+          else totals.pending += 1;
+        }
+        bucket.push({
+          no: g.invoiceNo,
+          // Mark a synthetic "(no invoice)" entry when the group has no
+          // invoiceNo -- matches what the old server path used to emit
+          // so the renderers' inv.synthetic ? '(no invoice)' : inv.no
+          // ternary keeps working.
+          synthetic: !g.invoiceNo,
+          totals,
+          abayas: rows.map(function (r) {
+            return {
+              code: r.abayaCode || '',
+              status: r.status || 'pending',
+              // Renderers expect a millisecond timestamp.
+              timestamp: r.eventAt ? Date.parse(r.eventAt) : null,
+            };
+          }),
+        });
+      }
+      // Build the factories[] array. Use the server's factories[] as the
+      // source of truth for name + totals (it already has the
+      // per-showroom rollups) and stitch in the per-invoice drill-down
+      // we just computed.
+      const serverFactories = Array.isArray(j.factories) ? j.factories : [];
+      const byLocName = new Map((Array.isArray(j.byLocation) ? j.byLocation : []).map(function (lt) {
+        return [String(lt.location || ''), lt];
+      }));
+      const factories = (serverFactories.length ? serverFactories : Array.from(byLocName.values()).map(function (lt) {
+        return { name: lt.location, totals: {
+          invoices: lt.invoices, abayas: lt.abayas, delivered: lt.delivered,
+          pending: lt.pending, cancelled: lt.cancelled,
+        } };
+      })).map(function (f) {
+        const loc = String(f.name || '');
+        return Object.assign({}, f, { invoices: invoiceByLoc.get(loc) || [] });
+      });
+      // Cancellations: rename cancellationReason -> reason so the
+      // cancel-row renderer (which reads c.reason) doesn't render
+      // "undefined" inline.
+      const cancellations = (Array.isArray(j.cancellations) ? j.cancellations : []).map(function (c) {
+        const out = Object.assign({}, c);
+        if (typeof out.reason === 'undefined' && typeof out.cancellationReason !== 'undefined') {
+          out.reason = out.cancellationReason;
+        }
+        return out;
+      });
+      // Return a shallow-copied object so we never mutate the response
+      // and risk a future caller seeing the wrong shape.
+      return Object.assign({}, j, { factories: factories, cancellations: cancellations });
+    }
+    function buildUrl() {
+      const params = new URLSearchParams();
+      params.set('from', state.fromYmd);
+      params.set('to', state.toYmd);
+      if (state.factory) params.set('factory', state.factory);
+      params.set('ts', String(Date.now()));
+      return BASE + '/api/check-delivery-report?' + params.toString();
+    }
+    // One auto-retry on a 401 'Session expired' response: reissue the
+    // session via the existing /api/ceo/session/refresh endpoint, then
+    // retry the report fetch. Mirrors the pattern in the main poll()
+    // loop. Transparent to the operator -- if the refresh also fails
+    // (e.g. the refresh JWT itself expired) we fall through to the
+    // generic toast.
+    function fetchReport(attemptedRefresh) {
+      crFetchJson(buildUrl()).then(function (j) {
+        if (!j || !j.ok) { showToast((j && j.error) || 'Could not load report'); return; }
+        // The server returns a compact aggregation (byLocation + groups).
+        // The renderers + crWhatsApp expect a nested shape (factories with
+        // invoices[] inside). The server's factories field only carries
+        // name + totals -- no per-invoice drill-down -- which made
+        // factorySection blow up on f.invoices.map(...) with
+        // "Cannot read properties of undefined (reading 'map')". Map
+        // groups[] into the nested shape here, on the client, so we
+        // don't have to change the worker or the leaderboard proxy.
+        try { j = transformReport(j); } catch (e) {
+          console.error('[check-delivery] transform failed', e);
+          showToast('Could not load report: ' + ((e && e.message) || 'bad shape'));
+          return;
+        }
+        state.report = j;
+        state.step = 'report';
+        renderReport();
+      }).catch(function (e) {
+        var status = e && e.status;
+        if (status === 401 && !attemptedRefresh) {
+          fetch(BASE + '/api/ceo/session/refresh', {
+            method: 'POST',
+            credentials: 'same-origin',
+          }).then(function (ref) {
+            if (ref && ref.ok) return fetchReport(true);
+            // Refresh failed -- surface the original 401 message verbatim.
+            showToast('Session expired. Please sign in again.');
+          }).catch(function () {
+            showToast('Session expired. Please sign in again.');
+          });
+          return;
+        }
+        // Non-401 errors: surface the real message from the server (or
+        // the network / parse error). e.message is the human-readable
+        // text the new crFetchJson builds.
+        showToast('Could not load report: ' + ((e && e.message) || 'Network error'));
+      });
+    }
+    fetchReport(false);
   };
 
   function statCard(label, val, kind) {
