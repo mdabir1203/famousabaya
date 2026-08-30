@@ -92,7 +92,14 @@ export async function handleReport(env, url) {
   let dayBinds = [range.startYmd, range.endYmd];
   let prevDayBinds = [range.prevStart, range.prevEnd];
   let dailyFallbackApplied = false;
-  const dayFilter = `WHERE day_date >= ? AND day_date <= ?`;
+  // Factory's real roster uses `e_bc_<barcode>` stable ids (set by the
+  // local server's xlsx-based roster). Synthetic test rows (e1..e26,
+  // test-smoke-emp, ALIGN_DEMO_*, TEST_*, POSTDEPLOY_*) and any other
+  // non-roster emp_id would otherwise leak into the per-employee panels,
+  // the live row, and the daily KPI counts. Apply the roster guard at
+  // the SQL layer so the dashboard's per-employee aggregation matches
+  // the local dashboard (which already filtered client-side in v1.2.14).
+  const dayFilter = `WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'`;
 
   // Total time spent in D1 report batches — surfaced via Server-Timing so
   // real-world speed can be reviewed without guessing.

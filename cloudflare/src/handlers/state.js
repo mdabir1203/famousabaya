@@ -133,13 +133,21 @@ export async function handleState(env, url) {
   // for a new joiner the dashboard would show the alphabetically-later name
   // — which is the wrong person. Subquery picks the most-recent row per emp.
   // Anchor = the picked day (or today) so the perf list reflects that day.
+  // Roster guard: real factory employees have `e_bc_<barcode>` stable ids.
+  // Synthetic smoke-test / post-deploy-probe rows (e1..e26, test-smoke-emp,
+  // ALIGN_DEMO_*, TEST_*, POSTDEPLOY_*) must not appear in the live row,
+  // the per-employee perf, the process split, the abaya totals, or the
+  // hourly aggregation. Migration 0017 deleted the historical leftovers
+  // from the sessions table; this guard keeps the aggregations clean if
+  // a stray row reappears. Mirrors the client-side filter that the local
+  // dashboard already had in v1.2.14.
   const stmtPerf = env.DB.prepare(`
       WITH agg AS (
         SELECT emp_id, COUNT(*) as units,
                ROUND(AVG(duration_sec)) as avg_sec,
                SUM(duration_sec) as total_sec
         FROM sessions
-        WHERE day_date = ?
+        WHERE day_date = ? AND emp_id LIKE 'e_bc_%'
         GROUP BY emp_id
       ),
       latest AS (
@@ -148,7 +156,7 @@ export async function handleState(env, url) {
         JOIN (
           SELECT emp_id, MAX(ended_at) AS last_end
           FROM sessions
-          WHERE day_date = ?
+          WHERE day_date = ? AND emp_id LIKE 'e_bc_%'
           GROUP BY emp_id
         ) m ON m.emp_id = s.emp_id AND m.last_end = s.ended_at
       )
@@ -167,7 +175,7 @@ export async function handleState(env, url) {
     `).bind(fromYmd, toYmd);
   const stmtAgg = env.DB.prepare(`
       SELECT COUNT(*) as cnt, COALESCE(SUM(duration_sec), 0) as total_sec
-      FROM sessions WHERE day_date >= ? AND day_date <= ?
+      FROM sessions WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'
     `).bind(anchorYmd, toYmd);
   // Distinct abayas that touched the line in the KPI window. The
   // existing `completed_today` counts finished sessions; this counts
@@ -181,14 +189,17 @@ export async function handleState(env, url) {
       FROM sessions
       WHERE day_date >= ? AND day_date <= ?
         AND abaya_id IS NOT NULL AND abaya_id != ''
+        AND emp_id LIKE 'e_bc_%'
     `).bind(anchorYmd, toYmd);
   const stmtProcSplit = env.DB.prepare(`
       SELECT emp_process, COUNT(*) as cnt FROM sessions
-      WHERE day_date >= ? AND day_date <= ? GROUP BY emp_process
+      WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'
+      GROUP BY emp_process
     `).bind(anchorYmd, toYmd);
   const stmtHourly = env.DB.prepare(`
       SELECT hour_of_day, COUNT(*) as cnt FROM sessions
       WHERE day_date = ? AND hour_of_day >= ? AND hour_of_day <= ?
+        AND emp_id LIKE 'e_bc_%'
       GROUP BY hour_of_day
     `).bind(anchorYmd, hourStart, hourEnd);
   const stmtGarment = env.DB.prepare(`
