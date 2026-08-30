@@ -1115,7 +1115,6 @@ function abayaIsCustom(abayaId) {
   const row = map[sid];
   return !!(row && row.is_custom);
 }
-}
 
 function garmentTotalLiveForId(abayaId) {
   return garmentCompletedFromState(abayaId) + activeSecondsOnGarment(abayaId);
