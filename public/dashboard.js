@@ -324,6 +324,24 @@ function applyFallbackState(state) {
   // Invalidate report cache: logs / active sessions / work types may have changed.
   if (typeof reportCacheClear === 'function') reportCacheClear();
   if (typeof dashboardAggregateCacheClear === 'function') dashboardAggregateCacheClear();
+  // Pulse the .dash opacity so the innerHTML replacements in renderAll
+  // don't look like the previous data vanished. The same pattern as the
+  // cloud ceo-pages.js fix — dim → rAF → assign STATE → render → rAF →
+  // restore. Debounced 250ms so a burst of socket state_update events
+  // doesn't strobe the opacity.
+  const dashEl = document.querySelector('.dash');
+  if (dashEl) {
+    const now = Date.now();
+    if (!applyFallbackState._lastPulse || (now - applyFallbackState._lastPulse) > 250) {
+      applyFallbackState._lastPulse = now;
+      dashEl.classList.add('is-syncing');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          if (dashEl) dashEl.classList.remove('is-syncing');
+        });
+      });
+    }
+  }
   STATE = state;
   updateOfflineRestoreBanner(state, null);
   updateDatabaseStatusPanel(null);

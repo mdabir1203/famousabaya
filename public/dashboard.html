@@ -62,7 +62,8 @@ button,.rep-btn,.dash-tab,.btn-close,.btn-export,input,select{user-select:none;-
 @media(prefers-reduced-motion:reduce){.abaya-release-moment--motion .abaya-release-moment__glow{animation:none!important}}
 
 /* Layout */
-.dash{padding:18px;max-width:1200px;margin:0 auto}
+.dash{padding:18px;max-width:1200px;margin:0 auto;transition:opacity .18s ease}
+.dash.is-syncing{opacity:.55}
 .dh{font-family:var(--fn-display);font-size:22px;font-weight:700;margin-bottom:4px}
 .ds{font-size:13px;color:var(--tx3);margin-bottom:20px}
 
