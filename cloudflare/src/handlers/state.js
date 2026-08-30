@@ -611,18 +611,18 @@ export async function handleState(env, url) {
       };
       return;
     }
-    // If the live session was started more than 24h after the most
-    // recent finished session in the current build, the SQL CTE
-    // considered it the start of a *new* build (its `prev_end` is
-    // the last finished row, and the gap is >= 86400). In that case
-    // the live session is the new build's only row, and the finished
-    // rows from the previous build should NOT be in `b`. But the
-    // SQL also won't return them (the `latest` CTE filters by
-    // build_seq = MAX). So if the live session is older than the
-    // current build's `build_start_unix` by more than 24h, we reset
-    // the build to be just the live row. (Forgotten-Finish that
-    // nobody fixed across a weekend.)
-    if (startedSec - b.build_start_unix >= 86400) {
+    // Symmetric 24h-gap check: if the live session is more than 24h
+    // away from the SQL build_start in EITHER direction, it belongs
+    // to a different build. The SQL CTE already filters to the latest
+    // contiguous group, so a live that's far in the future means the
+    // worker just started a new build (forgotten-Finish from a
+    // previous shift) and a live that's far in the past means the
+    // worker has been on an old session that the rest of the floor
+    // has already moved past (e.g. live since Aug 26, build restarted
+    // Aug 29 because other stations picked up the abaya). Either way,
+    // reset the build to be just the live row so units / totals don't
+    // leak from the SQL build into the live row's view.
+    if (Math.abs(startedSec - b.build_start_unix) >= 86400) {
       b.units = 0;
       b.total_in_window_sec = 0;
       b.build_start_unix = startedSec;

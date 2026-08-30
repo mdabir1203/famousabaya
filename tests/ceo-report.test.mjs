@@ -171,30 +171,35 @@ test('handleReport supports custom from/to ranges and validates them', async () 
 });
 
 test('handleEmployeeDay returns chronological sessions with totals for one employee/date', async () => {
+  // Fixture timestamps deliberately fall inside the default working
+  // window (09:00-13:30 Asia/Dubai) so windowedActiveTimeSec returns
+  // the full duration_sec for each row. The previous fixture (07:33
+  // and 08:33 GST) straddled the 09:00 shift start and got clamped
+  // to 1980s, breaking the 1800 + 3600 = 5400 total.
   const fixture = [
     {
-      emp_id: 'E1',
+      emp_id: 'e_bc_00000121',
       emp_name: 'Amina',
       emp_code: '01',
       emp_process: 'Stitching',
       abaya_id: 'AB-1',
       abaya_code: 'AB-001',
-      started_at: 1784000000,
-      ended_at: 1784001800,
+      started_at: 1784005200, // 2026-07-14 09:00 GST
+      ended_at: 1784007000,   // 2026-07-14 09:30 GST
       duration_sec: 1800,
       invoice_count: null,
       invoice_serial: null,
       station: 'S-02',
     },
     {
-      emp_id: 'E1',
+      emp_id: 'e_bc_00000121',
       emp_name: 'Amina',
       emp_code: '01',
       emp_process: 'Stitching',
       abaya_id: 'AB-2',
       abaya_code: 'AB-002',
-      started_at: 1784003600,
-      ended_at: 1784007200,
+      started_at: 1784007000, // 2026-07-14 09:30 GST
+      ended_at: 1784010600,   // 2026-07-14 10:30 GST
       duration_sec: 3600,
       invoice_count: null,
       invoice_serial: null,
@@ -208,16 +213,16 @@ test('handleEmployeeDay returns chronological sessions with totals for one emplo
     return { results: [] };
   };
   const { env, calls } = makeMockEnv(handler);
-  const res = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=E1&date=2026-07-14'));
+  const res = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000121&date=2026-07-14'));
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.emp.name, 'Amina');
   assert.equal(body.date, '2026-07-14');
   const sessionsCall = calls.find((c) => c.sql.includes('FROM sessions'));
-  assert.deepEqual(sessionsCall.args, ['2026-07-14', 'E1']);
+  assert.deepEqual(sessionsCall.args, ['2026-07-14', 'e_bc_00000121']);
   assert.equal(body.sessions.length, 2);
-  assert.equal(body.sessions[0].started_at, 1784000000); // chronological
+  assert.equal(body.sessions[0].started_at, 1784005200); // chronological (09:00 GST)
   assert.equal(body.totals.units, 2);
   assert.equal(body.totals.active_time_sec, 5400);
   assert.equal(body.totals.live_active_time_sec, 0);
@@ -228,7 +233,7 @@ test('handleEmployeeDay validates emp_id and date', async () => {
   const { env } = makeMockEnv(() => ({ results: [] }));
   const r1 = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=&date=2026-07-14'));
   assert.equal(r1.status, 400);
-  const r2 = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=E1&date=14-07-2026'));
+  const r2 = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000121&date=14-07-2026'));
   assert.equal(r2.status, 400);
   const b = await r2.json();
   assert.equal(b.ok, false);
@@ -243,7 +248,7 @@ test('handleEmployeeDay merges the live session when date is factory today', asy
       return {
         results: [
           {
-            emp_id: 'E1',
+            emp_id: 'e_bc_00000121',
             emp_name: 'Amina',
             emp_code: '01',
             emp_process: 'Stitching',
@@ -258,7 +263,7 @@ test('handleEmployeeDay merges the live session when date is factory today', asy
     return { results: [] };
   };
   const { env } = makeMockEnv(handler);
-  const res = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=E1&date=' + today));
+  const res = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000121&date=' + today));
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.sessions.length, 1);

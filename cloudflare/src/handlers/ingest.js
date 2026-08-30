@@ -46,6 +46,24 @@ export async function handleIngest(request, env) {
     return errRes('Missing or invalid payload', 400);
   }
 
+  // Roster guard: real factory employees have stable ids in the form
+  // `e_bc_<barcode>` (set by the local server's xlsx-based roster).
+  // Anything else is a smoke-test, a post-deploy probe, or a misconfigured
+  // local server, and it would otherwise leak into the per-employee
+  // aggregations and the live row. Reject at the ingest boundary so the
+  // bad row never lands in D1 in the first place. The local server maps
+  // its short numeric `emp_id` to the barcoded form before pushing (see
+  // server.js's `stableEmployeeIdFromBarcode`), so any non-`e_bc_*`
+  // payload here is by definition wrong.
+  const incomingEmpId = String((payload && payload.emp_id) || '').trim();
+  if (!incomingEmpId) {
+    return errRes('Missing emp_id in payload', 400);
+  }
+  if (!/^e_bc_\d+$/.test(incomingEmpId)) {
+    console.warn('[ingest] rejected non-roster emp_id:', incomingEmpId, 'type=', type);
+    return errRes('emp_id must be in the form e_bc_<barcode> (roster guard)', 422);
+  }
+
   if (type === 'session_start') {
     const startSec = Number(payload.started_at) || now;
     const startCfg = await getWorkingHoursConfig(env);
