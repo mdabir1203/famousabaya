@@ -6,6 +6,7 @@ import {
   overlapSecWithWindows,
 } from '../working-hours.js';
 import { isValidYmd } from './report-shared.js';
+import { windowedActiveTimeSec } from './report.js';
 
 /**
  * GET /api/report/employee-day?emp_id=X&date=YYYY-MM-DD
@@ -132,9 +133,12 @@ export async function handleEmployeeDay(env, url) {
     live: false,
   }));
 
+  // Always load workingCfg — we use it both for the live session (today only)
+  // and to window every finished session's duration (always).
+  const workingCfg = workingHoursConfigFromRow(whRes && whRes.results && whRes.results[0]);
+
   let liveSec = 0;
   if (isToday) {
-    const workingCfg = workingHoursConfigFromRow(whRes && whRes.results && whRes.results[0]);
     const activeRows = (activeRes && activeRes.results) || [];
     if (activeRows.length) {
       const r = activeRows[0];
@@ -159,7 +163,19 @@ export async function handleEmployeeDay(env, url) {
 
   const lastRaw = rows.length ? rows[rows.length - 1] : null;
   const liveRow = sessions.length && sessions[sessions.length - 1].live ? sessions[sessions.length - 1] : null;
-  const activeSec = sessions.reduce((s, x) => s + (x.live ? 0 : x.duration_sec), 0);
+  // Windowed: each finished session's contribution is its in-shift
+  // minutes only. The D1 `duration_sec` is the raw wall-clock sum, which
+  // would over-count any session that started before lunch and finished
+  // after (or that ran past the end of a shift because the worker forgot
+  // to tap Finish). The total below is the operator's real "how much
+  // time did this person actually work today" answer.
+  const finishedRows = sessions
+    .filter((x) => !x.live)
+    .map((x) => ({ active_time_sec: x.duration_sec, min_started_at: x.started_at, max_ended_at: x.ended_at }));
+  let activeSec = 0;
+  for (const r of finishedRows) {
+    activeSec += windowedActiveTimeSec(r, workingCfg);
+  }
   // Build the response `emp` block. We prefer the roster (which the
   // dashboard uses for the dropdown), then fall back to the most-recent
   // session row for fields the roster doesn't have (station etc).
@@ -199,9 +215,12 @@ export async function handleEmployeeDay(env, url) {
     }
   }
 
-  // Last 14 days for this employee (always run, cheap). Lets the
-  // day-report modal render a clickable 14-day history strip so the
-  // CEO can see at a glance which dates actually have data.
+  // Last 30 days for this employee (always run, cheap). Lets the
+  // day-report modal render a clickable 30-day history strip so the
+  // CEO can see at a glance which dates actually have data. The strip
+  // caps at 30 cells (5×6 of a 7-col grid is also fine); the SQL is
+  // bounded to a single employee so the indexed day_date scan is fast.
+  const RECENT_DAYS_N = 30;
   let recentDays = [];
   if (empIdList.length) {
     try {
@@ -210,7 +229,7 @@ export async function handleEmployeeDay(env, url) {
       const fromYmd = (function () {
         if (!parts[0] || !parts[1] || !parts[2]) return factoryToday;
         const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
-        d.setUTCDate(d.getUTCDate() - 13);
+        d.setUTCDate(d.getUTCDate() - (RECENT_DAYS_N - 1));
         return d.getUTCFullYear() + '-' +
           String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
           String(d.getUTCDate()).padStart(2, '0');
@@ -221,8 +240,8 @@ export async function handleEmployeeDay(env, url) {
          WHERE emp_id IN (${empIdPlaceholders}) AND day_date >= ? AND day_date <= ?
          GROUP BY day_date
          ORDER BY day_date DESC
-         LIMIT 14`
-      ).bind(...empIdList, fromYmd, start).all();
+         LIMIT ?`
+      ).bind(...empIdList, fromYmd, start, RECENT_DAYS_N).all();
       recentDays = (recentRes.results || []).map((r) => ({
         day_date: r.day_date,
         units: Number(r.n) || 0,

@@ -106,6 +106,65 @@ button,.rep-btn,.dash-tab,.btn-close,.btn-export,input,select{user-select:none;-
 .btn-close{padding:14px 24px;background:var(--s2);color:var(--tx2);font-weight:600;border:1px solid var(--bd2);border-radius:13px;font-size:14px;cursor:pointer;font-family:var(--fn);transition:all .2s;text-transform:uppercase;letter-spacing:0.2px}
 .btn-close:hover{background:var(--s3);color:var(--tx)}
 
+/* ─── Per-employee day modal — cloud parity (1:1 with dashboard.farewellabaya.com) ─── */
+.cr-wrap{display:flex;flex-direction:column;gap:14px}
+.cr-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cr-tot{background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:10px;text-align:center}
+.cr-tot-lbl{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;font-weight:600}
+.cr-tot-val{font-size:20px;font-weight:800;color:var(--gr);font-family:var(--fn-display);letter-spacing:-.5px}
+.cr-section{background:var(--s2);border:1px solid var(--bd);border-radius:12px;overflow:hidden}
+.cr-section-h{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--bd);font-size:12px;color:var(--tx2);font-weight:700;text-transform:uppercase;letter-spacing:.6px}
+.cr-section-h .cr-mini{font-size:10px;color:var(--tx3);font-weight:600;text-transform:none;letter-spacing:0}
+.cr-scroll{max-height:340px;overflow-y:auto}
+.cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
+.cr-status{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+/* 30-day history strip in the per-employee day modal. */
+.ed-day-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 12px}
+.ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:6px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:54px;background:transparent}
+.ed-day-cell:hover{transform:translateY(-1px);border-color:var(--am)}
+.ed-day-cell.is-current{border-color:var(--am);box-shadow:0 0 0 1px rgba(245,158,11,.4)}
+.ed-day-date{font-size:10px;color:var(--tx3);font-weight:600;letter-spacing:.4px}
+.ed-day-units{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.ed-day-time{font-size:10px;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.1;margin-top:1px}
+/* By-employee table inside the report modal — 1:1 with cloud dashboard. */
+.by-emp-table{background:var(--s2);border:1px solid var(--bd);border-radius:10px;overflow:visible;margin-bottom:16px}
+.by-emp-head,.by-emp-row{display:grid;grid-template-columns:minmax(0,1fr) 50px 80px 80px 80px 80px 60px;gap:8px;padding:10px 12px;align-items:center;position:relative}
+.by-emp-head{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--bd);border-radius:10px 10px 0 0;background:var(--s1)}
+.by-emp-head>span,.by-emp-row>span[data-col]{text-align:right;font-variant-numeric:tabular-nums}
+.by-emp-row{cursor:pointer;border-bottom:1px solid rgba(54,45,89,.2);font-size:13px;transition:background-color .14s ease,transform .14s ease}
+.by-emp-body>*:last-child.by-emp-row{border-bottom:0}
+.by-emp-row:hover{background:rgba(106,95,193,.10);transform:translateX(1px)}
+.by-emp-row:hover .by-emp-name{color:var(--am)}
+.by-emp-name{display:inline-block;text-decoration:none;background-image:linear-gradient(currentColor,currentColor);background-size:0 1px;background-repeat:no-repeat;background-position:0 100%;transition:background-size .25s ease,color .14s ease;min-width:0}
+.by-emp-row:hover .by-emp-name{background-size:100% 1px}
+.by-emp-units-pill{display:inline-block;min-width:34px;padding:2px 8px;border-radius:999px;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.32);color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums;font-size:12px;text-align:center}
+.by-emp-col-hide-mid,.by-emp-col-hide-sm{display:none}
+/* Medium: <=720px — drop live + tolerance */
+@media(max-width:720px){
+  .by-emp-head,.by-emp-row{grid-template-columns:minmax(0,1fr) 56px 80px 80px 60px;gap:6px;padding:10px;font-size:12px}
+  .by-emp-col-hide-mid{display:none}
+}
+/* Small: <=520px — card layout: name+units on top row, time stats below */
+@media(max-width:520px){
+  .by-emp-head{display:none}
+  .by-emp-row{display:block;padding:10px 12px}
+  .by-emp-popup{display:none !important}
+}
+/* Hover popup on by-emp rows — 1:1 with cloud. */
+.by-emp-popup{position:absolute;right:14px;top:50%;transform:translateY(-50%) translateX(6px);width:240px;max-width:calc(100% - 28px);background:linear-gradient(180deg,rgba(34,24,58,.97),rgba(22,15,36,.97));border:1px solid rgba(124,111,224,.45);border-radius:12px;padding:14px;font-size:12px;color:var(--tx);box-shadow:0 14px 40px rgba(0,0,0,.45),0 0 0 1px rgba(124,111,224,.18);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:5;backdrop-filter:blur(14px) saturate(180%)}
+.by-emp-row:hover .by-emp-popup,.by-emp-row:focus-within .by-emp-popup{opacity:1;transform:translateY(-50%) translateX(0);pointer-events:auto}
+.by-emp-popup-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.by-emp-popup-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#0f0a1f;flex-shrink:0}
+.by-emp-popup-name{font-size:15px;font-weight:700;color:#fff;line-height:1.15}
+.by-emp-popup-empcode{font-size:10px;color:var(--tx3);letter-spacing:.5px;margin-top:1px}
+.by-emp-popup-processes{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.by-emp-popup-process{font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px;line-height:1.2}
+.by-emp-popup-units-row{display:flex;align-items:baseline;justify-content:space-between;padding:8px 0 12px;border-top:1px solid rgba(124,111,224,.18);border-bottom:1px solid rgba(124,111,224,.18);margin-bottom:10px}
+.by-emp-popup-units-lbl{font-size:10px;color:var(--gr);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.by-emp-popup-units-val{font-size:24px;font-weight:800;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1}
+.by-emp-popup-cta{display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 12px;background:linear-gradient(135deg,#7c6fe0,#422082);color:#fff;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;letter-spacing:.3px;transition:filter .14s ease,transform .14s ease;cursor:pointer;border:0;width:100%;font-family:var(--fn)}
+.by-emp-popup-cta:hover{filter:brightness(1.1);transform:translateY(-1px)}
+
 /* Toast */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--s1);border:1px solid var(--bd2);border-radius:12px;padding:12px 20px;font-size:13px;font-weight:500;z-index:1000;transition:transform .35s cubic-bezier(.175,.885,.32,1.275);white-space:nowrap;max-width:90vw;text-align:center}
 .toast.show{transform:translateX(-50%) translateY(0)}
@@ -333,22 +392,27 @@ button,.rep-btn,.dash-tab,.btn-close,.btn-export,input,select{user-select:none;-
     <div class="stat-card">
       <div class="stat-lbl">Completed Today</div>
       <div class="stat-val" id="kpi-completed" style="color:var(--gr)">0</div>
-      <div class="stat-sub">&#8593; Real-time tracking</div>
+      <div class="stat-sub">steps completed</div>
+    </div>
+    <div class="stat-card" title="Distinct abayas that touched the line today. Different from 'Completed Today' which counts every finished session: one abaya that went through Tailor (01) + Button + Hand Work + Tailor (02) = 1 abaya here, 4 in Completed Today.">
+      <div class="stat-lbl">Abayas Delivered</div>
+      <div class="stat-val" id="kpi-abayas-delivered" style="color:var(--pu)">0</div>
+      <div class="stat-sub">distinct garments</div>
     </div>
     <div class="stat-card">
       <div class="stat-lbl">Active Workers</div>
       <div class="stat-val" id="kpi-active" style="color:var(--bl)">0</div>
       <div class="stat-sub">on the floor now</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-lbl">Avg Cycle Time</div>
+    <div class="stat-card" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">
+      <div class="stat-lbl">Avg Session Time</div>
       <div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div>
-      <div class="stat-sub">per abaya unit</div>
+      <div class="stat-sub">median per finished step</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-lbl">In Progress</div>
-      <div class="stat-val" id="kpi-inprog">0</div>
-      <div class="stat-sub">abayas on floor</div>
+    <div class="stat-card" title="Median in-window seconds / 2700 (45-min target) capped at 100. Same math as the cloud dashboard so the offline + online screens show the same number.">
+      <div class="stat-lbl">Efficiency Score</div>
+      <div class="stat-val" id="kpi-eff">—</div>
+      <div class="stat-sub">vs 45-min target</div>
     </div>
   </div>
 
@@ -421,6 +485,22 @@ button,.rep-btn,.dash-tab,.btn-close,.btn-export,input,select{user-select:none;-
     <div class="modal-actions">
       <button class="btn-export" onclick="exportReport()">&#128241; Send via WhatsApp</button>
       <button class="btn-close" onclick="closeReport()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- PER-EMPLOYEE DAY MODAL (1:1 with cloud dashboard's #modal-ed).
+     Triggered by tapping a name in any report's "By employee" table.
+     Pure-client: uses STATE.logs (already 400 days of history) so the
+     local LAN dashboard has feature parity with the cloud CEO dashboard
+     without needing a new server endpoint. -->
+<div class="modal-overlay" id="modal-ed" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+  <div class="modal-box" style="max-width:780px">
+    <div class="modal-title" id="ed-title">Employee day</div>
+    <div class="modal-sub" id="ed-sub">What this person did on the picked date, in order.</div>
+    <div id="ed-body" class="cr-wrap"></div>
+    <div class="modal-actions" id="ed-actions">
+      <button class="btn-close" onclick="closeEmployeeDay()">Close</button>
     </div>
   </div>
 </div>

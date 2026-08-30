@@ -52,25 +52,47 @@ export async function handleIngest(request, env) {
     if (!isInWorkingWindow(startSec, startCfg)) {
       return errRes('Outside shift hours. Sessions can only start within working windows.', 422);
     }
-    await env.DB.prepare(`
-      INSERT OR REPLACE INTO active_sessions
-        (emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
-         abaya_id, abaya_code, station, started_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-      .bind(
-        payload.emp_id,
-        payload.emp_name,
-        payload.emp_code,
-        canonicalEmpProcess(payload.emp_process),
-        payload.emp_color,
-        payload.emp_initials,
-        payload.abaya_id,
-        payload.abaya_code,
-        payload.station || 'S-02',
-        payload.started_at || now
-      )
-      .run();
+    try {
+      const insertRes = await env.DB.prepare(`
+        INSERT OR REPLACE INTO active_sessions
+          (emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
+           abaya_id, abaya_code, station, started_at,
+           effective_started_at, windowed_elapsed_sec, outside_shift, is_cross_day)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+        .bind(
+          payload.emp_id,
+          payload.emp_name,
+          payload.emp_code,
+          canonicalEmpProcess(payload.emp_process),
+          payload.emp_color,
+          payload.emp_initials,
+          payload.abaya_id,
+          payload.abaya_code,
+          payload.station || 'S-02',
+          payload.started_at || now,
+          // Live-state columns (local server is canonical for these — see
+          // shared/live-row-state.cjs). Fall back to the raw started_at
+          // and "in shift" defaults for legacy push payloads that don't
+          // ship the new fields.
+          Number.isFinite(Number(payload.effective_started_at))
+            ? Number(payload.effective_started_at)
+            : (payload.started_at || now),
+          Math.max(0, Math.floor(Number(payload.windowed_elapsed_sec) || 0)),
+          payload.outside_shift ? 1 : 0,
+          payload.is_cross_day ? 1 : 0
+        )
+        .run();
+      // D1 returns { success, meta: { changes, last_row_id, ... } }. Log so
+      // tail shows the actual write count — useful when the active_sessions
+      // row appears missing on read.
+      console.log('[ingest] session_start wrote', payload.emp_id, 'changes=', insertRes && insertRes.meta && insertRes.meta.changes);
+    } catch (insertErr) {
+      // Surface the actual D1 error so we stop guessing why the row
+      // isn't appearing in /api/state reads.
+      console.error('[ingest] session_start INSERT failed for', payload.emp_id, ':', insertErr && insertErr.message);
+      return errRes('Failed to persist session_start: ' + (insertErr && insertErr.message ? insertErr.message : String(insertErr)), 500);
+    }
 
     return jsonRes({ ok: true, event: 'session_start' });
   }
@@ -169,7 +191,28 @@ export async function handleIngest(request, env) {
     );
   }
 
-  await env.DB.batch([insertStmt, deleteStmt, upsertStmt, ...extra]);
+  try {
+    const batchRes = await env.DB.batch([insertStmt, deleteStmt, upsertStmt, ...extra]);
+    // batchRes is an array; the order matches the input stmts.
+    // Index 0 = sessions INSERT OR IGNORE, 1 = active_sessions DELETE,
+    // 2 = daily_stats UPSERT, 3+ = abaya_time_map (if any).
+    const sessionsMeta = batchRes && batchRes[0] && batchRes[0].meta;
+    const activeDeleteMeta = batchRes && batchRes[1] && batchRes[1].meta;
+    console.log(
+      '[ingest] session_finish',
+      sessionId,
+      'sessions_changes=',
+      sessionsMeta && sessionsMeta.changes,
+      'active_delete_changes=',
+      activeDeleteMeta && activeDeleteMeta.changes
+    );
+  } catch (finishErr) {
+    console.error('[ingest] session_finish BATCH failed for', sessionId, ':', finishErr && finishErr.message);
+    return errRes(
+      'Failed to persist session_finish: ' + (finishErr && finishErr.message ? finishErr.message : String(finishErr)),
+      500
+    );
+  }
 
   return jsonRes({ ok: true, event: 'session_finish', session_id: sessionId });
 }
