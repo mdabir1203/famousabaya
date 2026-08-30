@@ -1351,12 +1351,13 @@ function buildLiveSessionsHtml() {
         // Daily/Weekly/Monthly/Yearly reports and the per-abaya totals
         // panel for productivity calculations.
         (function () {
+          const buildTitle = 'Wall-clock age of the current build, counted from its first session (24h-gap rule). Not capped to shift windows and not the per-session timer. The in-shift working time is on the Daily / Weekly / Monthly / Yearly reports.';
           if (!buildStartUnix || buildStartUnix <= 0) {
-            return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
+            return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
               '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           }
           const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - buildStartUnix));
-          return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + '</div>' +
+          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + '</div>' +
             '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + esc(new Date(buildStartUnix * 1000).toLocaleDateString([], { timeZone: tz, year: 'numeric', month: 'short', day: '2-digit' })) + '</div>';
         })() +
         '</div></div>'
