@@ -286,6 +286,29 @@ jobs:
           Write-Host ""
           Write-Host "All release artifacts verified successfully."
 
+      # ----------------------------------------------------------
+      # UPLOAD BUILD ARTIFACTS
+      # ----------------------------------------------------------
+      # Always upload so the build survives a failed publish step.
+      # Without this, a publish failure loses the entire build and the
+      # operator has to wait for the next push to main before retrying.
+      # The operator can re-run the failed publish job after fixing
+      # GH_PAT (or GITHUB_TOKEN) and `gh release create` will pick up
+      # these preserved artifacts from the same run.
+      - name: 📤 Upload Build Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v${{ steps.version.outputs.version }}-launcher-build
+          path: |
+            install/AbaYa-Track-Launcher-Setup-${{ steps.version.outputs.version }}.exe
+            install/AbaYa-Track-Launcher-Setup-${{ steps.version.outputs.version }}.exe.blockmap
+            install/latest.yml
+            dist/AbaYa-Track-v${{ steps.version.outputs.version }}.zip
+            release-notes.md
+          retention-days: 30
+          if-no-files-found: error
+
 
       # ----------------------------------------------------------
       # PUBLISH GITHUB RELEASE
