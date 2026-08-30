@@ -291,6 +291,14 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .cr-status.pending{color:var(--am);background:rgba(255,178,135,.12);border:1px solid rgba(255,178,135,.3)}
 .cr-status.cancelled{color:var(--rd);background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
 .cr-empty{padding:24px;text-align:center;color:var(--tx3);font-size:13px}
+/* Smooth the data-swap on every poll. Without this, the innerHTML
+   replacements in renderAll() visibly snap, making the live row +
+   per-employee + abaya totals look like the previous data is going
+   away and being replaced. The .is-syncing class is applied to .dash
+   around the STATE = d; renderAll() pair so the user sees a brief
+   pulse instead of a hard swap. */
+.dash{transition:opacity .18s ease}
+.dash.is-syncing{opacity:.55}
 /* 30-day history strip in the per-employee day report. */
 .ed-day-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:10px 12px}
 .ed-day-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:6px 4px;border-radius:8px;border:1px solid rgba(54,45,89,.35);font-family:var(--fn);color:var(--tx);cursor:pointer;transition:transform .12s ease,border-color .12s ease;min-height:54px}
@@ -765,6 +773,14 @@ async function poll(skipRefreshRetry) {
         return;
       }
       sessionExpired = false;
+      // Pulse the .dash opacity so the innerHTML swap in renderAll()
+      // doesn't look like the previous data vanished. See the .is-syncing
+      // CSS rule for the transition. Two rAFs: the first lets the browser
+      // paint the dimmed state, the second lets it paint the new content
+      // before restoring opacity.
+      var dashEl = document.querySelector('.dash');
+      if (dashEl) dashEl.classList.add('is-syncing');
+      await new Promise(function (r) { requestAnimationFrame(r); });
       STATE = d;
       var renderOk = false;
       try {
@@ -781,6 +797,10 @@ async function poll(skipRefreshRetry) {
             (hint ? ' — ' + hint : '') +
             ' (console)';
         }
+      }
+      if (dashEl) {
+        await new Promise(function (r) { requestAnimationFrame(r); });
+        dashEl.classList.remove('is-syncing');
       }
       if (syncEl && renderOk) {
         const lagMs = Number(d.ingest_lag_ms || 0);
