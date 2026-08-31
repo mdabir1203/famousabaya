@@ -1,6 +1,6 @@
 [
   {
-    "id": "e13",
+    "id": "e_bc_00000121",
     "name": "Alazar",
     "code": "EMP121",
     "emp_no": "121",
@@ -9,10 +9,10 @@
     "barcode": "00000121",
     "color": "#fa7faa",
     "initials": "AL",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000121.jpg"
   },
   {
-    "id": "e9",
+    "id": "e_bc_00000117",
     "name": "Amirull",
     "code": "EMP117",
     "emp_no": "117",
@@ -21,46 +21,46 @@
     "barcode": "00000117",
     "color": "#8b5cf6",
     "initials": "AM",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000117.jpg"
   },
   {
-    "id": "e15",
+    "id": "e_bc_00000123",
     "name": "Anasari",
     "code": "EMP123",
     "emp_no": "123",
     "ac_no": "15",
-    "process": "Ari Work",
+    "process": "Embroidery",
     "barcode": "00000123",
     "color": "#c2ef4e",
     "initials": "AN",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000123.jpg"
   },
   {
-    "id": "e24",
+    "id": "e_bc_00000133",
     "name": "Anwar",
     "code": "EMP133",
     "emp_no": "133",
     "ac_no": "24",
-    "process": "Ari Work",
+    "process": "Hand Work",
     "barcode": "00000133",
     "color": "#fa7faa",
     "initials": "AN",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000133.jpg"
   },
   {
-    "id": "e7",
+    "id": "e_bc_00000115",
     "name": "Arif",
     "code": "EMP115",
     "emp_no": "115",
     "ac_no": "7",
-    "process": "Ari Work",
+    "process": "Tailor (01)",
     "barcode": "00000115",
     "color": "#ffb287",
     "initials": "AR",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000115.jpg"
   },
   {
-    "id": "e10",
+    "id": "e_bc_00000118",
     "name": "Arman",
     "code": "EMP118",
     "emp_no": "118",
@@ -69,11 +69,11 @@
     "barcode": "00000118",
     "color": "#14b8a6",
     "initials": "AR",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000118.jpg"
   },
   {
-    "id": "e26",
-    "name": "ArmanAnasari",
+    "id": "e_bc_00000135",
+    "name": "Arman Raza",
     "code": "EMP135",
     "emp_no": "135",
     "ac_no": "26",
@@ -81,46 +81,46 @@
     "barcode": "00000135",
     "color": "#c2ef4e",
     "initials": "AR",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000135.jpg"
   },
   {
-    "id": "e2",
+    "id": "e_bc_00000110",
     "name": "Cyril",
     "code": "EMP110",
     "emp_no": "110",
     "ac_no": "2",
-    "process": "Tailor (02)",
+    "process": "Checker",
     "barcode": "00000110",
     "color": "#a78bfa",
     "initials": "CY",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000110.jpeg"
   },
   {
-    "id": "e20",
+    "id": "e_bc_00000129",
     "name": "Farhan",
     "code": "EMP129",
     "emp_no": "129",
     "ac_no": "20",
-    "process": "Checker",
+    "process": "Hand Work",
     "barcode": "00000129",
     "color": "#6a5fc1",
     "initials": "FA",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000127.jpg"
   },
   {
-    "id": "e14",
-    "name": "Hafiz",
-    "code": "EMP122",
-    "emp_no": "122",
-    "ac_no": "14",
+    "id": "e_bc_136",
+    "name": "IRFAN",
+    "code": "EMP136",
+    "emp_no": "136",
+    "ac_no": "27",
     "process": "Embroidery",
-    "barcode": "00000122",
-    "color": "#a78bfa",
-    "initials": "HA",
+    "barcode": "136",
+    "color": "#c2ef4e",
+    "initials": "IR",
     "photo": ""
   },
   {
-    "id": "e19",
+    "id": "e_bc_00000128",
     "name": "Ibrahim",
     "code": "EMP128",
     "emp_no": "128",
@@ -129,174 +129,114 @@
     "barcode": "00000128",
     "color": "#79628c",
     "initials": "IB",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000126.jpg"
   },
   {
-    "id": "e3",
+    "id": "e_bc_00000111",
     "name": "Irfan",
     "code": "EMP111",
     "emp_no": "111",
     "ac_no": "3",
-    "process": "Hand Work",
+    "process": "Tailor (01)",
     "barcode": "00000111",
     "color": "#c2ef4e",
     "initials": "IR",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000111.jpg"
   },
   {
-    "id": "e16",
-    "name": "Maishad",
-    "code": "EMP124",
-    "emp_no": "124",
-    "ac_no": "16",
-    "process": "Hand Designing",
-    "barcode": "00000124",
-    "color": "#14b8a6",
-    "initials": "MA",
-    "photo": ""
-  },
-  {
-    "id": "e22",
-    "name": "Mamush",
-    "code": "EMP131",
-    "emp_no": "131",
-    "ac_no": "22",
-    "process": "Button",
-    "barcode": "00000131",
-    "color": "#ffb287",
-    "initials": "MA",
-    "photo": ""
-  },
-  {
-    "id": "e1",
-    "name": "Misbah",
-    "code": "EMP109",
-    "emp_no": "109",
-    "ac_no": "1",
-    "process": "Tailor (01)",
-    "barcode": "00000109",
-    "color": "#6a5fc1",
-    "initials": "MI",
-    "photo": "uploads/Misbah.jpeg"
-  },
-  {
-    "id": "e4",
-    "name": "Mohammed",
-    "code": "EMP112",
-    "emp_no": "112",
-    "ac_no": "4",
-    "process": "Stone Work",
-    "barcode": "00000112",
-    "color": "#ffb287",
-    "initials": "MO",
-    "photo": ""
-  },
-  {
-    "id": "e5",
+    "id": "e_bc_00000113",
     "name": "Mojeeb",
     "code": "EMP113",
     "emp_no": "113",
     "ac_no": "5",
-    "process": "Button",
+    "process": "Tailor (01)",
     "barcode": "00000113",
     "color": "#fa7faa",
     "initials": "MO",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000113.jpg"
   },
   {
-    "id": "e17",
+    "id": "e_bc_00000125",
     "name": "Mouthirrahman",
     "code": "EMP125",
     "emp_no": "125",
     "ac_no": "17",
-    "process": "Invoice maker",
+    "process": "Hand Work",
     "barcode": "00000125",
     "color": "#c2ef4e",
     "initials": "MO",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000125.jpg"
   },
   {
-    "id": "e21",
+    "id": "e_bc_00000130",
     "name": "Naserulla",
     "code": "EMP130",
     "emp_no": "130",
     "ac_no": "21",
-    "process": "Cutting master",
+    "process": "Hand Work",
     "barcode": "00000130",
     "color": "#14b8a6",
     "initials": "NA",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000130.jpg"
   },
   {
-    "id": "e25",
+    "id": "e_bc_00000134",
     "name": "Raees",
     "code": "EMP134",
     "emp_no": "134",
     "ac_no": "25",
-    "process": "Hand Designing",
+    "process": "Hand Work",
     "barcode": "00000134",
     "color": "#a78bfa",
     "initials": "RA",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000134.jpg"
   },
   {
-    "id": "e8",
+    "id": "e_bc_00000116",
     "name": "Ridowan",
     "code": "EMP116",
     "emp_no": "116",
     "ac_no": "8",
-    "process": "Hand Designing",
+    "process": "Tailor (01)",
     "barcode": "00000116",
     "color": "#ef4444",
     "initials": "RI",
+    "photo": "uploads/employees/emp_00000116.jpg"
+  },
+  {
+    "id": "e_bc_00000140",
+    "name": "Saddam",
+    "code": "EMP140",
+    "emp_no": "140",
+    "ac_no": "31",
+    "process": "Tailor (01)",
+    "barcode": "00000140",
+    "color": "#3b82f6",
+    "initials": "SA",
     "photo": ""
   },
   {
-    "id": "e12",
-    "name": "Shabaj",
-    "code": "EMP120",
-    "emp_no": "120",
-    "ac_no": "12",
-    "process": "Stone Work",
-    "barcode": "00000120",
-    "color": "#6a5fc1",
-    "initials": "SH",
-    "photo": ""
-  },
-  {
-    "id": "e11",
-    "name": "Shahid",
-    "code": "EMP119",
-    "emp_no": "119",
-    "ac_no": "11",
-    "process": "Hand Work",
-    "barcode": "00000119",
+    "id": "e_bc_00000138",
+    "name": "Wahid",
+    "code": "EMP139",
+    "emp_no": "138",
+    "ac_no": "30",
+    "process": "Packaging",
+    "barcode": "00000138",
     "color": "#ffb287",
-    "initials": "SH",
-    "photo": ""
+    "initials": "WA",
+    "photo": "uploads/employees/emp_00000138.jpg"
   },
   {
-    "id": "e6",
-    "name": "Sheron",
-    "code": "EMP114",
-    "emp_no": "114",
-    "ac_no": "6",
-    "process": "Embroidery",
-    "barcode": "00000114",
-    "color": "#14b8a6",
-    "initials": "SH",
-    "photo": ""
-  },
-  {
-    "id": "e23",
+    "id": "e_bc_00000132",
     "name": "Wasim",
     "code": "EMP132",
     "emp_no": "132",
     "ac_no": "23",
-    "process": "Embroidery",
+    "process": "Hand Work",
     "barcode": "00000132",
     "color": "#6a5fc1",
     "initials": "WA",
-    "photo": ""
+    "photo": "uploads/employees/emp_00000132.jpg"
   }
 ]

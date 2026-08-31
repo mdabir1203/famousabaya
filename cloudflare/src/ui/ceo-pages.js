@@ -1373,7 +1373,21 @@ function buildLiveSessionsHtml() {
             return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—' + customPill + '</div>' +
               '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           }
-          const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - buildStartUnix));
+          // Server-anchored "now" so the displayed build age matches
+          // the cloud's view of the world, not the browser's local
+          // clock. Mirrors the offline dashboard's use of
+          // STATE.generated_at in public/dashboard.js#renderLiveSessions.
+          // STATE.ts is the cloud server's millisecond timestamp at the
+          // moment the state bundle was produced; advance it by the
+          // elapsed time since the snapshot (capped at +30s so a stale
+          // tab doesn't accumulate wild drift between polls). With the
+          // local server and the cloud both NTP-synced, the two
+          // dashboards show the same age for the same build.
+          const browserMs = Date.now();
+          const snapshotMs = Number(STATE && STATE.ts) || 0;
+          const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
+          const serverNowMs = snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs;
+          const ageSec = Math.max(0, Math.floor((serverNowMs / 1000) - buildStartUnix));
           return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(ageSec)) + customPill + '</div>' +
             '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + esc(new Date(buildStartUnix * 1000).toLocaleDateString([], { timeZone: tz, year: 'numeric', month: 'short', day: '2-digit' })) + '</div>';
         })() +

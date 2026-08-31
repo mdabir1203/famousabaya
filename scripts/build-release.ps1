@@ -18,6 +18,16 @@ $staging = Join-Path $env:TEMP $name
 $distDir = Join-Path $root "dist"
 $zipPath = Join-Path $distDir "$name.zip"
 
+# Debug trace: log the resolved paths so a build failure shows what the
+# script actually saw. This catches CWD-inheritance / $PSScriptRoot
+# surprises on systems where a previous Move-Item has changed the shell's
+# remembered location.
+Write-Host "[build-release] root    = $root"
+Write-Host "[build-release] staging = $staging"
+Write-Host "[build-release] distDir = $distDir"
+Write-Host "[build-release] zipPath = $zipPath"
+Write-Host "[build-release] CWD     = $(Get-Location)"
+
 if (Test-Path $staging) {
   Remove-Item $staging -Recurse -Force
 }
@@ -30,6 +40,17 @@ New-Item -ItemType Directory -Path $staging -Force | Out-Null
 # The prebuilt Electron app and its NSIS installer are dropped too — they
 # carry stale baked-in public/uploads resources and are not part of the source
 # bundle. The target PC builds the installer locally with `yarn dist:win`.
+#
+# robocopy's /XD matches **directory names** (not relative paths with
+# separators). `install-v*` therefore covers both `install-v127/` at the
+# repo root AND `tools/desktop-launcher/install-v1213-build/` deeper in
+# the tree. The recursive defense-in-depth sweep below catches anything
+# the name-based filter misses.
+#
+# data/ holds per-machine runtime state and is regenerated on first
+# launch on the target PC, so it never belongs in a release. The 2.7 GB
+# of historical `data/sqlite-snapshots/*.db` archives was being shipped
+# before this exclude was added (2026-08-31 v1.2.17 fix).
 $exclude = @(
   ".git",
   "dist",
@@ -43,7 +64,11 @@ $exclude = @(
   "public\uploads",
   "data\desktop-launcher",
   "data\offline-dashboard-reports",
-  "install\win-unpacked"
+  "data\sqlite-snapshots",
+  "data\lan-update-mirror",
+  "data\pm2-logs",
+  "install\win-unpacked",
+  "install-v*"
 )
 $excludeFiles = @(
   ".env",
@@ -82,6 +107,9 @@ $purgeDirs = @(
   "public\uploads",
   "data\desktop-launcher",
   "data\offline-dashboard-reports",
+  "data\sqlite-snapshots",
+  "data\lan-update-mirror",
+  "data\pm2-logs",
   "install\win-unpacked",
   "docs\design-flow-video\.yarn",
   "tools\catalog-watcher\.yarn\unplugged",
@@ -93,6 +121,18 @@ foreach ($dir in $purgeDirs) {
     Remove-Item $target -Recurse -Force
   }
 }
+
+# Defense-in-depth: even if a future robocopy /XD match slips (e.g. a build
+# artifact's nested public\uploads dir that the name-only filter didn't
+# catch), sweep the staging tree recursively for any directory named
+# public\uploads or install-v* and drop it. The privacy + size invariant
+# depends on this — see AGENTS.md "release pipeline" rule.
+Get-ChildItem $staging -Recurse -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -eq 'uploads' -and $_.Parent.Name -eq 'public' } |
+  Remove-Item -Recurse -Force
+Get-ChildItem $staging -Recurse -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -like 'install-v*' } |
+  Remove-Item -Recurse -Force
 
 Get-ChildItem $staging -Recurse -Force -Directory -ErrorAction SilentlyContinue |
   Where-Object { $_.Name -eq "unplugged" -and $_.Parent.Name -eq ".yarn" } |
@@ -110,7 +150,12 @@ Get-ChildItem $staging -Recurse -Force -File -ErrorAction SilentlyContinue |
     $_.Name -eq ".DS_Store" -or
     $_.Name -like "AbaYa-Track-Launcher-Setup-*.exe" -or
     $_.Name -like "*.exe.blockmap" -or
-    $_.Name -eq "latest.yml"
+    $_.Name -eq "latest.yml" -or
+    # Orphan atomic-write temp files left behind by interrupted snapshot
+    # updates. The active snapshot is `abaya-snapshot-latest.db`; anything
+    # matching `*.db.tmp.*` is a half-written predecessor and must not
+    # ship in the release ZIP.
+    $_.Name -like "*.db.tmp.*"
   } |
   Remove-Item -Force
 

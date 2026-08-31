@@ -245,7 +245,14 @@ async function main() {
           body: JSON.stringify({
             type: 'session_start',
             payload: {
-              emp_id: 'test-smoke-emp',
+              // Use a real e_bc_<digits> format so the cloud's v1.2.15
+              // roster guard (cloudflare/src/handlers/ingest.js:62)
+              // accepts the payload. The cloud doesn't FK-check emp_id,
+              // so a synthetic-but-form-valid id (e_bc_999998) is fine
+              // for a smoke test. The id is high enough not to collide
+              // with the real factory roster (which tops out at
+              // ~e_bc_00000140 per the Aug 2026 snapshot).
+              emp_id: 'e_bc_999998',
               emp_name: 'Smoke Test',
               emp_code: 'EMP999',
               emp_process: 'Tailor (01)',
@@ -268,7 +275,7 @@ async function main() {
           body: JSON.stringify({
             type: 'session_finish',
             payload: {
-              emp_id: 'test-smoke-emp',
+              emp_id: 'e_bc_999998',
               emp_name: 'Smoke Test',
               emp_code: 'EMP999',
               emp_process: 'Tailor (01)',

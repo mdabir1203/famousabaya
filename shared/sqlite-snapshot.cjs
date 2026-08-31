@@ -39,11 +39,42 @@ const PROCESS_TO_DAILY_COL = {
   Finishing: 'hand_work_units',
 };
 
+/**
+ * Normalize a process name to the canonical Title-case form the cloud D1
+ * stores. **This MUST mirror `cloudflare/src/domain/process.js` →
+ * `canonicalEmpProcess` exactly** — when the snapshot's per-process totals
+ * differ from the cloud's, the local dashboard contradicts the CEO view.
+ *
+ * The cloud is the source of truth. If a new alias is added there (e.g.
+ * "khaka work" → "Hand Work"), add it here in the same commit. A unit test
+ * in `tests/sqlite-snapshot.test.mjs` exercises the full alias matrix so
+ * drift is caught at CI.
+ */
 function canonicalProcess(raw) {
-  if (raw === 'Cutting' || raw === 'Cutting master') return 'Tailor (01)';
-  if (raw === 'Stitching') return 'Tailor (02)';
-  if (raw === 'Finishing') return 'Hand Work';
-  return raw || 'Tailor (01)';
+  if (raw == null) return 'Tailor (01)';
+  const t = String(raw).trim();
+  if (!t) return 'Tailor (01)';
+  // Case-insensitive aliases — the floor terminals don't always send Title
+  // case, and we used to silently drop "cutting" / "KHAKA WORK" / etc. from
+  // the report rollups. Normalize on read so old D1 rows and new push values
+  // land in the same bucket.
+  const lo = t.toLowerCase();
+  if (lo === 'cutting' || lo === 'cutting master') return 'Tailor (01)';
+  if (lo === 'stitching') return 'Tailor (02)';
+  if (lo === 'finishing') return 'Hand Work';
+  if (lo === 'khaka work') return 'Hand Work';
+  // Keep Title case for the canonical names so the per-process totals
+  // visually match the cloud's process_split_today payload.
+  if (
+    t === 'Tailor (01)' || t === 'Tailor (02)' || t === 'Hand Work' ||
+    t === 'Stone Work' || t === 'Button' || t === 'Embroidery' ||
+    t === 'Ari Work' || t === 'Hand Designing' || t === 'Invoice maker' ||
+    t === 'Packaging' || t === 'Checker'
+  ) return t;
+  // Unknown process — pass through unchanged. It will land in the
+  // tailor_01_units column (dailyStatsColumnForProcess default) so it's
+  // still counted, just under a bucket the operator should notice.
+  return t;
 }
 
 function dailyStatsColumnForProcess(proc) {
@@ -76,6 +107,25 @@ function parsePositiveIntOrNull(n) {
   const v = Number(n);
   if (!Number.isFinite(v) || v <= 0) return null;
   return Math.floor(v);
+}
+
+/**
+ * Normalize a timestamp to Unix seconds.
+ *
+ * The completedLogs pipeline has been seen in three flavors:
+ *   - ms integers  (e.g. 1786971839000, 13 digits,  r.started_at / r.ended_at)
+ *   - legacy ms on `start`/`end` (older in-memory shape)
+ *   - already-seconds (D1-shaped, < 1e12)
+ *
+ * Anything > 1e12 is unambiguously ms (year 2001+ in seconds is still < 1e10;
+ * 1e12 seconds is far past year 33658). 1e12 ms = Sep 2001 in seconds, so a
+ * value just above 1e12 could in theory be either — but anything that
+ * survives a real-world session filter is > 1.6e12 in ms (≈ 2020+).
+ */
+function normalizeToUnixSec(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
 }
 
 function dateStringForUnix(unixSec) {
@@ -137,7 +187,15 @@ CREATE TABLE IF NOT EXISTS active_sessions (
   abaya_id      TEXT,
   abaya_code    TEXT,
   station       TEXT    DEFAULT 'S-02',
-  started_at    INTEGER NOT NULL
+  started_at    INTEGER NOT NULL,
+  -- Cloud migration 0016: live-state columns the local server pushes so
+  -- the CEO view can render the in-shift elapsed without a re-walk. The
+  -- factory server is the source of truth for these (see ingest.js
+  -- fallback to started_at when the push didn't ship the new fields).
+  effective_started_at INTEGER,
+  windowed_elapsed_sec INTEGER DEFAULT 0,
+  outside_shift      INTEGER DEFAULT 0,
+  is_cross_day       INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS daily_stats (
@@ -174,6 +232,11 @@ CREATE TABLE IF NOT EXISTS abaya_catalog (
   design        TEXT    NOT NULL DEFAULT '',
   process       TEXT    NOT NULL,
   icon          TEXT,
+  -- Cloud migration 0019: lets the operator mark a style (per-physical
+  -- abaya) as a multi-week CUSTOM build. The live row's "this build"
+  -- cell then renders a "Custom" pill so a 373h build doesn't look like
+  -- a bug. Default 0 keeps existing rows coherent.
+  is_custom     INTEGER NOT NULL DEFAULT 0,
   updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
 );
 CREATE INDEX IF NOT EXISTS idx_abaya_catalog_code ON abaya_catalog(code);
@@ -289,11 +352,15 @@ async function buildSnapshotDatabase(state) {
 
     const insertCatalog = db.prepare(`
       INSERT OR REPLACE INTO abaya_catalog
-        (id, code, barcode, design, process, icon, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (id, code, barcode, design, process, icon, is_custom, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const a of catalog) {
       if (!a || a.id == null) continue;
+      // Cloud migration 0019: is_custom flag. The cloud is the source of
+      // truth — if a row arrives from the cloud PUT as is_custom=1, we
+      // preserve it; otherwise default to 0.
+      const isCustom = a.is_custom === 1 || a.is_custom === '1' || a.is_custom === true ? 1 : 0;
       insertCatalog.run([
         String(a.id),
         String(a.code || ''),
@@ -301,6 +368,7 @@ async function buildSnapshotDatabase(state) {
         String(a.design || ''),
         canonicalProcess(a.process || a.process_type || 'Tailor (01)'),
         a.icon != null ? String(a.icon) : null,
+        isCustom,
         Number(a.updated_at) || nowSec,
       ]);
     }
@@ -318,18 +386,34 @@ async function buildSnapshotDatabase(state) {
     const insertActive = db.prepare(`
       INSERT OR REPLACE INTO active_sessions
         (emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
-         abaya_id, abaya_code, station, started_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         abaya_id, abaya_code, station, started_at,
+         effective_started_at, windowed_elapsed_sec, outside_shift, is_cross_day)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const active = state && state.activeSessions && typeof state.activeSessions === 'object'
       ? state.activeSessions : {};
+    let activeInserted = 0;
     for (const key of Object.keys(active)) {
       const sess = active[key];
       if (!sess || typeof sess !== 'object') continue;
       const empId = String(sess.emp_id != null ? sess.emp_id : key);
+      // Mirror the cloud D1 trigger (migration 0018) — only real factory
+      // employees with a barcoded id (e_bc_<digits>) are persisted.
+      if (!/^e_bc_\d+$/.test(empId)) continue;
       const emp = empById.get(empId) || {};
       const ab = catalogById.get(String(sess.abaya_id || '')) || null;
-      const startedSec = Math.floor(Number(sess.started_at) / 1000) || nowSec;
+      const startedSec = normalizeToUnixSec(sess.started_at) || nowSec;
+      // Cloud migration 0016 live-state columns. The local server doesn't
+      // push these yet, so the offline JSON may not have them; fall back to
+      // safe defaults so the snapshot stays valid (and ready for the day
+      // the local server starts pushing them).
+      const effectiveStarted = Number(sess.effective_started_at);
+      const effectiveStartedSec = Number.isFinite(effectiveStarted) && effectiveStarted > 0
+        ? (effectiveStarted > 1e12 ? Math.floor(effectiveStarted / 1000) : Math.floor(effectiveStarted))
+        : null;
+      const windowedElapsed = Math.max(0, Math.floor(Number(sess.windowed_elapsed_sec) || 0));
+      const outsideShift = sess.outside_shift ? 1 : 0;
+      const isCrossDay = sess.is_cross_day ? 1 : 0;
       insertActive.run([
         empId,
         String(emp.name || ''),
@@ -341,7 +425,12 @@ async function buildSnapshotDatabase(state) {
         ab ? String(ab.code || '') : null,
         'S-02',
         startedSec,
+        effectiveStartedSec,
+        windowedElapsed,
+        outsideShift,
+        isCrossDay,
       ]);
+      activeInserted += 1;
     }
     insertActive.free();
 
@@ -359,13 +448,29 @@ async function buildSnapshotDatabase(state) {
     const dailyAgg = new Map();
     /** @type {Map<string, { abaya_code: string|null, cum: number, first: number, last: number }>} */
     const abayaTime = new Map();
+    /** Count of completedLog rows that actually landed in the snapshot. */
+    let sessionsInserted = 0;
+    /** Count of completedLog rows rejected by the e_bc_* filter (diagnostic). */
+    let sessionsFilteredSynthetic = 0;
 
     for (const r of completedLogs) {
       if (!r || r.emp_id == null) continue;
-      const startedSec = Math.floor(Number(r.start) / 1000);
-      const endedSec = Math.floor(Number(r.end) / 1000);
-      if (!Number.isFinite(startedSec) || !Number.isFinite(endedSec)) continue;
-      const sessionId = `WL-${r.emp_id}-${endedSec}`;
+      const empIdStr = String(r.emp_id);
+      // Mirror the cloud D1 trigger (migration 0018) — only real factory
+      // employees with a barcoded id (e_bc_<digits>) are persisted. This keeps
+      // the local snapshot's per-employee / per-day counts coherent with the
+      // cloud dashboard, and prevents test/smoke sessions from leaking in.
+      if (!/^e_bc_\d+$/.test(empIdStr)) {
+        sessionsFilteredSynthetic += 1;
+        continue;
+      }
+      // The pipeline has been seen with both `started_at`/`ended_at` (the
+      // canonical ms shape produced by server.js hydration) and the older
+      // `start`/`end` fields. Prefer the new names; fall back for legacy.
+      const startedSec = normalizeToUnixSec(r.started_at != null ? r.started_at : r.start);
+      const endedSec = normalizeToUnixSec(r.ended_at != null ? r.ended_at : r.end);
+      if (startedSec == null || endedSec == null) continue;
+      const sessionId = `WL-${empIdStr}-${endedSec}`;
       const dayDate = dateStringForUnix(endedSec);
       const hourOfDay = hourForUnix(endedSec);
       const emp = empById.get(String(r.emp_id)) || {};
@@ -395,6 +500,7 @@ async function buildSnapshotDatabase(state) {
         invSerial,
         nowSec,
       ]);
+      sessionsInserted += 1;
 
       if (dayDate) {
         let agg = dailyAgg.get(dayDate);
@@ -488,8 +594,10 @@ async function buildSnapshotDatabase(state) {
     insertMeta.run(['host', String(os.hostname() || 'unknown')]);
     insertMeta.run(['platform', String(os.platform() || '')]);
     insertMeta.run(['app_version', String((state && state.appVersion) || '')]);
-    insertMeta.run(['completed_count', String(completedLogs.length)]);
-    insertMeta.run(['active_count', String(Object.keys(active).length)]);
+    insertMeta.run(['completed_count', String(sessionsInserted)]);
+    insertMeta.run(['completed_logs_received', String(completedLogs.length)]);
+    insertMeta.run(['completed_logs_filtered_synthetic', String(sessionsFilteredSynthetic)]);
+    insertMeta.run(['active_count', String(activeInserted)]);
     insertMeta.run(['employees_count', String(employees.length)]);
     insertMeta.run(['catalog_count', String(catalog.length)]);
     if (state && state.catalogVersion != null) {

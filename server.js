@@ -1087,6 +1087,10 @@ function normalizeAbayaCatalogRows(rows) {
       process: String(a.process != null ? a.process : ''),
       tier: a.tier != null ? String(a.tier) : '',
       icon: a.icon != null ? String(a.icon) : '',
+      // is_custom: 0 or 1. Truthy inputs (TRUE, 1, yes, y) become 1;
+      // anything else becomes 0. Mirrors the cloud D1 abaya_catalog
+      // column (see cloudflare/migrations/0019).
+      is_custom: a.is_custom ? 1 : 0,
     };
   });
 }
@@ -3117,15 +3121,22 @@ const DEFAULT_CATALOG_PROCESS = String(process.env.DEFAULT_CATALOG_PROCESS || 'T
 // Column aliases mirror catalog-parse.js — keep in sync.
 // "Barcode Display Name" and "Item Category" are the factory Excel column names.
 const XLSX_COL_ALIASES = {
-  id:      ['id', 'abaya_id', 'item_id'],
-  code:    ['code', 'item_code', 'sku', 'abaya_code', 'product_code'],
-  barcode: ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'display_name', 'barcode_name'],
-  design:  ['design', 'description', 'item_name', 'name', 'title'],
+  id:       ['id', 'abaya_id', 'item_id'],
+  code:     ['code', 'item_code', 'sku', 'abaya_code', 'product_code'],
+  barcode:  ['barcode', 'bar_code', 'bc', 'barcode_display_name', 'display_name', 'barcode_name'],
+  design:   ['design', 'description', 'item_name', 'name', 'title'],
   // process is set from folder name by the catalog-watcher, never from Excel columns.
-  process: ['process', 'work_type', 'department', 'role'],
+  process:  ['process', 'work_type', 'department', 'role'],
   // "Item Category" in the factory Excel = abaya quality grade (Standard/Premium/Luxury/Plain Abaya).
-  tier:    ['tier', 'grade', 'abaya_tier', 'abaya_grade', 'item_grade', 'abaya_category', 'item_category', 'category'],
-  icon:    ['icon', 'emoji'],
+  tier:     ['tier', 'grade', 'abaya_tier', 'abaya_grade', 'item_grade', 'abaya_category', 'item_category', 'category'],
+  icon:     ['icon', 'emoji'],
+  // is_custom = 1 marks a custom-style abaya that legitimately stays on the
+  // floor for weeks/months. Mirrors the cloud D1 abaya_catalog.is_custom
+  // (migration 0019). The offline factory dashboard reads this column from
+  // the xlsx and surfaces a "Custom" pill in the "this build" cell, so a
+  // 373h build age isn't read as a bug. Excel values: TRUE / FALSE / 1 / 0
+  // / Yes / No (case-insensitive).
+  is_custom: ['is_custom', 'is custom', 'custom', 'is_custom_yn', 'custom_yn'],
 };
 const XLSX_REVERSE_MAP = {};
 for (const [field, aliases] of Object.entries(XLSX_COL_ALIASES)) {
@@ -3237,7 +3248,7 @@ function pruneCatalogBackups() {
  */
 function buildCatalogXlsxBuffer(rows) {
   const XLSX = require('xlsx');
-  const headers = ['Barcode Display Name', 'Item Code', 'Item Name', 'Item Category', 'Process'];
+  const headers = ['Barcode Display Name', 'Item Code', 'Item Name', 'Item Category', 'Process', 'Is Custom'];
   const aoa = [headers];
   for (let i = 0; i < rows.length; i++) {
     const a = rows[i] || {};
@@ -3247,6 +3258,7 @@ function buildCatalogXlsxBuffer(rows) {
       String(a.design == null ? '' : a.design),
       String(a.tier == null ? '' : a.tier),
       String(a.process == null ? '' : a.process),
+      a.is_custom ? 'TRUE' : 'FALSE',
     ]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);

@@ -663,6 +663,12 @@ function normalizeDashboardAbayaRow(a) {
     tier: a.tier != null ? String(a.tier) : '',
     icon: a.icon != null ? String(a.icon) : '',
     status: a.status || 'waiting',
+    // is_custom comes from the catalog (xlsx `Is Custom` column → server
+    // normalizes to 0/1). Marks style codes that legitimately stay on
+    // the floor for weeks; the live row's "this build" cell surfaces a
+    // "Custom" pill for these so a 300+ hour build age isn't read as a
+    // bug. Mirrors cloudflare/src/ui/ceo-pages.js#abayaIsCustom.
+    is_custom: Number(a.is_custom) === 1 ? 1 : 0,
   };
 }
 
@@ -923,7 +929,6 @@ function renderLiveSessions() {
   const el = document.getElementById('live-sessions');
   const active = STATE.active || {};
   const ids = Object.keys(active);
-  const agg = aggregateGarmentSeconds(STATE.logs || [], active, Date.now());
   // Per-build (24h-gap rule) totals + build start. Drives the amber
   // "this build" wall-clock age cell. See cloudflare/src/handlers/state.js
   // for the server-side equivalent.
@@ -934,10 +939,26 @@ function renderLiveSessions() {
     return;
   }
 
-  const nowMs = Date.now();
-  const nowSec = Math.floor(nowMs / 1000);
+  // Server-anchored "now" so the age matches the local server's view of
+  // the world, not the browser's local clock. STATE.generated_at is the
+  // local server's millisecond timestamp at the moment the state bundle
+  // was produced; we advance it by the elapsed time since the snapshot
+  // (capped at +30s so a stale tab doesn't accumulate wild drift
+  // between state_update events). Mirrors the cloud's use of STATE.ts
+  // in ceo-pages.js#computeActiveTimingCache. With NTP-sync between
+  // the local server and the cloud, the two dashboards show the same
+  // age for the same build; if they don't, the visible drift is the
+  // actual clock skew and can be fixed with one NTP config on the
+  // offending machine.
+  const browserMs = Date.now();
+  const snapshotMs = Number(STATE.generated_at) || 0;
+  const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
+  const serverNowMs = snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs;
+  const serverNowSec = Math.floor(serverNowMs / 1000);
+
   const tz = whTimezone();
-  const inShiftNow = inWindowClient(nowSec);
+  const inShiftNow = inWindowClient(serverNowSec);
+  const todayYmd = ymdInTimezone(serverNowMs, tz);
 
   // Map of emp_id -> most recent completed session ended_at (ms), used
   // for the "last finished" cell. STATE.logs is end-DESC so the first
@@ -959,7 +980,15 @@ function renderLiveSessions() {
       });
     } catch (_) { return '—'; }
   };
-  const fmtDate = function (ms) {
+  const fmtDateShort = function (ms) {
+    if (!Number.isFinite(ms) || ms <= 0) return '';
+    try {
+      return new Date(ms).toLocaleDateString([], {
+        timeZone: tz, day: '2-digit', month: 'short',
+      });
+    } catch (_) { return ''; }
+  };
+  const fmtDateLong = function (ms) {
     if (!Number.isFinite(ms) || ms <= 0) return '';
     try {
       return new Date(ms).toLocaleDateString([], {
@@ -968,78 +997,142 @@ function renderLiveSessions() {
     } catch (_) { return ''; }
   };
 
-  el.innerHTML = ids.map(id => {
+  el.innerHTML = ids.map(function (id) {
     const sess = active[id];
     const emp = empById(id);
-    const ab = ABAYAS.find(a => a.id === sess.abaya_id);
     if (!emp) return '';
     const startedMs = Number(sess.started_at) || Date.now();
     const abKey = sess.abaya_id != null && sess.abaya_id !== '' ? String(sess.abaya_id) : '';
     const bRow = abKey ? buildMap[abKey] : null;
     const buildStartMs = bRow ? bRow.buildStartMs : 0;
-    const buildStartLabel = buildStartMs ? fmtDate(buildStartMs) : '';
-    const avHtml = employeeAvatarHtml(emp);
-    const sessionProcess = (sess.process || '').trim() || '—';  // use active session role only
-    const itemLabel = ab && ab.barcode ? escapeHtml(ab.barcode) : '—';
+    // Custom-style flag from the local catalog (xlsx `Is Custom` column).
+    // Marks abayas that legitimately stay on the floor for weeks, so the
+    // huge "this build" age isn't read as a stuck session. Mirrors
+    // cloudflare/src/ui/ceo-pages.js#abayaIsCustom.
+    const isCustom = abKey ? (function () {
+      const row = abayaCatalogRowForId(abKey);
+      return !!(row && row.is_custom);
+    })() : false;
+
+    // s.emp_initials / s.emp_color are pushed by the local server
+    // (server.js:1197-1198) so the avatar matches the cloud's
+    // plain-initials look. Falls back to emp.* for legacy rows that
+    // pre-date the live-state column.
+    const initials = sess.emp_initials || emp.initials || '';
+    const color = sess.emp_color || emp.color || '#6a5fc1';
+    const empName = sess.emp_name || emp.name || '';
+    const empCode = sess.emp_code || emp.code || '';
+    const sessionProcess = (sess.process || sess.emp_process || '').trim() || '—';
+    const abayaCode = sess.abaya_code || (abKey ? (function () {
+      const row = ABAYAS.find(function (a) { return a.id === abKey; });
+      return row ? row.code : '';
+    })() : '') || '—';
 
     const startedAtSec = Math.floor(startedMs / 1000);
-    const startedLabel = formatDateTimeTz(startedMs, { timeZone: tz, weekday: true, seconds: true });
-    const startedFull = startedLabel;
+    // Same toLocaleString options as the cloud's startedLabel so the
+    // weekday/time/date rendering matches byte-for-byte. With weekday
+    // present and the explicit hour12:false, en-US renders the full
+    // short-month form ("Mon, Aug 31, 2026, 10:45:28").
+    const startedLabel = new Date(startedMs).toLocaleString([], {
+      timeZone: tz,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    const startedFull = new Date(startedMs).toLocaleString([], {
+      timeZone: tz,
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
     const outOfShift = !inShiftNow || !inWindowClient(startedAtSec);
-    const outsideBadge = outOfShift
-      ? ' <span title="Time outside shift windows is not counted" style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
+    const ageSec = Math.max(0, serverNowSec - startedAtSec);
+    // is_stale (cloud calls it "Stuck"): cross-day AND >2h wall-clock
+    // AND currently outside the working window. Same-day sessions on
+    // a short break (lunch, evening gap) are NOT stuck. Mirrors the
+    // cloud's client-side rule in ceo-pages.js#buildLiveSessionsHtml.
+    const startYmd = ymdInTimezone(startedMs, tz);
+    const isCrossDay = startYmd !== todayYmd;
+    const stale = isCrossDay && ageSec > 2 * 3600 && !inShiftNow;
+    // Suppress "Outside shift" when "Stuck" already tells the operator
+    // the worker is outside shift AND has been for >2h. Same rule as
+    // the cloud.
+    const outsideBadge = (outOfShift && !stale)
+      ? ' <span title="Time outside shift windows is not counted in the per-shift or per-build totals." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px">Outside shift</span>'
       : '';
+    const staleBadge = stale
+      ? ' <span title="Session has been open more than 2 hours and the factory is currently outside the working window. Likely a forgotten-Finish — check the station and either Finish the session or have the worker re-tap Start." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fca5a5;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);border-radius:8px;padding:1px 6px">Stuck</span>'
+      : '';
+
     const lastFinishMs = lastFinishMsByEmpId[id] || 0;
     // Suppress "last finished" if it's AFTER this active session's Start —
     // would mean the worker re-tapped Start after a 10s job and the
     // previous Finish shouldn't be the "last finished" reference.
     const lastFinishDisplayMs = lastFinishMs && lastFinishMs < startedMs ? lastFinishMs : 0;
-    return '<div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--bd)">' +
-      '<div class="emp-av" style="background:' + (emp.photo ? 'transparent' : emp.color) + '">' + avHtml + '</div>' +
-      '<div style="flex:1">' +
-        '<div style="font-size:13px;font-weight:600">' + emp.name + outsideBadge + '</div>' +
-        '<div style="font-size:11px;color:var(--tx3);display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:2px">' +
-          'Emp: ' + emp.code + ' &middot; <span style="color:var(--tx2);font-weight:600">' + sessionProcess + '</span>' +
-          (ab ? ' &middot; ' + escapeHtml(ab.code) : '') +
-          (ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '') +
-        '</div>' +
-        '<div style="margin-top:8px">' +
-          '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Started</div>' +
-          '<div title="' + escapeAttr(startedFull) + '" style="font-size:15px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' +
-          escapeHtml(startedLabel) +
+
+    return (
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
+        '<div class="emp-av" style="background:' + escapeAttr(color) + '">' + escapeHtml(initials) + '</div>' +
+        '<div style="flex:1">' +
+          '<div style="font-size:13px;font-weight:600">' +
+            escapeHtml(empName) + outsideBadge + staleBadge +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--tx3)">' +
+            escapeHtml(empCode) + ' &middot; ' + escapeHtml(sessionProcess) + ' &middot; ' + escapeHtml(abayaCode) +
+          '</div>' +
+          '<div style="margin-top:8px">' +
+            '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Started</div>' +
+            '<div title="' + escapeAttr(startedFull) + '" style="font-size:15px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' +
+              escapeHtml(startedLabel) +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:10px;color:var(--tx3);margin-top:6px;line-height:1.45">' +
+            'Item: <span style="color:var(--am);font-family:monospace;font-weight:600">' + escapeHtml(abayaCode) + '</span>' +
+            ' <span style="opacity:.55">&middot;</span> Active in: <span style="color:var(--gr);font-weight:600">' + escapeHtml(sessionProcess) + '</span>' +
           '</div>' +
         '</div>' +
-        '<div style="font-size:10px;color:var(--tx3);margin-top:6px;line-height:1.45">' +
-          'Item No: <span style="color:var(--am);font-family:monospace;font-weight:600">' + itemLabel + '</span>' +
-          ' <span style="opacity:.55">&middot;</span> ' +
-          'Active in: <span style="color:var(--gr);font-weight:600">' + escapeHtml(sessionProcess) + '</span>' +
+        '<div style="text-align:right">' +
+          // "last finished" cell. Shown instead of a live counter because
+          // operators said the live ticking was distracting — they want to
+          // see at a glance when the previous session for THIS worker
+          // closed, not a number that ticks every 2.5s.
+          (function () {
+            if (!lastFinishDisplayMs) {
+              return '<div style="font-size:14px;font-weight:700;color:var(--tx3);font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
+                '<div style="font-size:9px;color:var(--tx3)">last finished</div>';
+            }
+            return '<div title="Exact moment this worker last tapped Finish (most recent completed log for this emp_id, before this Start). Replaces the old live in-shift counter." style="font-size:14px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' +
+              escapeHtml(fmtTimeOfDay(lastFinishDisplayMs)) +
+              '</div>' +
+              '<div style="font-size:9px;color:var(--tx3)">last finished &middot; ' + escapeHtml(fmtDateShort(lastFinishDisplayMs)) + '</div>';
+          })() +
+          // Wall-clock build AGE = serverNowMs - buildStartMs (24h-gap
+          // rule). serverNowMs is anchored to the local server's clock
+          // via STATE.generated_at, so this matches the local server's
+          // view of the world (and, with NTP-sync, the cloud's view).
+          (function () {
+            const buildTitle = isCustom
+              ? 'Custom abaya — wall-clock age of the current build. This code is a multi-week style that can legitimately span many 24h-gap build windows. The big number is real, not a bug.'
+              : 'Wall-clock age of the current build, counted from its first session (24h-gap rule). Not capped to shift windows and not the per-session timer. The in-shift working time is on the Daily / Weekly / Monthly / Yearly reports.';
+            const customPill = isCustom
+              ? ' <span title="Marked is_custom=1 in the local abaya catalog. Multi-week build is expected for this style." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
+              : '';
+            if (!buildStartMs) {
+              return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—' + customPill + '</div>' +
+                '<div style="font-size:9px;color:var(--tx3)">this build</div>';
+            }
+            const ageSecBuild = Math.max(0, Math.floor((serverNowMs - buildStartMs) / 1000));
+            return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(ageSecBuild)) + customPill + '</div>' +
+              '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + escapeHtml(fmtDateLong(buildStartMs)) + '</div>';
+          })() +
         '</div>' +
-      '</div>' +
-      '<div style="text-align:right">' +
-        // "last finished" cell. Shown instead of a live counter because
-        // operators said the live ticking was distracting — they want to
-        // see at a glance when the previous session for THIS worker
-        // closed, not a number that ticks every 2.5s.
-        '<div title="Exact moment this worker last tapped Finish (most recent COMPLETED_LOGS row for this emp_id, before this Start). Replaces the old live in-shift counter." style="font-size:14px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' + fmtTimeOfDay(lastFinishDisplayMs) + '</div>' +
-        '<div style="font-size:9px;color:var(--tx3)">last finished' + (lastFinishDisplayMs ? ' &middot; ' + new Date(lastFinishDisplayMs).toLocaleDateString([], { timeZone: tz, day: '2-digit', month: 'short' }) : '') + '</div>' +
-        // Wall-clock build AGE = NOW - buildStartMs (24h-gap rule). This
-        // is what the operator wants: "how long has this garment been
-        // on the floor". NOT the in-shift sum — that lived on the old
-        // "this step (in shift)" / "total on item" cells and is now
-        // hidden on the Live row. The in-shift number still lives on
-        // the Daily/Weekly/Monthly/Yearly reports and the per-abaya
-        // totals panel.
-        (function () {
-          if (!buildStartMs) {
-            return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:11px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums">\u2014</div>' +
-              '<div style="font-size:9px;color:var(--tx3)">this build</div>';
-          }
-          const ageSec = Math.max(0, Math.floor((nowMs - buildStartMs) / 1000));
-          return '<div title="Wall-clock time since this build started (24h-gap rule). A session that opened Aug 26 at 09:00 and is still running shows as 40h 30m 24s today, not the in-shift sum." style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + fmtHMS(ageSec) + '</div>' +
-            '<div style="font-size:9px;color:var(--tx3)">this build' + (buildStartLabel ? ' &middot; started ' + escapeHtml(buildStartLabel) : '') + '</div>';
-        })() +
-      '</div>' +
-    '</div>';
+      '</div>'
+    );
   }).join('');
 }
 
