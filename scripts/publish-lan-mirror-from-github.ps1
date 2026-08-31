@@ -214,66 +214,114 @@ Write-Host ""
 Write-Host ("Done. Mirror is now advertising v{0} on channel '{1}'. Open the launcher and click 'Check Updates'." -f $Version, $Channel) -ForegroundColor Green
 
 
-<#
-═══════════════════════════════════════════════════════════════════════════════
-INLINE PASTE BLOCK — copy the block below into PowerShell on the factory
-laptop if you don't want to copy a .ps1 file across.
-═══════════════════════════════════════════════════════════════════════════════
-#>
+# ═══════════════════════════════════════════════════════════════════════════════
+# INLINE PASTE BLOCK — copy everything from here to the bottom of the file
+# into a fresh PowerShell window on the factory laptop. This is the same
+# logic as the parametrised script above, flattened to a pasteable block
+# (no helpers, no param block, no functions — straight-line code).
+#
+# Why this exists: when the factory can't reach GitHub Releases from the
+# .ps1 file path (e.g. operator pasted it via Remote Desktop, no .ps1
+# association, execution policy locked down), this block works because
+# it has zero file-system prerequisites other than the OS itself.
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# $ErrorActionPreference = 'Stop'
-# $ver = '1.2.17'
-# $base = "https://github.com/mdabir1203/famousabaya/releases/download/v$ver"
-# $exeName = "AbaYa-Track-Launcher-Setup-$ver.exe"
-# $blockName = "$exeName.blockmap"
-# $probeRoots = @($PSScriptRoot, $PWD.Path, (Join-Path $env:LOCALAPPDATA 'AbaYa Track\resources'), (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track\resources'), (Join-Path $env:APPDATA 'AbaYa Track'), 'C:\Program Files\AbaYa Track\resources', 'C:\Program Files (x86)\AbaYa Track\resources') | Where-Object { $_ -and (Test-Path $_) }
-# $root = $null
-# foreach ($r in $probeRoots) { if (Test-Path (Join-Path $r 'data\lan-update-mirror\stable')) { $root = $r; break } }
-# if (-not $root) { throw "Couldn't locate factory install under: $($probeRoots -join ', '). Run from inside the install dir, or set `$root manually." }
-# $mirror = Join-Path $root 'data\lan-update-mirror\stable'
-# Write-Host "[mirror] $mirror" -ForegroundColor Cyan
-# $ymlPath = Join-Path $mirror 'latest.yml'
-# $ymlBak  = Join-Path $mirror 'latest.yml.bak-pre1217'
-# New-Item -ItemType Directory -Force -Path $mirror | Out-Null
-# if ((Test-Path $ymlPath) -and -not (Test-Path $ymlBak)) {
-#   $prior = ''
-#   $ymlRaw = Get-Content $ymlPath -Raw
-#   if ($ymlRaw -match '(?m)^version:\s*(\S+)') { $prior = $Matches[1] }
-#   if ($prior -ne $ver) { Move-Item $ymlPath $ymlBak -Force; Write-Host "[backup] prior latest.yml ($prior) -> $ymlBak" }
-#   else { Write-Host "[note ] latest.yml is already v$ver; refreshing anyway" -ForegroundColor DarkGray }
-# }
-# for ($i = 1; $i -le 3; $i++) { try { Invoke-WebRequest -Uri "$base/latest.yml" -OutFile $ymlPath -UseBasicParsing -TimeoutSec 60; break } catch { Write-Host "[retry $i/3] latest.yml: $($_.Exception.Message)"; if ($i -eq 3) { throw }; Start-Sleep 2 } }
-# $yml = Get-Content $ymlPath -Raw
-# $verInYml     = if ($yml -match '(?m)^version:\s*(\S+)')   { $Matches[1] } else { '' }
-# $expectedSha  = if ($yml -match '(?m)^\s*sha512:\s*(\S+)')  { $Matches[1] } else { '' }
-# $expectedSize = if ($yml -match '(?m)^\s*size:\s*(\d+)')    { [int]$Matches[1] } else { 0 }
-# if ($verInYml -ne $ver) { throw "latest.yml says version=$verInYml, expected $ver" }
-# if (-not $expectedSha)  { throw "Could not parse sha512 from latest.yml" }
-# Write-Host "[yml ] v$verInYml  size=$expectedSize  sha512=$expectedSha" -ForegroundColor Green
-# foreach ($a in @($exeName, $blockName)) {
-#   $out = Join-Path $mirror $a
-#   $present = Test-Path $out
-#   $sizeOk = $true
-#   if ($present -and $a -eq $exeName -and $expectedSize -gt 0) { $sizeOk = ((Get-Item $out).Length -eq $expectedSize) }
-#   if ($present -and $sizeOk) { Write-Host "[skip] $a  ($((Get-Item $out).Length) bytes, present)" -ForegroundColor DarkGray; continue }
-#   Write-Host "[fetch] $a ..."
-#   for ($i = 1; $i -le 3; $i++) { try { Invoke-WebRequest -Uri "$base/$a" -OutFile $out -UseBasicParsing -TimeoutSec 300; break } catch { Write-Host "  [retry $i/3] $a : $($_.Exception.Message)"; if ($i -eq 3) { throw }; Start-Sleep 5 } }
-#   Write-Host "  [ok ] $((Get-Item $out).Length) bytes" -ForegroundColor Green
-# }
-# $exePath = Join-Path $mirror $exeName
-# $got = [Convert]::ToBase64String([System.Security.Cryptography.SHA512]::Create().ComputeHash([System.IO.File]::ReadAllBytes($exePath)))
-# if ($got -ne $expectedSha) { throw "sha512 mismatch on $exeName`n  expected: $expectedSha`n  got:      $got" }
-# $actualSize = (Get-Item $exePath).Length
-# if ($expectedSize -gt 0 -and $actualSize -ne $expectedSize) { throw "size mismatch on $exeName`n  expected: $expectedSize  got: $actualSize" }
-# Write-Host "[verify] sha512 OK, size OK ($actualSize bytes)" -ForegroundColor Green
-# $probed = $false
-# foreach ($port in @(3111, 3112, 3113)) {
-#   foreach ($h in @('localhost','127.0.0.1')) {
-#     try { $r = Invoke-WebRequest -Uri "http://${h}:${port}/updates/stable/latest.yml" -UseBasicParsing -TimeoutSec 3
-#       if ($r.StatusCode -eq 200 -and $r.Content -match "version: $ver") { Write-Host "[probe] http://${h}:${port}/updates/stable/latest.yml  -> 200, v$ver" -ForegroundColor Green; $probed = $true; break } } catch { }
-#   }
-#   if ($probed) { break }
-# }
-# if (-not $probed) { Write-Host "[probe] factory server NOT reachable on :3111-3113. Start the factory server (or restart the launcher) before clicking 'Check Updates'." -ForegroundColor Yellow }
-# Write-Host ""
-# Write-Host "Done. Mirror is now advertising v$ver. Open the launcher and click 'Check Updates'." -ForegroundColor Green
+if ($PSCommandPath) { Write-Host "  (this block only runs when pasted directly; ignoring because you're inside the .ps1)" -ForegroundColor DarkGray; return }
+
+$ErrorActionPreference = 'Stop'
+$ver = '1.2.17'
+$base = "https://github.com/mdabir1203/famousabaya/releases/download/v$ver"
+$exeName = "AbaYa-Track-Launcher-Setup-$ver.exe"
+$blockName = "$exeName.blockmap"
+
+$probeRoots = @(
+  $PSScriptRoot,
+  $PWD.Path,
+  (Join-Path $env:LOCALAPPDATA 'AbaYa Track\resources'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track\resources'),
+  (Join-Path $env:APPDATA 'AbaYa Track'),
+  'C:\Program Files\AbaYa Track\resources',
+  'C:\Program Files (x86)\AbaYa Track\resources'
+) | Where-Object { $_ -and (Test-Path $_) }
+
+$root = $null
+foreach ($r in $probeRoots) {
+  if (Test-Path (Join-Path $r 'data\lan-update-mirror\stable')) { $root = $r; break }
+}
+if (-not $root) { throw "Couldn't locate factory install under: $($probeRoots -join ', '). Run from inside the install dir, or set `$root manually." }
+$mirror = Join-Path $root 'data\lan-update-mirror\stable'
+Write-Host "[mirror] $mirror" -ForegroundColor Cyan
+
+$ymlPath = Join-Path $mirror 'latest.yml'
+$ymlBak  = Join-Path $mirror 'latest.yml.bak-pre1217'
+New-Item -ItemType Directory -Force -Path $mirror | Out-Null
+
+if ((Test-Path $ymlPath) -and -not (Test-Path $ymlBak)) {
+  $prior = ''
+  $ymlRaw = Get-Content $ymlPath -Raw
+  if ($ymlRaw -match '(?m)^version:\s*(\S+)') { $prior = $Matches[1] }
+  if ($prior -ne $ver) {
+    Move-Item $ymlPath $ymlBak -Force
+    Write-Host "[backup] prior latest.yml ($prior) -> $ymlBak"
+  } else {
+    Write-Host "[note ] latest.yml is already v$ver; refreshing anyway" -ForegroundColor DarkGray
+  }
+}
+
+for ($i = 1; $i -le 3; $i++) {
+  try { Invoke-WebRequest -Uri "$base/latest.yml" -OutFile $ymlPath -UseBasicParsing -TimeoutSec 60; break }
+  catch { Write-Host "[retry $i/3] latest.yml: $($_.Exception.Message)"; if ($i -eq 3) { throw }; Start-Sleep 2 }
+}
+
+$yml = Get-Content $ymlPath -Raw
+$verInYml     = if ($yml -match '(?m)^version:\s*(\S+)')   { $Matches[1] } else { '' }
+$expectedSha  = if ($yml -match '(?m)^\s*sha512:\s*(\S+)')  { $Matches[1] } else { '' }
+$expectedSize = if ($yml -match '(?m)^\s*size:\s*(\d+)')    { [int]$Matches[1] } else { 0 }
+if ($verInYml -ne $ver) { throw "latest.yml says version=$verInYml, expected $ver" }
+if (-not $expectedSha)  { throw "Could not parse sha512 from latest.yml" }
+Write-Host "[yml ] v$verInYml  size=$expectedSize  sha512=$expectedSha" -ForegroundColor Green
+
+foreach ($a in @($exeName, $blockName)) {
+  $out = Join-Path $mirror $a
+  $present = Test-Path $out
+  $sizeOk = $true
+  if ($present -and $a -eq $exeName -and $expectedSize -gt 0) {
+    $sizeOk = ((Get-Item $out).Length -eq $expectedSize)
+  }
+  if ($present -and $sizeOk) {
+    Write-Host "[skip] $a  ($((Get-Item $out).Length) bytes, present)" -ForegroundColor DarkGray; continue
+  }
+  Write-Host "[fetch] $a ..."
+  for ($i = 1; $i -le 3; $i++) {
+    try { Invoke-WebRequest -Uri "$base/$a" -OutFile $out -UseBasicParsing -TimeoutSec 300; break }
+    catch { Write-Host "  [retry $i/3] $a : $($_.Exception.Message)"; if ($i -eq 3) { throw }; Start-Sleep 5 }
+  }
+  Write-Host "  [ok ] $((Get-Item $out).Length) bytes" -ForegroundColor Green
+}
+
+$exePath = Join-Path $mirror $exeName
+$got = [Convert]::ToBase64String([System.Security.Cryptography.SHA512]::Create().ComputeHash([System.IO.File]::ReadAllBytes($exePath)))
+if ($got -ne $expectedSha) { throw "sha512 mismatch on $exeName`n  expected: $expectedSha`n  got:      $got" }
+$actualSize = (Get-Item $exePath).Length
+if ($expectedSize -gt 0 -and $actualSize -ne $expectedSize) { throw "size mismatch on $exeName`n  expected: $expectedSize  got: $actualSize" }
+Write-Host "[verify] sha512 OK, size OK ($actualSize bytes)" -ForegroundColor Green
+
+$probed = $false
+foreach ($port in @(3111, 3112, 3113)) {
+  foreach ($h in @('localhost','127.0.0.1')) {
+    try {
+      $r = Invoke-WebRequest -Uri "http://${h}:${port}/updates/stable/latest.yml" -UseBasicParsing -TimeoutSec 3
+      if ($r.StatusCode -eq 200 -and $r.Content -match "version: $ver") {
+        Write-Host "[probe] http://${h}:${port}/updates/stable/latest.yml  -> 200, v$ver" -ForegroundColor Green
+        $probed = $true; break
+      }
+    } catch { }
+  }
+  if ($probed) { break }
+}
+if (-not $probed) {
+  Write-Host "[probe] factory server NOT reachable on :3111-3113. Start the factory server (or restart the launcher) before clicking 'Check Updates'." -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "Done. Mirror is now advertising v$ver. Open the launcher and click 'Check Updates'." -ForegroundColor Green
