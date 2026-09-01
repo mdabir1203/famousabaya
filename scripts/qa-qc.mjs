@@ -75,11 +75,19 @@ async function runSystemSmokeCheck() {
   // Fixed throwaway secret so the export-auth checks are deterministic: without
   // any FLOOR_EXPORT_SECRET the server correctly answers 503 "export disabled",
   // which fails the 401 bad-secret check on machines/CI runners with no .env.
+  // Also explicitly blank CF_WORKER_URL for the smoke test: the system-smoke
+  // suite tries to call the real Cloudflare Worker (catalog, session_start,
+  // session_finish), and if dashboard.farewellabaya.com is degraded or in the
+  // middle of a deploy it returns 5xx, which then fails the QA/QC gate even
+  // though the local factory server is fine. Setting CF_WORKER_URL='' makes
+  // the server skip the cloud calls entirely (scripts/test-system.mjs already
+  // checks `if (WORKER && INGEST)` before issuing them).
   const env = {
     ...process.env,
     PORT: '3111',
     TEST_FACTORY_URL: 'http://127.0.0.1:3111',
     FLOOR_EXPORT_SECRET: process.env.FLOOR_EXPORT_SECRET || 'qa-qc-smoke-secret',
+    CF_WORKER_URL: '',
   };
   const server = spawn('node', ['server.js'], {
     cwd: root,
