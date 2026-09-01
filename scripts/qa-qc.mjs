@@ -75,19 +75,24 @@ async function runSystemSmokeCheck() {
   // Fixed throwaway secret so the export-auth checks are deterministic: without
   // any FLOOR_EXPORT_SECRET the server correctly answers 503 "export disabled",
   // which fails the 401 bad-secret check on machines/CI runners with no .env.
-  // Also explicitly blank CF_WORKER_URL for the smoke test: the system-smoke
-  // suite tries to call the real Cloudflare Worker (catalog, session_start,
-  // session_finish), and if dashboard.farewellabaya.com is degraded or in the
-  // middle of a deploy it returns 5xx, which then fails the QA/QC gate even
-  // though the local factory server is fine. Setting CF_WORKER_URL='' makes
-  // the server skip the cloud calls entirely (scripts/test-system.mjs already
-  // checks `if (WORKER && INGEST)` before issuing them).
+  // Also explicitly REMOVE CF_WORKER_URL from the spawned env (not blank it):
+  // scripts/test-system.mjs's loadDotEnv() does `if (!process.env[k]) ...` and
+  // an empty string is falsy, so leaving CF_WORKER_URL='' would let the .env
+  // file overwrite it. delete env.CF_WORKER_URL before the spread so the
+  // test starts with no CF_WORKER_URL and the worker branch is skipped.
+  // Reason for the skip: the system-smoke suite tries to call the real
+  // Cloudflare Worker (catalog, session_start, session_finish). If
+  // dashboard.farewellabaya.com is degraded (error 1101, 5xx) — which has
+  // happened multiple times during CI runs in Aug 2026 — the smoke test
+  // fails and the entire QA/QC gate fails, blocking releases even though
+  // the local factory server is fine. The local-only path exercises the
+  // code paths the gate actually needs to verify.
+  const { CF_WORKER_URL: _strip, ...rest } = process.env;
   const env = {
-    ...process.env,
+    ...rest,
     PORT: '3111',
     TEST_FACTORY_URL: 'http://127.0.0.1:3111',
     FLOOR_EXPORT_SECRET: process.env.FLOOR_EXPORT_SECRET || 'qa-qc-smoke-secret',
-    CF_WORKER_URL: '',
   };
   const server = spawn('node', ['server.js'], {
     cwd: root,
