@@ -1,151 +1,153 @@
 {
-  "name": "abaya-desktop-launcher",
-  "version": "1.2.17",
-  "private": true,
-  "description": "Single EXE installer and launcher for the full AbaYa Track runtime",
-  "author": "Mohammad Abir Abbas",
-  "main": "main.js",
-  "scripts": {
-    "start": "node ./start-electron.cjs",
-    "dist:win": "electron-builder --win nsis --x64",
-    "release:gh": "electron-builder --win nsis --x64 --publish never"
-  },
-  "packageManager": "yarn@4.13.0",
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "electron-updater": "^6.3.9"
-  },
-  "devDependencies": {
-    "electron": "^34.2.0",
-    "electron-builder": "^24.13.3",
-    "supports-color": "^9.0.0"
-  },
-  "build": {
-    "appId": "com.abaya.track.launcher",
-    "productName": "AbaYa Track Launcher",
-    "directories": {
-      "output": "../../install"
-    },
-    "icon": "assets/app-icon",
-    "files": [
-      "index.html",
-      "main.js",
-      "update-policy.cjs",
-      "env-migrate.cjs",
-      "preload.js",
-      "renderer.js",
-      "start-electron.cjs",
-      "package.json",
-      "app-update.yml",
-      "dev-app-update.yml",
-      "README.md"
-    ],
-    "fileAssociations": [],
-    "extraResources": [
-      {
-        "from": "../../install",
-        "to": "install",
-        "filter": [
-          "*.bat",
-          "*.ps1",
-          "*.cjs"
-        ]
-      },
-      {
-        "from": "../../server.js",
-        "to": "server.js"
-      },
-      {
-        "from": "../../package.json",
-        "to": "package.json"
-      },
-      {
-        "from": "../../.env.example",
-        "to": ".env.example"
-      },
-      {
-        "from": "../../install/.env.production",
-        "to": ".env.production",
-        "filter": [
-          ".env.production"
-        ]
-      },
-      {
-        "from": "../../public",
-        "to": "public",
-        "filter": [
-          "**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"
-        ]
-      },
-      {
-        "from": "../../shared",
-        "to": "shared",
-        "filter": [
-          "**/*.{js,cjs,mjs}"
-        ]
-      },
-      {
-        "from": "../../config",
-        "to": "config",
-        "filter": [
-          "**/*.json"
-        ]
-      },
-      {
-        "from": "../../tools/catalog-watcher",
-        "to": "tools/catalog-watcher",
-        "filter": [
-          "*.js",
-          "*.json",
-          "*.cjs",
-          "*.mjs",
-          "*.txt",
-          "package.json",
-          "yarn.lock",
-          ".pnp.cjs",
-          ".pnp.loader.mjs",
-          ".yarnrc.yml",
-          ".yarn/install-state.gz",
-          ".yarn/cache/**",
-          ".yarn/unplugged/**"
-        ]
-      },
-      {
-        "from": ".factory-deps/node_modules",
-        "to": "node_modules"
-      }
-    ],
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "mdabir1203",
-        "repo": "famousabaya",
-        "releaseType": "release"
-      }
-    ],
-    "extraMetadata": {
-      "main": "main.js"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "AbaYa-Track-Launcher-Setup-${version}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "AbaYa Track Launcher"
-    }
-  }
+    "name":  "abaya-desktop-launcher",
+    "version":  "1.2.18",
+    "private":  true,
+    "description":  "Single EXE installer and launcher for the full AbaYa Track runtime",
+    "author":  "Mohammad Abir Abbas",
+    "main":  "main.js",
+    "scripts":  {
+                    "start":  "node ./start-electron.cjs",
+                    "dist:win":  "electron-builder --win nsis --x64",
+                    "release:gh":  "electron-builder --win nsis --x64 --publish never"
+                },
+    "packageManager":  "yarn@4.13.0",
+    "engines":  {
+                    "node":  "\u003e=18"
+                },
+    "dependencies":  {
+                         "electron-updater":  "^6.3.9"
+                     },
+    "devDependencies":  {
+                            "electron":  "^34.2.0",
+                            "electron-builder":  "^24.13.3",
+                            "supports-color":  "^9.0.0"
+                        },
+    "build":  {
+                  "appId":  "com.abaya.track.launcher",
+                  "productName":  "AbaYa Track Launcher",
+                  "directories":  {
+                                      "output":  "../../install"
+                                  },
+                  "icon":  "assets/app-icon",
+                  "files":  [
+                                "index.html",
+                                "main.js",
+                                "update-policy.cjs",
+                                "env-migrate.cjs",
+                                "preload.js",
+                                "renderer.js",
+                                "start-electron.cjs",
+                                "package.json",
+                                "app-update.yml",
+                                "dev-app-update.yml",
+                                "README.md"
+                            ],
+                  "fileAssociations":  [
+
+                                       ],
+                  "extraResources":  [
+                                         {
+                                             "from":  "../../install",
+                                             "to":  "install",
+                                             "filter":  [
+                                                            "*.bat",
+                                                            "*.ps1",
+                                                            "*.cjs"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "../../server.js",
+                                             "to":  "server.js"
+                                         },
+                                         {
+                                             "from":  "../../package.json",
+                                             "to":  "package.json"
+                                         },
+                                         {
+                                             "from":  "../../.env.example",
+                                             "to":  ".env.example"
+                                         },
+                                         {
+                                             "from":  "../../install/.env.production",
+                                             "to":  ".env.production",
+                                             "filter":  [
+                                                            ".env.production"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "../../public",
+                                             "to":  "public",
+                                             "filter":  [
+                                                            "**/*.{html,js,css,png,jpg,jpeg,svg,ico,json}"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "../../shared",
+                                             "to":  "shared",
+                                             "filter":  [
+                                                            "**/*.{js,cjs,mjs}"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "../../config",
+                                             "to":  "config",
+                                             "filter":  [
+                                                            "**/*.json"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "../../tools/catalog-watcher",
+                                             "to":  "tools/catalog-watcher",
+                                             "filter":  [
+                                                            "*.js",
+                                                            "*.json",
+                                                            "*.cjs",
+                                                            "*.mjs",
+                                                            "*.txt",
+                                                            "package.json",
+                                                            "yarn.lock",
+                                                            ".pnp.cjs",
+                                                            ".pnp.loader.mjs",
+                                                            ".yarnrc.yml",
+                                                            ".yarn/install-state.gz",
+                                                            ".yarn/cache/**",
+                                                            ".yarn/unplugged/**"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  ".factory-deps/node_modules",
+                                             "to":  "node_modules"
+                                         }
+                                     ],
+                  "publish":  [
+                                  {
+                                      "provider":  "github",
+                                      "owner":  "mdabir1203",
+                                      "repo":  "famousabaya",
+                                      "releaseType":  "release"
+                                  }
+                              ],
+                  "extraMetadata":  {
+                                        "main":  "main.js"
+                                    },
+                  "win":  {
+                              "target":  [
+                                             {
+                                                 "target":  "nsis",
+                                                 "arch":  [
+                                                              "x64"
+                                                          ]
+                                             }
+                                         ],
+                              "artifactName":  "AbaYa-Track-Launcher-Setup-${version}.${ext}"
+                          },
+                  "nsis":  {
+                               "oneClick":  false,
+                               "allowToChangeInstallationDirectory":  true,
+                               "perMachine":  false,
+                               "createDesktopShortcut":  true,
+                               "createStartMenuShortcut":  true,
+                               "shortcutName":  "AbaYa Track Launcher"
+                           }
+              }
 }

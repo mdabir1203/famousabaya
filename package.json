@@ -1,69 +1,71 @@
 {
-  "name": "abaya-server",
-  "version": "1.2.17",
-  "packageManager": "yarn@4.13.0",
-  "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
-  "main": "server.js",
-  "scripts": {
-    "build": "echo \"No build step: wrangler bundles the Worker during 'versions upload'.\"",
-    "setup": "node install/setup.cjs",
-    "launcher": "node scripts/run-launcher.cjs",
-    "start": "node server.js",
-    "icons:build": "node scripts/render-app-icons.cjs",
-    "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
-    "build:installer": "cd tools/desktop-launcher && yarn install && yarn run dist:win",
-    "deploy:all": "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
-    "test": "node --test tests/**/*.test.mjs",
-    "test:system": "node scripts/test-system.mjs",
-    "test:offline-store": "node scripts/test-offline-report-store.mjs",
-    "qa:qc": "node scripts/qa-qc.mjs",
-    "qa:qc:ci": "node scripts/qa-qc.mjs",
-    "verify:employee-xlsx": "yarn node scripts/verify-employee-xlsx-roundtrip.mjs",
-    "deploy:cf": "node scripts/run-cloudflare-wrangler.cjs deploy --config wrangler.toml",
-    "snapshot:db": "node scripts/snapshot-now.cjs",
-    "snapshot:info": "node scripts/import-snapshot.cjs --info",
-    "snapshot:import": "node scripts/import-snapshot.cjs",
-    "snapshot:verify": "node scripts/snapshot-verify.cjs",
-    "snapshot:harden": "powershell -NoProfile -ExecutionPolicy Bypass -File install/HARDEN-SNAPSHOT-DIR.ps1",
-    "pm2:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File install/SETUP-PM2-BOOT.ps1",
-    "pm2:status": "powershell -NoProfile -ExecutionPolicy Bypass -File install/CHECK-PM2-STATUS.ps1",
-    "pm2:start": "pm2 start ecosystem.config.cjs --update-env",
-    "pm2:reload": "pm2 reload ecosystem.config.cjs --update-env",
-    "pm2:logs": "pm2 logs",
-    "evaluate:rollout": "node scripts/evaluate-rollout.cjs",
-    "evaluate:live": "bash scripts/eval-live-boot.sh",
-    "verify:ceo": "node scripts/verify-ceo-state.mjs",
-    "publish:lan-mirror": "node scripts/publish-lan-update-mirror.mjs",
-    "perf:cf": "echo See cloudflare/docs/PERFORMANCE-CHECKLIST.md (Lighthouse + curl budgets)",
-    "launcher:gui": "node ./tools/desktop-launcher/start-electron.cjs"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "chokidar": "^4.0.3",
-    "cors": "^2.8.6",
-    "dotenv": "^16.6.1",
-    "express": "^5.2.1",
-    "multer": "^2.1.1",
-    "package": "^1.0.1",
-    "pm2": "^7.0.3",
-    "qrcode": "^1.5.4",
-    "socket.io": "^4.8.3",
-    "sql.js": "^1.14.1",
-    "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "sharp": "^0.33.5",
-    "unenv": "2.0.0-rc.24",
-    "wrangler": "^4.84.1"
-  },
-  "dependenciesMeta": {
-    "pm2@7.0.3": {
-      "unplugged": true
-    }
-  }
+    "name":  "abaya-server",
+    "version":  "1.2.18",
+    "packageManager":  "yarn@4.13.0",
+    "description":  "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
+    "main":  "server.js",
+    "scripts":  {
+                    "build":  "echo \"No build step: wrangler bundles the Worker during \u0027versions upload\u0027.\"",
+                    "setup":  "node install/setup.cjs",
+                    "launcher":  "node scripts/run-launcher.cjs",
+                    "start":  "node server.js",
+                    "icons:build":  "node scripts/render-app-icons.cjs",
+                    "package:release":  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
+                    "build:installer":  "cd tools/desktop-launcher \u0026\u0026 yarn install \u0026\u0026 yarn run dist:win",
+                    "deploy:all":  "powershell -NoProfile -ExecutionPolicy Bypass -File install/DEPLOY-ALL.ps1",
+                    "test":  "node --test tests/**/*.test.mjs",
+                    "test:system":  "node scripts/test-system.mjs",
+                    "test:offline-store":  "node scripts/test-offline-report-store.mjs",
+                    "qa:qc":  "node scripts/qa-qc.mjs",
+                    "qa:qc:ci":  "node scripts/qa-qc.mjs",
+                    "verify:employee-xlsx":  "yarn node scripts/verify-employee-xlsx-roundtrip.mjs",
+                    "deploy:cf":  "node scripts/run-cloudflare-wrangler.cjs deploy --config wrangler.toml",
+                    "snapshot:db":  "node scripts/snapshot-now.cjs",
+                    "snapshot:info":  "node scripts/import-snapshot.cjs --info",
+                    "snapshot:import":  "node scripts/import-snapshot.cjs",
+                    "snapshot:verify":  "node scripts/snapshot-verify.cjs",
+                    "snapshot:harden":  "powershell -NoProfile -ExecutionPolicy Bypass -File install/HARDEN-SNAPSHOT-DIR.ps1",
+                    "pm2:setup":  "powershell -NoProfile -ExecutionPolicy Bypass -File install/SETUP-PM2-BOOT.ps1",
+                    "pm2:status":  "powershell -NoProfile -ExecutionPolicy Bypass -File install/CHECK-PM2-STATUS.ps1",
+                    "pm2:start":  "pm2 start ecosystem.config.cjs --update-env",
+                    "pm2:reload":  "pm2 reload ecosystem.config.cjs --update-env",
+                    "pm2:logs":  "pm2 logs",
+                    "evaluate:rollout":  "node scripts/evaluate-rollout.cjs",
+                    "evaluate:live":  "bash scripts/eval-live-boot.sh",
+                    "verify:ceo":  "node scripts/verify-ceo-state.mjs",
+                    "publish:lan-mirror":  "node scripts/publish-lan-update-mirror.mjs",
+                    "perf:cf":  "echo See cloudflare/docs/PERFORMANCE-CHECKLIST.md (Lighthouse + curl budgets)",
+                    "launcher:gui":  "node ./tools/desktop-launcher/start-electron.cjs"
+                },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "engines":  {
+                    "node":  "\u003e=18"
+                },
+    "dependencies":  {
+                         "chokidar":  "^4.0.3",
+                         "cors":  "^2.8.6",
+                         "dotenv":  "^16.6.1",
+                         "express":  "^5.2.1",
+                         "multer":  "^2.1.1",
+                         "package":  "^1.0.1",
+                         "pm2":  "^7.0.3",
+                         "qrcode":  "^1.5.4",
+                         "socket.io":  "^4.8.3",
+                         "sql.js":  "^1.14.1",
+                         "xlsx":  "^0.18.5"
+                     },
+    "devDependencies":  {
+                            "sharp":  "^0.33.5",
+                            "unenv":  "2.0.0-rc.24",
+                            "wrangler":  "^4.84.1"
+                        },
+    "dependenciesMeta":  {
+                             "pm2@7.0.3":  {
+                                               "unplugged":  true
+                                           }
+                         }
 }
