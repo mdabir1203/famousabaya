@@ -2374,6 +2374,124 @@ io.on('connection', (socket) => {
     }
   });
 
+  /**
+   * Admin: close one or more orphan active sessions with a synthetic end time
+   * (the worker tapped Start but never tapped Finish; we set end = min(started
+   * + 8h, now) so the in-shift duration is a realistic upper bound). Used by
+   * scripts/reset-orphan-sessions.ps1 after a factory-side power event or
+   * any other time the in-memory ACTIVE_SESSIONS map has stale rows.
+   *
+   * Auth: X-Ingest-Secret (same as /api/reconcile-now, /api/cloud-today/refresh).
+   * Body: { sessions: [{emp_id, end_ms? }], dryRun?: boolean }
+   *   - end_ms: synthetic end timestamp. If omitted or > now, falls back to
+   *     min(started_at + 8h, now). Must be >= started_at.
+   *   - dryRun: when true, returns what would happen without mutating state.
+   * Response: { ok, count, dryRun, results: [{emp_id, ok, closed?, would_close?, error?}] }
+   *
+   * Each closed session is:
+   *   - appended to COMPLETED_LOGS (so /api/state shows it on the dashboard)
+   *   - removed from ACTIVE_SESSIONS
+   *   - pushed to the cloud as session_finish with auto_closed: true
+   *   - persisted via the offline-report snapshot + the SQLite snapshot writer
+   *
+   * The auto_closed flag lets the cloud D1 distinguish an operator-driven
+   * cleanup from a real worker Finish (e.g., for future per-emp audit reports).
+   */
+  app.post('/api/admin/close-stale-sessions', (req, res) => {
+    const secret = String(req.headers['x-ingest-secret'] || '').trim();
+    if (!CF_SECRET || secret !== CF_SECRET) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized' });
+    }
+    const body = req.body || {};
+    const sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    const dryRun = !!body.dryRun;
+    if (!sessions.length) {
+      return res.status(400).json({ ok: false, error: 'sessions must be a non-empty array' });
+    }
+    const now = Date.now();
+    const results = [];
+    let closedCount = 0;
+    let skippedCount = 0;
+    for (let i = 0; i < sessions.length; i++) {
+      const item = sessions[i] || {};
+      const emp_id = String(item.emp_id || '').trim();
+      if (!emp_id) { results.push({ emp_id, error: 'missing emp_id' }); skippedCount++; continue; }
+      const sess = ACTIVE_SESSIONS[emp_id];
+      if (!sess) { results.push({ emp_id, error: 'no_active_session' }); skippedCount++; continue; }
+      // Resolve end time: explicit end_ms wins; otherwise cap at min(started + 8h, now)
+      let endMs = Number(item.end_ms) || 0;
+      if (!(endMs > 0) || endMs > now) endMs = now;
+      const cap = sess.started_at + 8 * 3600 * 1000;
+      if (endMs > cap) endMs = cap;
+      if (endMs < sess.started_at) { results.push({ emp_id, error: 'end_before_start' }); skippedCount++; continue; }
+      // Compute in-shift seconds (same as req_finishWork) so the completed log
+      // record's duration_sec is consistent with real finishes.
+      const duration_sec = Math.floor(
+        overlapSecWithWindows(Math.floor(sess.started_at / 1000), Math.floor(endMs / 1000))
+      );
+      const emp = EMPLOYEES.find((e) => e.id === emp_id);
+      const abaya = abayaCatalog.find((a) => a.id === sess.abaya_id);
+      const summary = {
+        emp_id,
+        ok: true,
+        process: sess.process,
+        abaya_id: sess.abaya_id,
+        abaya_code: abaya ? abaya.code : null,
+        started_at: sess.started_at,
+        end_ms: endMs,
+        duration_sec,
+      };
+      if (dryRun) {
+        results.push(Object.assign({ dryRun: true }, summary));
+        continue;
+      }
+      const record = {
+        emp_id: emp_id,
+        abaya_id: sess.abaya_id,
+        process: sess.process,
+        start: sess.started_at,
+        end: endMs,
+        duration_sec: duration_sec,
+        hour: new Date(endMs).getHours(),
+        auto_closed: true,
+      };
+      COMPLETED_LOGS.push(record);
+      delete ACTIVE_SESSIONS[emp_id];
+      setImmediate(persistOfflineDashboardReport);
+      setImmediate(() => { void persistSqliteSnapshot(); });
+      if (emp) {
+        pushToCloudflare('session_finish', {
+          emp_id: emp_id,
+          emp_name: emp.name,
+          emp_code: emp.code,
+          emp_process: sess.process,
+          emp_color: emp.color,
+          emp_initials: emp.initials,
+          abaya_id: sess.abaya_id,
+          abaya_code: abaya ? abaya.code : null,
+          station: 'S-02',
+          started_at: Math.floor(sess.started_at / 1000),
+          ended_at: Math.floor(endMs / 1000),
+          duration_sec: duration_sec,
+          auto_closed: true,
+        });
+      }
+      results.push(Object.assign({ closed: true }, summary));
+      closedCount++;
+    }
+    if (closedCount > 0) {
+      try { broadcastState(); } catch (_) { /* state is best-effort here */ }
+    }
+    return res.json({
+      ok: true,
+      dryRun: dryRun,
+      count: results.length,
+      closed: closedCount,
+      skipped: skippedCount,
+      results: results,
+    });
+  });
+
   socket.on('disconnect', (reason) => {
     logSocketSignal('disconnect', {
       id: socket.id,
