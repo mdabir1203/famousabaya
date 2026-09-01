@@ -72,6 +72,17 @@ function Find-InstallRoot {
     $candidates = @(
         $PSScriptRoot
         $PWD.Path
+        # NSIS installs ("AbaYa Track Launcher" with Launcher suffix)
+        (Join-Path $env:LOCALAPPDATA 'AbaYa Track Launcher\resources\install')
+        (Join-Path $env:LOCALAPPDATA 'AbaYa Track Launcher\resources')
+        (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track Launcher\resources\install')
+        (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track Launcher\resources')
+        (Join-Path $env:APPDATA 'AbaYa Track Launcher')
+        'C:\Program Files\AbaYa Track Launcher\resources\install'
+        'C:\Program Files\AbaYa Track Launcher\resources'
+        'C:\Program Files (x86)\AbaYa Track Launcher\resources\install'
+        'C:\Program Files (x86)\AbaYa Track Launcher\resources'
+        # Legacy / dev paths ("AbaYa Track" without Launcher suffix)
         (Join-Path $env:LOCALAPPDATA 'AbaYa Track\resources')
         (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track\resources')
         (Join-Path $env:APPDATA 'AbaYa Track')
@@ -237,6 +248,17 @@ $blockName = "$exeName.blockmap"
 $probeRoots = @(
   $PSScriptRoot,
   $PWD.Path,
+  # NSIS installs ("AbaYa Track Launcher" with Launcher suffix)
+  (Join-Path $env:LOCALAPPDATA 'AbaYa Track Launcher\resources\install'),
+  (Join-Path $env:LOCALAPPDATA 'AbaYa Track Launcher\resources'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track Launcher\resources\install'),
+  (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track Launcher\resources'),
+  (Join-Path $env:APPDATA 'AbaYa Track Launcher'),
+  'C:\Program Files\AbaYa Track Launcher\resources\install',
+  'C:\Program Files\AbaYa Track Launcher\resources',
+  'C:\Program Files (x86)\AbaYa Track Launcher\resources\install',
+  'C:\Program Files (x86)\AbaYa Track Launcher\resources',
+  # Legacy / dev paths ("AbaYa Track" without Launcher suffix)
   (Join-Path $env:LOCALAPPDATA 'AbaYa Track\resources'),
   (Join-Path $env:LOCALAPPDATA 'Programs\AbaYa Track\resources'),
   (Join-Path $env:APPDATA 'AbaYa Track'),
