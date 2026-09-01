@@ -16,7 +16,33 @@
 
 const fs = require('fs');
 
-const HEAL_KEYS = ['ABAYA_UPDATE_MIRROR_BASE_URL', 'ABAYA_CLOUD_UPDATE_BASE_URL', 'LAN_IP'];
+const HEAL_KEYS = [
+  // Network binding — the local factory server must always be on PORT 3111
+  // after an update, otherwise the launcher dashboard / kiosk / CEO pages
+  // can't reach it. NSIS per-machine-state preservation of the user's
+  // `.env` is not enough on its own — if the user's old `.env` is missing
+  // PORT, the install would have no PORT and the server would bind to the
+  // express default (often 3000), breaking the dashboard. Adding these to
+  // HEAL_KEYS forces the migration to (a) add them if missing, (b) rewrite
+  // them to the bundled values if they differ. See the 2026-09-02 incident:
+  // v1.2.17 published with a working build but HEAL_KEYS didn't include
+  // PORT/HOST/CF_WORKER_URL, and the factory laptop lost 3111 after the
+  // auto-update path ran. Kept here so the v1.2.18+ migration never
+  // re-creates the bug.
+  'PORT',
+  'HOST',
+  'CF_WORKER_URL',
+  // Update-feed URLs (LAN mirror + cloud R2) — keep these in sync with the
+  // bundled `.env.production` so the launcher's auto-updater always probes
+  // the right feed on first boot after an update.
+  'ABAYA_UPDATE_MIRROR_BASE_URL',
+  'ABAYA_CLOUD_UPDATE_BASE_URL',
+  'LAN_IP',
+  // NOTE: CF_INGEST_SECRET, GH_TOKEN, GITHUB_TOKEN are intentionally NOT
+  // here — those are operator-edited and the migration must never silently
+  // overwrite them (losing the ingest secret would be a far worse outage
+  // than a stale LAN IP).
+];
 
 /** @returns {string[]} raw lines (with newlines already stripped). */
 function readRawDotenvLines(filePath) {

@@ -24,15 +24,23 @@ function withTempEnvFiles(t, userBody, prodBody) {
   return { userPath, prodPath, dir };
 }
 
-test('HEAL_KEYS is the documented allow-list (no CF_INGEST_SECRET, no GH_TOKEN)', () => {
+test('HEAL_KEYS is the documented allow-list (no secrets; includes structural net config)', () => {
+  // Structural / network-binding keys — the local factory server must keep
+  // these on every update, otherwise the launcher dashboard loses the
+  // factory server. 2026-09-02: a v1.2.17 install on the factory left
+  // the .env without PORT/HOST/CF_WORKER_URL because they weren't in
+  // HEAL_KEYS; v1.2.18 added them.
+  assert.ok(HEAL_KEYS.includes('PORT'), 'PORT must be in HEAL_KEYS so the factory server keeps 3111 after an update');
+  assert.ok(HEAL_KEYS.includes('HOST'), 'HOST must be in HEAL_KEYS so the factory server keeps binding 0.0.0.0');
+  assert.ok(HEAL_KEYS.includes('CF_WORKER_URL'), 'CF_WORKER_URL must be in HEAL_KEYS so cloud sync target stays current');
+  // Update-feed URLs (LAN mirror + cloud R2) — already in HEAL_KEYS as of v1.2.11.
   assert.ok(HEAL_KEYS.includes('ABAYA_UPDATE_MIRROR_BASE_URL'));
   assert.ok(HEAL_KEYS.includes('ABAYA_CLOUD_UPDATE_BASE_URL'));
   assert.ok(HEAL_KEYS.includes('LAN_IP'));
   // The whole point: never silently overwrite operator-edited secrets.
-  assert.ok(!HEAL_KEYS.includes('CF_INGEST_SECRET'));
-  assert.ok(!HEAL_KEYS.includes('GH_TOKEN'));
-  assert.ok(!HEAL_KEYS.includes('GITHUB_TOKEN'));
-  assert.ok(!HEAL_KEYS.includes('CF_WORKER_URL'));
+  assert.ok(!HEAL_KEYS.includes('CF_INGEST_SECRET'), 'CF_INGEST_SECRET must NEVER be in HEAL_KEYS (operator-edited)');
+  assert.ok(!HEAL_KEYS.includes('GH_TOKEN'), 'GH_TOKEN must NEVER be in HEAL_KEYS (operator-edited)');
+  assert.ok(!HEAL_KEYS.includes('GITHUB_TOKEN'), 'GITHUB_TOKEN must NEVER be in HEAL_KEYS (operator-edited)');
 });
 
 test('rewrites a stale LAN mirror IP to the freshly-bundled one', (t) => {
