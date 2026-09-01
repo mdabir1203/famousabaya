@@ -1075,6 +1075,55 @@ function renderLiveSessions() {
     // previous Finish shouldn't be the "last finished" reference.
     const lastFinishDisplayMs = lastFinishMs && lastFinishMs < startedMs ? lastFinishMs : 0;
 
+    // "Active today" — in-shift elapsed time for THIS active session, ticking
+    // because renderLiveSessions is called every 2.5s. Mirrors the cloud's
+    // windowed_elapsed_sec (cloudflare/src/handlers/state.js, derived from
+    // cloudflare/migrations/0016_active_session_live_state.sql). The local
+    // server doesn't push that column yet, so we recompute client-side using
+    // inWindowClient (which is the same window matcher the rest of this
+    // dashboard uses). For cross-day sessions the effective start is clamped
+    // to today 00:00 in the factory TZ, so a session that started yesterday
+    // afternoon and is still running at 10am today shows only the 2h of
+    // in-shift time since today's midnight — matching what the cloud D1
+    // reports after the per-midnight rollup job.
+    const activeTodaySec = (function () {
+      const startYmd = ymdInTimezone(startedMs, tz);
+      let effStartMs = startedMs;
+      if (startYmd !== todayYmd) {
+        // Cross-day — clamp to today 00:00 in factory TZ. Derive the TZ
+        // offset from serverNowMs (anchored to the local server's clock) and
+        // apply it to today's UTC midnight. Ignores DST transitions within
+        // the day, but the inWindowClient check below already accounts for
+        // local-clock time, so worst case the first minute of today miscounts.
+        const d = new Date(serverNowMs);
+        const ymdParts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+        }).formatToParts(d);
+        const y  = Number(ymdParts.find(p => p.type === 'year').value);
+        const mo = Number(ymdParts.find(p => p.type === 'month').value);
+        const da = Number(ymdParts.find(p => p.type === 'day').value);
+        const localHMSStr = new Intl.DateTimeFormat('en-GB', {
+          timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        }).format(new Date(serverNowMs));
+        const [hh, mm, ss] = localHMSStr.split(':').map(Number);
+        const tzOffsetMs = (hh * 3600 + mm * 60 + ss) * 1000
+          - ((serverNowMs % 86400000) + 86400000) % 86400000;
+        effStartMs = Date.UTC(y, mo - 1, da) - tzOffsetMs;
+      }
+      const st = Math.floor(effStartMs / 1000);
+      const end = serverNowSec;
+      if (end <= st) return 0;
+      let sec = 0;
+      // Minute-by-minute stepping — same trade-off as activeSecondsWindowedFromMs
+      // (line 141): ≤1 minute precision in exchange for ~60x fewer iterations
+      // than a per-second walk. Plenty fast for sessions up to ~24h.
+      for (let t = st; t < end; t += 60) {
+        const t2 = Math.min(end, t + 60);
+        if (inWindowClient(t)) sec += t2 - t;
+      }
+      return sec;
+    })();
+
     return (
       '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
         '<div class="emp-av" style="background:' + escapeAttr(color) + '">' + escapeHtml(initials) + '</div>' +
@@ -1097,6 +1146,23 @@ function renderLiveSessions() {
           '</div>' +
         '</div>' +
         '<div style="text-align:right">' +
+          // "Active today" — live in-shift elapsed time for THIS active
+          // session, ticking because renderLiveSessions runs every 2.5s.
+          // Sits at the top of the right column so the ticking counter is
+          // the first thing the operator sees. The "· Button" suffix names
+          // the process the worker is currently on, so the time is read in
+          // the context of "they've been doing Button for X". Mirrors
+          // cloudflare's windowed_elapsed_sec; recomputed client-side
+          // because the local server doesn't push that column yet.
+          (function () {
+            const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. For cross-day sessions, this resets at factory-TZ midnight. Recomputed client-side from started_at + inWindowClient; matches the cloud\u2019s windowed_elapsed_sec within \u00b160s (the function walks minute-by-minute for performance).';
+            return '<div title="' + escapeAttr(titleText) + '" style="font-size:18px;font-weight:700;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1.25;cursor:help">' +
+              escapeHtml(fmtHMS(activeTodaySec)) +
+            '</div>' +
+            '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px">' +
+              'active today &middot; ' + escapeHtml(sessionProcess) +
+            '</div>';
+          })() +
           // "last finished" cell. Shown instead of a live counter because
           // operators said the live ticking was distracting — they want to
           // see at a glance when the previous session for THIS worker
