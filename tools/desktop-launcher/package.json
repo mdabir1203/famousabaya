@@ -1,6 +1,6 @@
 {
     "name":  "abaya-desktop-launcher",
-    "version":  "1.2.19",
+    "version":  "1.2.20",
     "private":  true,
     "description":  "Single EXE installer and launcher for the full AbaYa Track runtime",
     "author":  "Mohammad Abir Abbas",
@@ -76,10 +76,11 @@
                                          },
                                          {
                                              "from":  "../../install/.env.production",
-                                             "to":  ".env.production",
-                                             "filter":  [
-                                                            ".env.production"
-                                                        ]
+                                             "to":  ".env.production"
+                                         },
+                                         {
+                                             "from":  "../../ecosystem.config.cjs",
+                                             "to":  "ecosystem.config.cjs"
                                          },
                                          {
                                              "from":  "../../public",
@@ -99,7 +100,9 @@
                                              "from":  "../../config",
                                              "to":  "config",
                                              "filter":  [
-                                                            "**/*.json"
+                                                            "**/*.json",
+                                                            "**/*.yml",
+                                                            "**/*.yaml"
                                                         ]
                                          },
                                          {

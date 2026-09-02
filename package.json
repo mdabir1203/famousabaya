@@ -1,6 +1,6 @@
 {
     "name":  "abaya-server",
-    "version":  "1.2.19",
+    "version":  "1.2.20",
     "packageManager":  "yarn@4.13.0",
     "description":  "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
     "main":  "server.js",
