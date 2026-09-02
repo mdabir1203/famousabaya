@@ -1070,11 +1070,15 @@ function renderLiveSessions() {
       : '';
 
     const lastFinishMs = lastFinishMsByEmpId[id] || 0;
-    // Suppress "last finished" if it's AFTER this active session's Start —
-    // would mean the worker re-tapped Start after a 10s job and the
-    // previous Finish shouldn't be the "last finished" reference.
+    // lastFinishDisplayMs is preserved here (and the upstream
+    // `lastFinishMsByEmpId` map, the `fmtTimeOfDay` / `fmtDateShort` /
+    // `fmtDateLong` helpers above) because the per-employee / per-abaya
+    // report code reads it as part of "this worker's last finished
+    // session" — even though the live session card no longer renders a
+    // "last finished" cell. Operators want to be able to spot a worker
+    // who re-tapped Start immediately after a 10-second Finish from the
+    // report, not just the live board. Do not delete the plumbing.
     const lastFinishDisplayMs = lastFinishMs && lastFinishMs < startedMs ? lastFinishMs : 0;
-
     // "Active today" — in-shift elapsed time for THIS active session, ticking
     // because renderLiveSessions is called every 2.5s. Mirrors the cloud's
     // windowed_elapsed_sec (cloudflare/src/handlers/state.js, derived from
@@ -1090,11 +1094,6 @@ function renderLiveSessions() {
       const startYmd = ymdInTimezone(startedMs, tz);
       let effStartMs = startedMs;
       if (startYmd !== todayYmd) {
-        // Cross-day — clamp to today 00:00 in factory TZ. Derive the TZ
-        // offset from serverNowMs (anchored to the local server's clock) and
-        // apply it to today's UTC midnight. Ignores DST transitions within
-        // the day, but the inWindowClient check below already accounts for
-        // local-clock time, so worst case the first minute of today miscounts.
         const d = new Date(serverNowMs);
         const ymdParts = new Intl.DateTimeFormat('en-CA', {
           timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
@@ -1114,9 +1113,6 @@ function renderLiveSessions() {
       const end = serverNowSec;
       if (end <= st) return 0;
       let sec = 0;
-      // Minute-by-minute stepping — same trade-off as activeSecondsWindowedFromMs
-      // (line 141): ≤1 minute precision in exchange for ~60x fewer iterations
-      // than a per-second walk. Plenty fast for sessions up to ~24h.
       for (let t = st; t < end; t += 60) {
         const t2 = Math.min(end, t + 60);
         if (inWindowClient(t)) sec += t2 - t;
@@ -1163,38 +1159,22 @@ function renderLiveSessions() {
               'active today &middot; ' + escapeHtml(sessionProcess) +
             '</div>';
           })() +
-          // "last finished" cell. Shown instead of a live counter because
-          // operators said the live ticking was distracting — they want to
-          // see at a glance when the previous session for THIS worker
-          // closed, not a number that ticks every 2.5s.
+          // "This build" — live elapsed time for THIS active session on this
+          // abaya. serverNowMs is anchored to the local server's clock via
+          // STATE.generated_at. Unlike the v1.2.18 aggregated wall-clock
+          // build age (serverNowMs - buildStartMs with the 24h-gap rule),
+          // this shows the per-session time the worker has been on the
+          // abaya right now — ticking every 2.5s. The aggregate total
+          // (across sessions, with 24h-gap rule) is still available on the
+          // Daily / Weekly / Monthly / Yearly reports.
           (function () {
-            if (!lastFinishDisplayMs) {
-              return '<div style="font-size:14px;font-weight:700;color:var(--tx3);font-variant-numeric:tabular-nums;line-height:1.25">—</div>' +
-                '<div style="font-size:9px;color:var(--tx3)">last finished</div>';
-            }
-            return '<div title="Exact moment this worker last tapped Finish (most recent completed log for this emp_id, before this Start). Replaces the old live in-shift counter." style="font-size:14px;font-weight:700;color:var(--tx2);font-variant-numeric:tabular-nums;line-height:1.25">' +
-              escapeHtml(fmtTimeOfDay(lastFinishDisplayMs)) +
-              '</div>' +
-              '<div style="font-size:9px;color:var(--tx3)">last finished &middot; ' + escapeHtml(fmtDateShort(lastFinishDisplayMs)) + '</div>';
-          })() +
-          // Wall-clock build AGE = serverNowMs - buildStartMs (24h-gap
-          // rule). serverNowMs is anchored to the local server's clock
-          // via STATE.generated_at, so this matches the local server's
-          // view of the world (and, with NTP-sync, the cloud's view).
-          (function () {
-            const buildTitle = isCustom
-              ? 'Custom abaya — wall-clock age of the current build. This code is a multi-week style that can legitimately span many 24h-gap build windows. The big number is real, not a bug.'
-              : 'Wall-clock age of the current build, counted from its first session (24h-gap rule). Not capped to shift windows and not the per-session timer. The in-shift working time is on the Daily / Weekly / Monthly / Yearly reports.';
             const customPill = isCustom
-              ? ' <span title="Marked is_custom=1 in the local abaya catalog. Multi-week build is expected for this style." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
+              ? ' <span title="Marked is_custom=1 in the local abaya catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
               : '';
-            if (!buildStartMs) {
-              return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.25">—' + customPill + '</div>' +
-                '<div style="font-size:9px;color:var(--tx3)">this build</div>';
-            }
-            const ageSecBuild = Math.max(0, Math.floor((serverNowMs - buildStartMs) / 1000));
-            return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(ageSecBuild)) + customPill + '</div>' +
-              '<div style="font-size:9px;color:var(--tx3)">this build &middot; started ' + escapeHtml(fmtDateLong(buildStartMs)) + '</div>';
+            const titleText = 'Time this active session has been on this abaya (elapsed since started_at). Per-session counter that ticks every 2.5s; not the aggregate across sessions. The in-shift working time per session is on the Daily / Weekly / Monthly / Yearly reports.';
+            const sessionElapsedSec = Math.max(0, Math.floor((serverNowMs - startedMs) / 1000));
+            return '<div title="' + titleText + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(sessionElapsedSec)) + customPill + '</div>' +
+              '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           })() +
         '</div>' +
       '</div>'
