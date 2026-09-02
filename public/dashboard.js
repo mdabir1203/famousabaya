@@ -1159,21 +1159,31 @@ function renderLiveSessions() {
               'active today &middot; ' + escapeHtml(sessionProcess) +
             '</div>';
           })() +
-          // "This build" — live elapsed time for THIS active session on this
-          // abaya. serverNowMs is anchored to the local server's clock via
-          // STATE.generated_at. Unlike the v1.2.18 aggregated wall-clock
-          // build age (serverNowMs - buildStartMs with the 24h-gap rule),
-          // this shows the per-session time the worker has been on the
-          // abaya right now — ticking every 2.5s. The aggregate total
-          // (across sessions, with 24h-gap rule) is still available on the
-          // Daily / Weekly / Monthly / Yearly reports.
+          // "This build" — in-shift elapsed time for THIS active session on
+          // this abaya (NOT wall-clock, so nights / weekends / lunch
+          // breaks don't inflate the number). serverNowMs is anchored to
+          // the local server's clock via STATE.generated_at. We walk
+          // minute-by-minute from startedAt to now, summing only the
+          // seconds that fall inside a configured shift window. Same
+          // trade-off as activeTodaySec above (±1 min precision in
+          // exchange for ~60x fewer iterations than a per-second walk —
+          // plenty fast for sessions up to ~24h and well within budget
+          // even for the multi-day stuck-session outliers).
           (function () {
             const customPill = isCustom
               ? ' <span title="Marked is_custom=1 in the local abaya catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
               : '';
-            const titleText = 'Time this active session has been on this abaya (elapsed since started_at). Per-session counter that ticks every 2.5s; not the aggregate across sessions. The in-shift working time per session is on the Daily / Weekly / Monthly / Yearly reports.';
-            const sessionElapsedSec = Math.max(0, Math.floor((serverNowMs - startedMs) / 1000));
-            return '<div title="' + titleText + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(sessionElapsedSec)) + customPill + '</div>' +
+            const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every 2.5s; not the aggregate across sessions.';
+            const st = Math.floor(startedMs / 1000);
+            const end = serverNowSec;
+            let inShiftSec = 0;
+            if (end > st) {
+              for (let t = st; t < end; t += 60) {
+                const t2 = Math.min(end, t + 60);
+                if (inWindowClient(t)) inShiftSec += t2 - t;
+              }
+            }
+            return '<div title="' + titleText + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(inShiftSec)) + customPill + '</div>' +
               '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           })() +
         '</div>' +

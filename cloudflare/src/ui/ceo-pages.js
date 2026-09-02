@@ -1337,18 +1337,21 @@ function buildLiveSessionsHtml() {
             'active today &middot; ' + esc(s.emp_process || '\u2014') +
             '</div>';
         })() +
-        // "This build" — per-session elapsed time for THIS active session
-        // on this abaya. serverNowMs is anchored to the cloud's clock via
-        // STATE.ts. Unlike the previous aggregated wall-clock build age
-        // (serverNowMs - buildStartUnix with the 24h-gap rule), this
-        // shows how long the worker has been on this abaya RIGHT NOW —
-        // ticking every poll. The aggregate total (across sessions, with
-        // 24h-gap rule) is still on the Daily/Weekly/Monthly/Yearly
-        // reports and the per-abaya totals panel.
+        // "This build" — in-shift elapsed time for THIS active session on
+        // this abaya (NOT wall-clock, so nights / weekends / lunch
+        // breaks don't inflate the number). Mirrors the local
+        // dashboard's inWindowClient walk. serverNowMs is anchored to
+        // the cloud's clock via STATE.ts. We walk minute-by-minute from
+        // startedAtSec to serverNowSec, summing only the seconds that
+        // fall inside a configured shift window. Same trade-off as the
+        // "active today" cell above (±1 min precision in exchange for
+        // ~60x fewer iterations than a per-second walk — plenty fast for
+        // sessions up to ~24h and well within budget even for multi-day
+        // stuck-session outliers).
         (function () {
           const buildTitle = isCustom
-            ? 'Time this active session has been on this custom abaya (elapsed since started_at). Multi-week build is expected for this style.'
-            : 'Time this active session has been on this abaya (elapsed since started_at). Per-session counter that ticks every poll; not the aggregate across sessions. The in-shift working time per session is on the Daily / Weekly / Monthly / Yearly reports.';
+            ? 'In-shift elapsed time for this active session on this custom abaya. Multi-week build is expected for this style.'
+            : 'In-shift elapsed time for this active session on this abaya. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every poll; not the aggregate across sessions.';
           const customPill = isCustom
             ? ' <span title="Marked is_custom=1 in abaya_catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
             : '';
@@ -1359,9 +1362,15 @@ function buildLiveSessionsHtml() {
           const browserMs = Date.now();
           const snapshotMs = Number(STATE && STATE.ts) || 0;
           const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
-          const serverNowMs = snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs;
-          const sessionElapsedSec = Math.max(0, Math.floor((serverNowMs / 1000) - startedAtSec));
-          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(sessionElapsedSec)) + customPill + '</div>' +
+          const serverNowSec = Math.floor((snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs) / 1000);
+          let inShiftSec = 0;
+          if (serverNowSec > startedAtSec) {
+            for (let t = startedAtSec; t < serverNowSec; t += 60) {
+              const t2 = Math.min(serverNowSec, t + 60);
+              if (inWindowClient(t)) inShiftSec += t2 - t;
+            }
+          }
+          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(inShiftSec)) + customPill + '</div>' +
             '<div style="font-size:9px;color:var(--tx3)">this build</div>';
         })() +
         '</div></div>'
