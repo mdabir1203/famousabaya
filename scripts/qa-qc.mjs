@@ -87,9 +87,17 @@ async function runSystemSmokeCheck() {
   // fails and the entire QA/QC gate fails, blocking releases even though
   // the local factory server is fine. The local-only path exercises the
   // code paths the gate actually needs to verify.
+  //
+  // We pass the literal sentinel `__SKIP__` rather than deleting the key
+  // because scripts/test-system.mjs's loadDotEnv() does
+  // `if (!process.env[k]) process.env[k] = v` — empty string is falsy and
+  // would let the .env file re-set CF_WORKER_URL; the literal "__SKIP__"
+  // is truthy so loadDotenv keeps it, and test-system.mjs recognises the
+  // sentinel and skips the Worker block.
   const { CF_WORKER_URL: _strip, ...rest } = process.env;
   const env = {
     ...rest,
+    CF_WORKER_URL: '__SKIP__',
     PORT: '3111',
     TEST_FACTORY_URL: 'http://127.0.0.1:3111',
     FLOOR_EXPORT_SECRET: process.env.FLOOR_EXPORT_SECRET || 'qa-qc-smoke-secret',

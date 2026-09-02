@@ -38,7 +38,13 @@ const FACTORY = (process.env.TEST_FACTORY_URL || `http://127.0.0.1:${process.env
   /\/+$/,
   ''
 );
-const WORKER = (process.env.CF_WORKER_URL || process.env.TEST_WORKER_URL || '').replace(/\/+$/, '');
+// CF_WORKER_URL=__SKIP__ is a sentinel set by the QA/QC smoke harness
+// (scripts/qa-qc.mjs) to force the Worker block to be skipped in CI even
+// when the .env file has a real CF_WORKER_URL — loadDotenv() below uses
+// `if (!process.env[k])` to gate the .env override, so empty string
+// wouldn't survive a .env read; a literal non-empty sentinel does.
+const RAW_WORKER = (process.env.CF_WORKER_URL || process.env.TEST_WORKER_URL || '').replace(/\/+$/, '');
+const WORKER = RAW_WORKER === '__SKIP__' ? '' : RAW_WORKER;
 const INGEST = process.env.CF_INGEST_SECRET || '';
 const CEO = process.env.CEO_TOKEN || '';
 
