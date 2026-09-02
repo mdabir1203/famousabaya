@@ -104,6 +104,53 @@ jobs:
 
 
       # ----------------------------------------------------------
+      # MATERIALIZE install/.env.production FROM TEMPLATE
+      # ----------------------------------------------------------
+      # install/.env.production is .gitignored (because the previous version
+      # shipped with a real GH_TOKEN in it; that PAT has since been revoked).
+      # The committed template (install/.env.production.template) carries only
+      # the non-secret defaults (HOST/PORT/LAN_IP/CF_INGEST_SECRET/...). The
+      # release CI copies the template into place so electron-builder's
+      # extraResources entry has a file to bundle, and env-migrate on the
+      # factory still has a real CF_INGEST_SECRET to seed a fresh .env with.
+
+      - name: 📝 Materialize .env.production from template
+        shell: pwsh
+        run: |
+          if (!(Test-Path "install/.env.production.template")) {
+            Write-Error "install/.env.production.template is missing from the repo. CI cannot materialize .env.production."
+            exit 1
+          }
+          New-Item -ItemType Directory -Path "install" -Force | Out-Null
+          Copy-Item "install/.env.production.template" "install/.env.production" -Force
+          Write-Host "Materialized install/.env.production from template ($( (Get-Item 'install/.env.production').Length ) bytes)."
+
+
+      # ----------------------------------------------------------
+      # BUNDLE FACTORY DEPS (tools/desktop-launcher/.factory-deps/)
+      # ----------------------------------------------------------
+      # electron-builder's extraResources entry reads from
+      # tools/desktop-launcher/.factory-deps/node_modules. That directory is
+      # .gitignored because it's ~200 MB of runtime deps. scripts/bundle-factory.mjs
+      # uses plain `npm install --omit=dev` (NOT yarn PnP, which Electron
+      # can't run from a virtual zipfs path) to materialise it on the runner
+      # before electron-builder reads it. Without this step the install ships
+      # with an empty resources/node_modules and PM2 falls back to "inline
+      # spawn" (v1.2.19 → v1.2.20 release notes bug #1).
+
+      - name: 📦 Bundle factory runtime deps
+        shell: pwsh
+        run: |
+          node scripts/bundle-factory.mjs
+          if (!(Test-Path "tools/desktop-launcher/.factory-deps/node_modules/express")) {
+            Write-Error "bundle-factory.mjs did not produce .factory-deps/node_modules/express"
+            exit 1
+          }
+          $count = (Get-ChildItem "tools/desktop-launcher/.factory-deps/node_modules" -ErrorAction SilentlyContinue | Measure-Object).Count
+          Write-Host ".factory-deps ready: $count top-level packages."
+
+
+      # ----------------------------------------------------------
       # READ CANONICAL VERSION FROM package.json
       # Single source of truth: tools/desktop-launcher/package.json
       # Releases always tag exactly that version (e.g. v1.2.7) — no

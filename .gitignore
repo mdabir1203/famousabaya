@@ -5,6 +5,11 @@ node_modules/
 .env
 .env.local
 .env.*
+# Allow the committed sanitized template that CI materializes into
+# install/.env.production on every release. The template carries NO secrets
+# (no GH_TOKEN, no CF_INGEST_SECRET) — only non-sensitive defaults.
+!.env.*.template
+!install/.env.production.template
 
 # Editors
 .vscode/
