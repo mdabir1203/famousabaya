@@ -223,10 +223,22 @@ jobs:
         working-directory: tools/desktop-launcher
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
-          CSC_LINK_BASE64: ${{ secrets.CSC_LINK_BASE64 }}
-          WIN_CSC_LINK_BASE64: ${{ secrets.WIN_CSC_LINK_BASE64 }}
+          # electron-builder 24.13.3 reads CSC_LINK as a FILE PATH (no
+          # CSC_LINK_BASE64 support). Decode the base64 secret into a
+          # throwaway .pfx on the runner, then point CSC_LINK / WIN_CSC_LINK
+          # at that path. The pfx is written to the runner's temp dir
+          # and never committed; workflow cleanup removes it.
+          CSC_LINK: ${{ runner.temp }}\cert\abaya.pfx
+          WIN_CSC_LINK: ${{ runner.temp }}\cert\abaya.pfx
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: yarn release:gh
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "cert\abaya.pfx"
+          New-Item -ItemType Directory -Path (Split-Path $pfxPath) -Force | Out-Null
+          $bytes = [Convert]::FromBase64String('${{ secrets.CSC_LINK_BASE64 }}')
+          [IO.File]::WriteAllBytes($pfxPath, $bytes)
+          Write-Host "Materialized pfx at $pfxPath ($((Get-Item $pfxPath).Length) bytes)"
+
+          yarn release:gh
 
 
       # ----------------------------------------------------------
