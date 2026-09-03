@@ -234,7 +234,13 @@ jobs:
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP "cert\abaya.pfx"
           New-Item -ItemType Directory -Path (Split-Path $pfxPath) -Force | Out-Null
-          $bytes = [Convert]::FromBase64String('${{ secrets.CSC_LINK_BASE64 }}')
+          $b64 = '${{ secrets.CSC_LINK_BASE64 }}'.Trim()
+          # Strip a leading UTF-8 BOM if `gh secret set` happened to store one —
+          # [Convert]::FromBase64String is strict and rejects it with a confusing
+          # "non-base 64 character" error.
+          if ($b64.Length -gt 0 -and $b64[0] -eq [char]0xFEFF) { $b64 = $b64.Substring(1) }
+          $b64 = $b64 -replace '\s', ''
+          $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes($pfxPath, $bytes)
           Write-Host "Materialized pfx at $pfxPath ($((Get-Item $pfxPath).Length) bytes)"
 
