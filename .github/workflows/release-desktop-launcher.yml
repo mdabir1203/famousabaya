@@ -151,6 +151,31 @@ jobs:
 
 
       # ----------------------------------------------------------
+      # BUNDLE CATALOG-WATCHER DEPS (tools/catalog-watcher/node_modules)
+      # ----------------------------------------------------------
+      # The catalog-watcher is the office-side tool that watches the abaya
+      # catalog folder for .xlsx changes and pushes to the cloud. It has
+      # its own dependencies (chokidar, xlsx) that need to be in the install.
+      # We switched the watcher to `nodeLinker: node-modules` so the deps
+      # materialize as a real node_modules tree. CI runs `npm install
+      # --omit=dev` in the watcher dir; the result is bundled via the
+      # extraResources `node_modules/**/*` filter.
+
+      - name: 📦 Bundle catalog-watcher deps
+        shell: pwsh
+        run: |
+          Push-Location tools/catalog-watcher
+          npm install --omit=dev --no-audit --no-fund --loglevel=error
+          Pop-Location
+          if (!(Test-Path "tools/catalog-watcher/node_modules/chokidar")) {
+            Write-Error "catalog-watcher deps did not materialize (node_modules/chokidar missing)"
+            exit 1
+          }
+          $count = (Get-ChildItem "tools/catalog-watcher/node_modules" -ErrorAction SilentlyContinue | Measure-Object).Count
+          Write-Host "catalog-watcher node_modules ready: $count top-level packages."
+
+
+      # ----------------------------------------------------------
       # READ CANONICAL VERSION FROM package.json
       # Single source of truth: tools/desktop-launcher/package.json
       # Releases always tag exactly that version (e.g. v1.2.7) — no
