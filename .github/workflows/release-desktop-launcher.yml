@@ -151,6 +151,38 @@ jobs:
 
 
       # ----------------------------------------------------------
+      # TRIM FACTORY DEPS (shrink the .exe before electron-builder reads it)
+      # ----------------------------------------------------------
+      # electron-builder's extraResources entry will copy
+      # tools/desktop-launcher/.factory-deps into the install 1:1. Trim
+      # the safe bloat from that tree NOW so the .exe is born small
+      # (~75 MB instead of ~104 MB). Reclaimed categories:
+      #   - @types/*  (TS types, runtime-never)
+      #   - test/ docs/ examples/ .github/ in deps
+      #   - *.md + *.map in deps (incl. *.d.ts.map)
+      #   - sql.js dist debug variants (keep sql-wasm.{js,wasm} only)
+      #   - codepage/pages/*.tbl (xlsx encoding tables, not used for our
+      #     UTF-8 .xlsx files)
+      # xlsx internals (cfb, ast-types, esprima, wmf, pngjs, extrareqp2)
+      # are kept — xlsx's loader reaches into them at runtime.
+
+      - name: ✂️ Trim factory runtime deps
+        shell: pwsh
+        run: |
+          $before = (Get-ChildItem "tools/desktop-launcher/.factory-deps" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+          node scripts/slim-install.cjs "tools/desktop-launcher/.factory-deps"
+          $after = (Get-ChildItem "tools/desktop-launcher/.factory-deps" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+          $mbBefore = [math]::Round($before / 1MB, 1)
+          $mbAfter  = [math]::Round($after  / 1MB, 1)
+          $mbSaved  = [math]::Round(($before - $after) / 1MB, 1)
+          Write-Host ".factory-deps trim: $mbBefore MB -> $mbAfter MB  (saved $mbSaved MB)"
+          if (!(Test-Path "tools/desktop-launcher/.factory-deps/node_modules/express/package.json")) {
+            Write-Error "Trim removed express package.json — slim-install.cjs is too aggressive"
+            exit 1
+          }
+
+
+      # ----------------------------------------------------------
       # BUNDLE CATALOG-WATCHER DEPS (tools/catalog-watcher/node_modules)
       # ----------------------------------------------------------
       # The catalog-watcher is the office-side tool that watches the abaya
@@ -173,6 +205,20 @@ jobs:
           }
           $count = (Get-ChildItem "tools/catalog-watcher/node_modules" -ErrorAction SilentlyContinue | Measure-Object).Count
           Write-Host "catalog-watcher node_modules ready: $count top-level packages."
+
+
+      # ----------------------------------------------------------
+      # TRIM CATALOG-WATCHER DEPS (same trim as factory)
+      # ----------------------------------------------------------
+
+      - name: ✂️ Trim catalog-watcher deps
+        shell: pwsh
+        run: |
+          node scripts/slim-install.cjs "tools/catalog-watcher"
+          if (!(Test-Path "tools/catalog-watcher/node_modules/chokidar/package.json")) {
+            Write-Error "Trim removed chokidar package.json — slim-install.cjs is too aggressive"
+            exit 1
+          }
 
 
       # ----------------------------------------------------------
