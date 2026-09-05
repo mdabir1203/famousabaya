@@ -75,6 +75,21 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
   exportDiagnostics() {
     return ipcRenderer.invoke('export-diagnostics');
   },
+  // Support-ticket API (v1.2.24+). The renderer's support.js uses these
+  // to talk to the local server (which proxies /api/tickets/* to the cloud
+  // Worker). Going through the main process keeps the renderer from having
+  // to know the server's port or do CORS gymnastics.
+  getApiBaseUrl() {
+    return ipcRenderer.invoke('get-api-base-url');
+  },
+  apiFetch(path, opts) {
+    return ipcRenderer.invoke('api-fetch', { path, opts: opts || {} });
+  },
+  // Convenience: open a URL in the user's default browser. Used by the
+  // Support tab to launch wa.me after creating a ticket.
+  openExternal(url) {
+    return ipcRenderer.invoke('open-url', url);
+  },
   onProcLog(fn) {
     ipcRenderer.removeAllListeners('proc-log');
     ipcRenderer.on('proc-log', (_e, payload) => fn(payload));

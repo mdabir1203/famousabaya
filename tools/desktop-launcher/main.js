@@ -1828,6 +1828,50 @@ ipcMain.handle('export-diagnostics', async function () {
   }
 });
 
+// ─── Support-ticket API bridge (v1.2.24+) ─────────────────────────────────────
+// The launcher's support.js (renderer) needs to call the local server's
+// /api/tickets/* endpoints. Going through IPC keeps the renderer from
+// having to know the server's port or do CORS gymnastics.
+function getApiBaseUrl() {
+  // FACTORY_TZ/PORT are baked into the server's .env (port 3111, per the
+  // operator's "must keep PORT=3111" rule). We pull the port from the
+  // same source the rest of the launcher uses (process.env.PORT or 3111).
+  const port = process.env.PORT || process.env.ABAYA_PORT || '3111';
+  return `http://127.0.0.1:${port}`;
+}
+
+ipcMain.handle('get-api-base-url', function () {
+  return getApiBaseUrl();
+});
+
+ipcMain.handle('api-fetch', async function (_e, payload) {
+  const { path, opts } = payload || {};
+  if (!path || typeof path !== 'string' || !path.startsWith('/')) {
+    return { ok: false, error: 'invalid path' };
+  }
+  if (path.includes('..')) return { ok: false, error: 'invalid path' };
+  const url = getApiBaseUrl() + path;
+  try {
+    const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    // Forward the Ingest secret so /api/tickets writes authenticate.
+    if (opts.body && !headers['X-Ingest-Secret']) {
+      headers['X-Ingest-Secret'] = process.env.CF_INGEST_SECRET || process.env.INGEST_SECRET || 'abaya2026';
+    }
+    const r = await fetch(url, {
+      method: opts.method || 'GET',
+      headers,
+      body: opts.body || undefined,
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await r.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = { ok: false, error: text }; }
+    return { status: r.status, body: json };
+  } catch (e) {
+    return { ok: false, error: 'api-fetch failed: ' + (e && e.message ? e.message : String(e)) };
+  }
+});
+
 async function startAllServers() {
   if (!ensureServerJs()) {
     return { ok: false, error: 'server.js not found (expected repo root): ' + REPO_ROOT };

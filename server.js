@@ -2519,6 +2519,49 @@ app.get('/api/state', (req, res) => {
   res.json({ ok: true, state: getRealtimeStateBundle(req) });
 });
 
+// ─── SUPPORT TICKETS (v1.2.24+) ────────────────────────────────────────────────
+// The launcher creates/reads tickets here. We forward to the cloud Worker
+// (CF_URL/api/tickets) so the data lands in D1 alongside the rest of the
+// system. The local snapshot writer reads tickets from the cloud in a
+// background poll (added with the local dashboard widget in v1.2.25+).
+//
+// Auth: the launcher's POST requests carry the same X-Ingest-Secret header
+// the local server already has from .env (CF_INGEST_SECRET). GETs are
+// unauthenticated at the cloud (CEO dashboard also reads without auth).
+async function proxyToWorkerTickets(req, res, method, body) {
+  if (!CF_URL || !CF_SECRET) {
+    return res.status(503).json({ ok: false, error: 'Cloud push not configured (CF_WORKER_URL / CF_INGEST_SECRET missing in .env)' });
+  }
+  try {
+    const url = CF_URL.replace(/\/+$/, '') + req.originalUrl.replace(/^\/api/, '/api');
+    const headers = { 'Content-Type': 'application/json' };
+    if (method !== 'GET' && method !== 'HEAD') headers['X-Ingest-Secret'] = CF_SECRET;
+    const r = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(8000),
+    });
+    const text = await r.text();
+    res.status(r.status);
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/json');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(text);
+  } catch (e) {
+    console.error('[tickets-proxy] failed:', e.message);
+    res.status(502).json({ ok: false, error: 'Could not reach cloud: ' + e.message });
+  }
+}
+
+app.post('/api/tickets', (req, res) => proxyToWorkerTickets(req, res, 'POST', req.body));
+app.get('/api/tickets', (req, res) => proxyToWorkerTickets(req, res, 'GET'));
+app.get('/api/tickets/:id', (req, res) => proxyToWorkerTickets(req, res, 'GET'));
+app.post('/api/tickets/:id/resolve', (req, res) => proxyToWorkerTickets(req, res, 'POST', req.body || { resolved_by: req.body && req.body.resolved_by }));
+app.post('/api/tickets/:id/reopen', (req, res) => proxyToWorkerTickets(req, res, 'POST', req.body));
+app.post('/api/tickets/:id/reply', (req, res) => proxyToWorkerTickets(req, res, 'POST', req.body));
+app.get('/api/worker-settings/support', (req, res) => proxyToWorkerTickets(req, res, 'GET'));
+app.put('/api/worker-settings/support', (req, res) => proxyToWorkerTickets(req, res, 'PUT', req.body));
+
 app.get('/api/employees', (req, res) => {
   res.json({
     ok: true,

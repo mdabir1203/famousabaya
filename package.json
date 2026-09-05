@@ -1,6 +1,6 @@
 {
     "name":  "abaya-server",
-    "version":  "1.2.23",
+    "version":  "1.2.24",
     "packageManager":  "yarn@4.13.0",
     "description":  "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
     "main":  "server.js",
@@ -16,6 +16,8 @@
                     "test":  "node --test tests/**/*.test.mjs",
                     "test:system":  "node scripts/test-system.mjs",
                     "test:offline-store":  "node scripts/test-offline-report-store.mjs",
+                    "smoke:tickets":  "node scripts/smoke-tickets.mjs",
+                    "smoke:tickets:local":  "node scripts/smoke-tickets.mjs --base http://127.0.0.1:8788",
                     "qa:qc":  "node scripts/qa-qc.mjs",
                     "qa:qc:ci":  "node scripts/qa-qc.mjs",
                     "verify:employee-xlsx":  "yarn node scripts/verify-employee-xlsx-roundtrip.mjs",

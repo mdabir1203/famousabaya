@@ -26,6 +26,12 @@ import { handleAnalytics } from './handlers/analytics.js';
 import { handleGarmentTrace } from './handlers/trace.js';
 import { handleDispatch, runTunnelProbe, getMessagingStatus, setMessagingEnabled } from './handlers/dispatch.js';
 import { handleCheckDeliveryReport, handleCheckDeliveryConfig, handleCancellationsPost, handleCancellationsList, handleCheckReport, handleCheckReportConfig } from './handlers/check-report.js';
+import {
+  handleCreateTicket, handleListTickets, handleGetTicket,
+  handleResolveTicket, handleReopenTicket, handleOperatorReply,
+  handleResolvePage, handleWhatsappIncoming, handleSetBotUrl,
+  handleGetSupportConfig, handleSetSupportConfig,
+} from './handlers/tickets.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
 // Inlined instead of imported as a JSON module — Cloudflare Workers' bundler
@@ -251,7 +257,15 @@ export default {
         path !== '/api/work-types' &&
         // History hydration: factory server pulls last N days of sessions at
         // boot. Uses X-Ingest-Secret like the other factory-callable routes.
-        path !== '/api/state/history');
+        path !== '/api/state/history' &&
+        // Support tickets (v1.2.24+): factory launcher creates/reads tickets
+        // via X-Ingest-Secret. GETs are also reachable from the office's
+        // whatsapp-web.js bot (no auth) so it can poll the latest ticket
+        // id when an incoming message arrives.
+        !(path === '/api/tickets' || path.startsWith('/api/tickets/')) &&
+        // /api/worker-settings/support — operator edits office numbers from
+        // the launcher's settings panel; X-Ingest-Secret.
+        path !== '/api/worker-settings/support');
 
     if (isCEORoute) {
       const token = extractCeoToken(request, url);
@@ -320,6 +334,43 @@ export default {
         const body = await request.json();
         const cfg = await saveWorkingHoursConfig(env, body && body.working_hours ? body.working_hours : body);
         return jsonRes({ ok: true, working_hours: cfg }, 200, CEO_JSON_NO_STORE);
+      }
+
+      // ─── Support tickets (v1.2.24+) ────────────────────────────────────────────
+      if (path === '/api/tickets' && request.method === 'POST') {
+        return handleCreateTicket(request, env);
+      }
+      if (path === '/api/tickets' && request.method === 'GET') {
+        return handleListTickets(request, env);
+      }
+      const ticketMatch = path.match(/^\/api\/tickets\/([A-Za-z0-9._-]+)(?:\/(resolve|reopen|reply))?$/);
+      if (ticketMatch) {
+        const id = ticketMatch[1];
+        const action = ticketMatch[2];
+        if (!action && request.method === 'GET') return handleGetTicket(request, env, id);
+        if (action === 'resolve' && request.method === 'POST') return handleResolveTicket(request, env, id);
+        if (action === 'reopen' && request.method === 'POST') return handleReopenTicket(request, env, id);
+        if (action === 'reply' && request.method === 'POST') return handleOperatorReply(request, env, id);
+      }
+      // /r/<id> — one-tap resolve page (HTML, no auth)
+      const resolvePageMatch = path.match(/^\/r\/([A-Za-z0-9._-]+)$/);
+      if (resolvePageMatch && request.method === 'GET') {
+        return handleResolvePage(env, resolvePageMatch[1]);
+      }
+      // /api/worker-settings/support — operator can change office WhatsApp number
+      if (path === '/api/worker-settings/support' && request.method === 'GET') {
+        return handleGetSupportConfig(request, env);
+      }
+      if (path === '/api/worker-settings/support' && request.method === 'PUT') {
+        return handleSetSupportConfig(request, env);
+      }
+      // /api/worker-settings/bot-url — bot registers itself on startup (Phase 2)
+      if (path === '/api/worker-settings/bot-url' && request.method === 'POST') {
+        return handleSetBotUrl(request, env);
+      }
+      // /webhook/whatsapp-incoming — bot → Worker (Phase 2)
+      if (path === '/webhook/whatsapp-incoming' && request.method === 'POST') {
+        return handleWhatsappIncoming(request, env);
       }
 
       if (path === '/api/analytics' && request.method === 'GET') {

@@ -1,4 +1,4 @@
--- AbaYa Track — D1 Database Schema
+﻿﻿-- AbaYa Track — D1 Database Schema
 -- Run: wrangler d1 execute abaya-db --file=schema.sql
 
 -- ─── COMPLETED SESSIONS (permanent ledger) ───────────────────────────────────
@@ -98,3 +98,56 @@ CREATE TABLE IF NOT EXISTS abaya_time_map (
   last_ended_at INTEGER,
   updated_at INTEGER DEFAULT (unixepoch())
 );
+
+-- ─── SUPPORT TICKETS (v1.2.24+) ────────────────────────────────────────────────
+-- See cloudflare/migrations/0020_create_tickets.sql for the full rationale.
+-- The launcher lets operators create tickets; wa.me sends them to the office;
+-- an office-side whatsapp-web.js bot (Phase 2) captures replies via webhook.
+CREATE TABLE IF NOT EXISTS tickets (
+  id              TEXT    PRIMARY KEY,
+  created_at      INTEGER NOT NULL,
+  created_by      TEXT    NOT NULL,
+  created_by_name TEXT,
+  category        TEXT    NOT NULL,
+  priority        TEXT    NOT NULL DEFAULT 'normal',
+  subject         TEXT    NOT NULL,
+  description     TEXT    NOT NULL,
+  status          TEXT    NOT NULL DEFAULT 'open',
+  resolved_at     INTEGER,
+  resolved_by     TEXT,
+  whatsapp_to     TEXT,
+  escalated_at    INTEGER,
+  last_message_at INTEGER,
+  station         TEXT,
+  updated_at      INTEGER DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS ticket_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id   TEXT    NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  event       TEXT    NOT NULL,
+  actor       TEXT    NOT NULL,
+  at          INTEGER NOT NULL,
+  note        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ticket_messages (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticket_id     TEXT    NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  direction     TEXT    NOT NULL,
+  sender        TEXT    NOT NULL,
+  text          TEXT    NOT NULL,
+  via           TEXT    NOT NULL DEFAULT 'wa.me',
+  wa_message_id TEXT,
+  sent_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_status        ON tickets(status);
+CREATE INDEX IF NOT EXISTS idx_tickets_created_at    ON tickets(created_at);
+CREATE INDEX IF NOT EXISTS idx_tickets_created_by    ON tickets(created_by);
+CREATE INDEX IF NOT EXISTS idx_tickets_category      ON tickets(category);
+CREATE INDEX IF NOT EXISTS idx_tickets_priority      ON tickets(priority, status);
+CREATE INDEX IF NOT EXISTS idx_tickets_last_message  ON tickets(last_message_at);
+CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket  ON ticket_events(ticket_id, at);
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_dedup  ON ticket_messages(wa_message_id) WHERE wa_message_id IS NOT NULL;

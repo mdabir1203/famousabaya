@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿﻿<!DOCTYPE html>
 <html lang='en'>
 <head>
   <meta charset='UTF-8' />
@@ -616,6 +616,80 @@
       .health { grid-template-columns: 1fr 1fr; }
       main { grid-template-columns: 1fr; }
     }
+  
+    /* ─── Support tab (v1.2.24+) ───────────────────────────────────── */
+    .support-mount { padding: 0 18px 18px; }
+    .support-shell { border-radius: 18px; border: 1px solid rgba(255,255,255,0.16); background: linear-gradient(150deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+    .support-head { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 980px) { .support-head { grid-template-columns: 1fr; } }
+    .support-head__eyebrow { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: #c9b8ff; }
+    .support-head h2 { margin: 4px 0 6px; font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+    .support-head p { margin: 0; color: var(--muted); font-size: 12px; }
+    .support-head__who label { display: block; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .support-who { display: flex; gap: 6px; }
+    .support-who input { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
+    .support-config { margin-top: 10px; font-size: 11px; color: var(--muted); }
+    .support-config-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+    .support-config code { font-size: 12px; color: #d7c9ff; }
+    .support-config details { margin-top: 6px; }
+    .support-config summary { cursor: pointer; font-size: 11px; color: #c9b8ff; }
+    .support-config-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+    .support-config-edit input { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
+    .support-config-edit p { margin: 4px 0 0; font-size: 11px; }
+    .muted { color: var(--muted); }
+    .support-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; min-height: 320px; }
+    @media (max-width: 1200px) { .support-grid { grid-template-columns: 1fr; } }
+    .support-card { border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; background: rgba(8, 5, 18, 0.45); padding: 14px; display: flex; flex-direction: column; min-width: 0; }
+    .support-card h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .support-create form { display: flex; flex-direction: column; gap: 10px; }
+    .support-create label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+    .support-create input, .support-create select, .support-create textarea { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; font-family: inherit; }
+    .support-create textarea { resize: vertical; min-height: 80px; }
+    .support-form-foot { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 4px; }
+    .support-form-hint { font-size: 11px; color: var(--muted); flex: 1; }
+    .support-form-hint.ok { color: var(--ok); }
+    .support-form-hint.err { color: var(--danger); }
+    .support-list-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .support-list-head h3 { margin: 0; }
+    .support-list-filters { display: flex; gap: 4px; }
+    .support-list-filters button { font-size: 10px; padding: 5px 9px; letter-spacing: 0.06em; text-transform: uppercase; }
+    .support-list-filters button.active { background: rgba(154,124,255,0.24); border-color: rgba(154,124,255,0.6); }
+    .support-tickets { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 360px; }
+    .support-empty { color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
+    .support-ticket { border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); cursor: pointer; transition: border-color .15s, background .15s; }
+    .support-ticket:hover { border-color: rgba(154,124,255,0.5); background: rgba(154,124,255,0.07); }
+    .support-ticket.is-resolved { opacity: 0.6; }
+    .support-ticket-row1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .support-ticket-id { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+    .support-ticket-prio { font-size: 9px; padding: 2px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .support-prio-urgent { background: rgba(255,141,161,0.2); color: #ffb1c0; }
+    .support-prio-normal { background: rgba(255,255,255,0.1); color: var(--muted); }
+    .support-ticket-status { font-size: 9px; padding: 2px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .support-status-open { background: rgba(154,124,255,0.18); color: #c9b8ff; }
+    .support-status-pending { background: rgba(255,210,115,0.18); color: var(--warn); }
+    .support-status-resolved { background: rgba(191,246,92,0.18); color: var(--ok); }
+    .support-status-closed { background: rgba(255,255,255,0.08); color: var(--muted); }
+    .support-ticket-subject { margin-top: 4px; font-size: 13px; font-weight: 600; }
+    .support-ticket-meta { font-size: 11px; color: var(--muted); display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+    .support-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+    .support-detail-id { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+    .support-detail-head h3 { margin: 4px 0 6px; font-size: 16px; }
+    .support-detail-meta { font-size: 11px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+    .support-detail-meta .support-prio-urgent, .support-detail-meta .support-prio-normal { padding: 2px 6px; }
+    .support-thread { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 6px 0; min-height: 120px; max-height: 340px; }
+    .support-msg { max-width: 85%; display: flex; flex-direction: column; }
+    .support-msg.is-out { align-self: flex-end; align-items: flex-end; }
+    .support-msg.is-in { align-self: flex-start; }
+    .support-msg-bubble { padding: 8px 12px; border-radius: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+    .support-msg.is-out .support-msg-bubble { background: linear-gradient(135deg, rgba(142,108,255,0.4), rgba(111,88,217,0.3)); border-color: rgba(181,159,255,0.5); }
+    .support-msg-meta { font-size: 10px; color: var(--muted); margin-top: 3px; display: flex; gap: 4px; }
+    .support-event { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); padding: 2px 0; font-style: italic; }
+    .support-event-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.2); }
+    .support-event-label { text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+    .support-detail-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .support-detail-hint { font-size: 11px; color: var(--muted); }
+    button.ghost { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.16); }
+    button.ghost:hover { background: rgba(255,255,255,0.1); }
   </style>
 </head>
 <body>
@@ -727,7 +801,9 @@
       </div>
     </section>
 
-    <main>
+    
+    <section id='supportMount' class='support-mount' aria-label='Support tickets'></section>
+<main>
       <div class='log-wrap'>
         <div class='log-head'><span>Server Log</span><span id='serverDot' class='dot'></span></div>
         <pre id='serverLog'></pre>
@@ -774,5 +850,6 @@
     </div>
   </div>
   <script src='renderer.js'></script>
+  <script src='support.js'></script>
 </body>
 </html>

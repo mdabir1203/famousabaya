@@ -40,6 +40,12 @@ FACTORY_TZ = "Asia/Dubai"
 # Example: https://factory.farewellabaya.com
 # Set to empty string to disable factory push (Worker stores in D1 only).
 FACTORY_TUNNEL_URL = ""
+# ─── Support tickets (v1.2.24+) ────────────────────────────────────────────────
+# Comma-separated E.164 phone numbers for the office WhatsApp. The launcher's
+# "Support" panel sends tickets to the first number; if no reply within the
+# ticket's escalation window, it auto-escalates to the next number. Override
+# from the launcher's settings panel (writes to worker_settings.support_office_numbers).
+SUPPORT_OFFICE_NUMBERS = "+971543618066"
 # Base URL of the leaderboard Pages project. The cloud CEO dashboard's
 # "Check Delivery Report" proxies through here so the report shows the real
 # invoice / abaya / showroom data (the cloud's own D1 only sees the
@@ -52,6 +58,8 @@ LEADERBOARD_URL = "https://invoice.farewellabaya.com"
 #   npx wrangler secret put DISPATCH_BRIDGE_SECRET   ← shared with factory .env
 #   npx wrangler secret put WHATSAPP_VERIFY_TOKEN
 #   npx wrangler secret put WHATSAPP_TOKEN           ← for outbound alerts
+#   npx wrangler secret put WHATSAPP_BOT_SECRET      ← shared with tools/whatsapp-bot/
+#                                                       for incoming webhook (Phase 2)
 # Used when catalog rows have no Process column (factory Excel at watch root).
 DEFAULT_CATALOG_PROCESS = "Tailor (01)"
 # Bump to invalidate all CEO JWTs (forces re-login).
