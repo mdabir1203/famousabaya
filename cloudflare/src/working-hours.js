@@ -105,9 +105,63 @@ export function normalizeWorkingHoursConfig(raw) {
   return out;
 }
 
+// In-memory cache for working hours config (v1.2.25 — D1 free-tier mitigation).
+//
+// The factory ingests events continuously (every few seconds per active session).
+// Each /api/event call used to do a D1 row-read for the working hours config,
+// which burned the 5M-row/day free-tier limit and broke ingest. Caching the
+// config in module-level memory for 60s collapses that to ~1 read/min/isolate.
+//
+// Cloudflare Workers' isolate model means each isolate has its own cache copy
+// (so a fleet of N isolates does up to N reads/min, not 1). That's still a
+// 99%+ reduction vs the no-cache path.
+//
+// Concurrency: we store the in-flight read promise so a burst of N concurrent
+// /api/event requests during a cold cache only ever triggers ONE D1 read.
+// The N-1 follow-on calls await the same promise. This is critical because
+// ingest bursts (e.g. several sessions ending in the same second) would
+// otherwise race past the empty cache slot.
+//
+// The cache is invalidated synchronously inside saveWorkingHoursConfig so a
+// CEO saving new hours sees the new config in the next request handled by
+// the same isolate. A short 60s TTL is the backstop for cross-isolate
+// staleness.
+const WORKING_HOURS_CACHE_TTL_MS = 60_000;
+let _whCache = null; // { cfg, fetchedAt }
+let _whInflight = null; // Promise<cfg> | null — shared by concurrent callers
+
 export async function getWorkingHoursConfig(env) {
-  const row = await env.DB.prepare('SELECT v FROM worker_settings WHERE k = ?').bind(WORKING_HOURS_KEY).first();
-  return workingHoursConfigFromRow(row);
+  const now = Date.now();
+  if (_whCache && (now - _whCache.fetchedAt) < WORKING_HOURS_CACHE_TTL_MS) {
+    return _whCache.cfg;
+  }
+  if (_whInflight) {
+    // Another caller is already doing the D1 read. Reuse the same promise
+    // so a burst of N requests only ever triggers 1 D1 read.
+    return _whInflight;
+  }
+  _whInflight = (async () => {
+    try {
+      const row = await env.DB.prepare('SELECT v FROM worker_settings WHERE k = ?').bind(WORKING_HOURS_KEY).first();
+      const cfg = workingHoursConfigFromRow(row);
+      _whCache = { cfg, fetchedAt: Date.now() };
+      return cfg;
+    } finally {
+      _whInflight = null;
+    }
+  })();
+  return _whInflight;
+}
+
+export function _invalidateWorkingHoursCache() {
+  _whCache = null;
+}
+
+// Test-only export so the unit test can reset cache between cases without
+// exporting the mutable module state directly.
+export function _resetWorkingHoursCacheForTest() {
+  _whCache = null;
+  _whInflight = null;
 }
 
 export async function saveWorkingHoursConfig(env, cfg) {
@@ -117,6 +171,9 @@ export async function saveWorkingHoursConfig(env, cfg) {
   )
     .bind(WORKING_HOURS_KEY, JSON.stringify(normalized))
     .run();
+  // Invalidate the in-memory cache so the next read picks up the new config
+  // (same-isolate path; cross-isolate staleness bounded by the 60s TTL).
+  _whCache = null;
   return normalized;
 }
 

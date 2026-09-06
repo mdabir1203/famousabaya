@@ -45,14 +45,27 @@ function parseOfficeNumbers(env) {
   return (env.SUPPORT_OFFICE_NUMBERS || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// In-memory cache for office numbers (v1.2.25 — D1 free-tier mitigation).
+// Same shape as the working-hours cache: 5-min TTL (this config changes
+// rarely, much rarer than working hours), invalidated synchronously on save.
+const OFFICE_NUMBERS_CACHE_TTL_MS = 5 * 60_000;
+let _officeCache = null; // { list, fetchedAt }
+
 async function getOfficeNumbers(env) {
   // Check worker_settings first (operator-editable from the launcher),
   // fall back to the env var (default config).
+  const now = Date.now();
+  if (_officeCache && (now - _officeCache.fetchedAt) < OFFICE_NUMBERS_CACHE_TTL_MS) {
+    return _officeCache.list;
+  }
   const row = await env.DB.prepare(
     `SELECT v FROM worker_settings WHERE k = 'support_office_numbers'`
   ).first();
-  if (row && row.v) return row.v.split(',').map(s => s.trim()).filter(Boolean);
-  return parseOfficeNumbers(env);
+  let list;
+  if (row && row.v) list = row.v.split(',').map(s => s.trim()).filter(Boolean);
+  else list = parseOfficeNumbers(env);
+  _officeCache = { list, fetchedAt: now };
+  return list;
 }
 
 async function setOfficeNumbers(env, csv) {
@@ -60,6 +73,13 @@ async function setOfficeNumbers(env, csv) {
   await env.DB.prepare(
     `INSERT OR REPLACE INTO worker_settings (k, v, updated_at) VALUES ('support_office_numbers', ?, unixepoch())`
   ).bind(v).run();
+  // Invalidate the in-memory cache so the next read picks up the new value
+  // (same-isolate path; cross-isolate staleness bounded by the 5-min TTL).
+  _officeCache = null;
+}
+
+function _resetOfficeNumbersCacheForTest() {
+  _officeCache = null;
 }
 
 // ---------------------------------------------------------------------------
