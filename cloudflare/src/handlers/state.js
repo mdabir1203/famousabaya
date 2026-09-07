@@ -15,6 +15,32 @@ import {
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
 import { isValidYmd } from './report-shared.js';
 
+// In-memory response cache for handleState (v1.2.26 — D1 free-tier mitigation).
+//
+// The CEO dashboard auto-refreshes /api/state every few seconds. Each call
+// triggers a D1.batch of 8+ prepared statements reading from active_sessions,
+// sessions (multi-day window), daily_stats, abaya_catalog, abaya_time_map,
+// etc. At 5,814,628 rows_read in 24h we're burning the 5M-row free-tier
+// limit just on dashboard renders.
+//
+// Caching the response for 5s (in module memory, per-isolate) collapses a
+// 5s polling cadence from 1 read/render to ~12 reads/min/isolate — a 90%+
+// reduction. The 5s staleness is invisible to the CEO: employees don't
+// finish a session every 5s, and the dashboard's manual "Refresh" button
+// is available if they need real-time.
+const STATE_CACHE_TTL_MS = 5_000;
+let _stateCache = null; // { key, fetchedAt, payload }
+
+function _stateCacheKey(url) {
+  // The URL's query string is the only thing that varies (date picker,
+  // limit, days, station). Normalise to just the search params so e.g.
+  // a stray ?r= cache-buster doesn't break the cache hit rate.
+  return url.pathname + (url.search || '');
+}
+
+export function _invalidateStateCache() { _stateCache = null; }
+export function _resetStateCacheForTest() { _stateCache = null; }
+
 /** GET /api/state — single D1.batch for reads (fewer internal round trips).
  *
  * Query params:
@@ -41,6 +67,22 @@ import { isValidYmd } from './report-shared.js';
  * get the original "today + last N days of history" payload.
  */
 export async function handleState(env, url) {
+  // 5s response cache. Identical query params within the TTL serve from
+  // memory. See _stateCacheKey() above for the key derivation.
+  const cacheKey = _stateCacheKey(url);
+  const now = Date.now();
+  if (_stateCache && _stateCache.key === cacheKey &&
+      (now - _stateCache.fetchedAt) < STATE_CACHE_TTL_MS) {
+    // v1.2.27: tag the served payload with the cache age so the CEO
+    // dashboard can show a "data is Xs old" banner if it polls a
+    // moment of D1 trouble and we still serve from memory. Helps the
+    // operator distinguish "stale" from "broken" without parsing the
+    // Worker's internal logs.
+    const ageMs = now - _stateCache.fetchedAt;
+    const cached = { ..._stateCache.payload, _cache: { hit: true, age_ms: ageMs, age_sec: Math.floor(ageMs / 1000) } };
+    return jsonRes(cached, 200, CEO_JSON_NO_STORE);
+  }
+
   const factoryToday = factoryTodayString(env);
   const workingCfg = await getWorkingHoursConfig(env);
   const todayKey = weekdayKeyInTz(Math.floor(Date.now() / 1000), workingCfg.timezone || 'Asia/Dubai');
@@ -674,61 +716,62 @@ export async function handleState(env, url) {
   else if (ingestLagMs <= 4 * 60 * 60 * 1000) lagMode = 'stale';
   else lagMode = 'no-data';
 
-  return jsonRes(
-    {
-      ok: true,
-      ts: serverNowTs,
-      source_ts: sourceTs,
-      db_snapshot_ts: latestFinishedMs || serverNowTs,
-      server_now_ts: serverNowTs,
-      ingest_lag_ms: ingestLagMs,
+  const payload = {
+    ok: true,
+    ts: serverNowTs,
+    source_ts: sourceTs,
+    db_snapshot_ts: latestFinishedMs || serverNowTs,
+    server_now_ts: serverNowTs,
+    ingest_lag_ms: ingestLagMs,
+    logs_window_days: days,
+    logs_from_ymd: fromYmd,
+    logs_to_ymd: logsToYmd,
+    // The KPIs (Completed / Process Split / Employee Performance /
+    // Garment Totals) and the Recent Invoice Logs feed are all anchored
+    // to a single day, not "today" — when the CEO picks a date from
+    // the date picker, the whole dashboard flips to that day.
+    kpi_anchor_ymd: anchorYmd,
+    kpi_to_ymd: toYmd,
+    kpi_window_days: explicitRange ? (toYmd >= anchorYmd ? Math.floor((Date.parse(toYmd) - Date.parse(anchorYmd)) / 86400000) + 1 : 1) : 1,
+    state_meta: {
+      source: 'cloudflare-worker-d1',
+      lag_mode: lagMode,
       logs_window_days: days,
       logs_from_ymd: fromYmd,
       logs_to_ymd: logsToYmd,
-      // The KPIs (Completed / Process Split / Employee Performance /
-      // Garment Totals) and the Recent Invoice Logs feed are all anchored
-      // to a single day, not "today" — when the CEO picks a date from
-      // the date picker, the whole dashboard flips to that day.
       kpi_anchor_ymd: anchorYmd,
       kpi_to_ymd: toYmd,
-      kpi_window_days: explicitRange ? (toYmd >= anchorYmd ? Math.floor((Date.parse(toYmd) - Date.parse(anchorYmd)) / 86400000) + 1 : 1) : 1,
-      state_meta: {
-        source: 'cloudflare-worker-d1',
-        lag_mode: lagMode,
-        logs_window_days: days,
-        logs_from_ymd: fromYmd,
-        logs_to_ymd: logsToYmd,
-        kpi_anchor_ymd: anchorYmd,
-        kpi_to_ymd: toYmd,
-      },
-      factory_today: factoryToday,
-      completed_today: completedToday,
-      abayas_delivered_today:
-        (abayasDeliveredRes && abayasDeliveredRes.results && abayasDeliveredRes.results[0]
-          ? Number(abayasDeliveredRes.results[0].abayas_delivered) || 0
-          : 0),
-      avg_cycle_sec_today: avgCycleSecToday,
-      median_session_sec_today: medianSecToday,
-      efficiency_today: efficiencyToday,
-      process_split_today: processSplitToday,
-      hourly_today: hourlyToday,
-      working_hours: workingCfg,
-      working_status: workingStatusNow(workingCfg),
-      active,
-      garment_totals_today,
-      abaya_lifetime: abayaLifetimeMap,
-      abaya_builds: abayaBuildsMap,
-      logs: (logsRes.results || []).map((r) => ({
-        ...r,
-        process: r.emp_process,
-        end: r.ended_at * 1000,
-        started_at: r.started_at * 1000,
-        ended_at: r.ended_at * 1000,
-      })),
-      perf,
-      daily: dailyRes.results || [],
     },
-    200,
-    CEO_JSON_NO_STORE
-  );
+    factory_today: factoryToday,
+    completed_today: completedToday,
+    abayas_delivered_today:
+      (abayasDeliveredRes && abayasDeliveredRes.results && abayasDeliveredRes.results[0]
+        ? Number(abayasDeliveredRes.results[0].abayas_delivered) || 0
+        : 0),
+    avg_cycle_sec_today: avgCycleSecToday,
+    median_session_sec_today: medianSecToday,
+    efficiency_today: efficiencyToday,
+    process_split_today: processSplitToday,
+    hourly_today: hourlyToday,
+    working_hours: workingCfg,
+    working_status: workingStatusNow(workingCfg),
+    active,
+    garment_totals_today,
+    abaya_lifetime: abayaLifetimeMap,
+    abaya_builds: abayaBuildsMap,
+    logs: (logsRes.results || []).map((r) => ({
+      ...r,
+      process: r.emp_process,
+      end: r.ended_at * 1000,
+      started_at: r.started_at * 1000,
+      ended_at: r.ended_at * 1000,
+    })),
+    perf,
+    daily: dailyRes.results || [],
+  };
+  // Store the payload in the in-memory cache (see STATE_CACHE_TTL_MS above).
+  // We rebuild the Response on every call rather than caching the Response
+  // object itself, because a Response body is a one-shot stream.
+  _stateCache = { key: cacheKey, fetchedAt: Date.now(), payload };
+  return jsonRes(payload, 200, CEO_JSON_NO_STORE);
 }

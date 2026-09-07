@@ -5,7 +5,7 @@ import {
   handleWorkTypesGet,
   handleWorkTypesPut,
 } from './modules/roster.js';
-import { CORS, jsonRes, errRes, CEO_JSON_NO_STORE } from './http-response.js';
+import { CORS, jsonRes, errRes, CEO_JSON_NO_STORE, isD1Error, d1ErrorResponse } from './http-response.js';
 import { rateLimitOr429, rateLimitClientKey } from './ratelimit.js';
 import {
   extractCeoToken,
@@ -265,7 +265,12 @@ export default {
         !(path === '/api/tickets' || path.startsWith('/api/tickets/')) &&
         // /api/worker-settings/support — operator edits office numbers from
         // the launcher's settings panel; X-Ingest-Secret.
-        path !== '/api/worker-settings/support');
+        path !== '/api/worker-settings/support' &&
+        // v1.2.27 — D1 health probe. Open by design: the factory server
+        // and the CEO dashboard's "data is stale" banner both want to
+        // poll this without a CEO cookie. The endpoint only does a tiny
+        // `SELECT 1` so it can't leak any sensitive data.
+        path !== '/api/d1-health');
 
     if (isCEORoute) {
       const token = extractCeoToken(request, url);
@@ -310,6 +315,25 @@ export default {
 
       if (path === '/api/event' && request.method === 'POST') {
         return handleIngest(request, env);
+      }
+
+      // v1.2.27 — explicit D1 health probe. Returns 200 if a tiny SELECT
+      // succeeds, 503 if it fails. Used by the dashboard's "stale" banner
+      // and the factory server's self-check. Doesn't touch working hours
+      // (avoids the cache) and doesn't bump any state-mutating counters.
+      if (path === '/api/d1-health' && request.method === 'GET') {
+        try {
+          const r = await env.DB.prepare('SELECT 1 as ok').first();
+          if (r && r.ok === 1) {
+            return jsonRes({ ok: true, d1: 'healthy' }, 200, CEO_JSON_NO_STORE);
+          }
+          return jsonRes({ ok: false, d1: 'unexpected response' }, 503, { 'Retry-After': '10' });
+        } catch (e) {
+          if (isD1Error(e)) {
+            return d1ErrorResponse(e, 10);
+          }
+          return errRes('D1 health probe failed: ' + e.message, 500);
+        }
       }
 
       if (path === '/api/state' && request.method === 'GET') {
@@ -445,6 +469,15 @@ export default {
 
       return errRes('Not found', 404);
     } catch (e) {
+      // v1.2.27: D1 errors are transient (limit, network, internal). Surface
+      // them as 503 + Retry-After so the factory server's local queue
+      // replays them rather than treating them as permanent failures, and
+      // so the CEO dashboard can show a "data is stale" banner instead
+      // of "Service unavailable" with no signal.
+      if (isD1Error(e)) {
+        console.error('Worker D1 error (returning 503):', e && e.message ? e.message : e);
+        return d1ErrorResponse(e, 30);
+      }
       console.error('Worker error:', e);
       return errRes('Internal server error: ' + e.message, 500);
     }
@@ -456,6 +489,11 @@ export default {
     // behavior if a cron is renamed without updating this switch.
     switch (event.cron) {
       case '* * * * *':
+      case '*/5 * * * *':
+        // v1.2.26: cadence reduced from every-minute to every-5-min to
+        // save ~1,152 D1 row-reads/day. Both expressions are accepted
+        // here so a re-deploy with the old cron string still routes
+        // correctly (one last migration cycle).
         ctx.waitUntil(runTunnelProbe(env));
         break;
       case '0 14 * * *':

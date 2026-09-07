@@ -180,6 +180,18 @@ await step('9. POST /api/tickets with a synthetic emp_id is rejected (422)', asy
   logPass('synthetic-emp_id POST /api/tickets → 422');
 });
 
+// v1.2.27 — D1 graceful-degradation contract. /api/d1-health is the
+// worker-side probe; it must return 200 with `{ ok: true, d1: 'healthy' }`
+// when D1 is reachable, 503 with `{ ok: false, ... }` otherwise. The
+// CEO dashboard polls this to show the "data is stale" banner.
+await step('10. /api/d1-health returns 200 + healthy', async () => {
+  const r = await req('/api/d1-health');
+  if (r.status !== 200) throw new Error(`expected 200, got ${r.status} — ${JSON.stringify(r.body)}`);
+  if (!r.body.ok) throw new Error(`body.ok not true: ${JSON.stringify(r.body)}`);
+  if (r.body.d1 !== 'healthy') throw new Error(`expected d1='healthy', got '${r.body.d1}'`);
+  logPass('/api/d1-health');
+});
+
 console.log(`\nResult: ${passed} passed, ${failed} failed`);
 if (failed > 0) {
   console.error('\nSmoke test FAILED. Do not deploy.');

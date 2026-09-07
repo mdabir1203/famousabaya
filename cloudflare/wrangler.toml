@@ -102,10 +102,13 @@ bucket_name = "abaya-updates"
 # Multiple crons share the `scheduled` handler in src/index.js, which branches
 # on `event.cron`:
 #   "0 14 * * *"  -> daily EOD summary  (sendEODSummary)
-#   "* * * * *"   -> tunnel health probe (runTunnelProbe in handlers/dispatch.js)
+#   "*/5 * * * *" -> tunnel health probe (runTunnelProbe in handlers/dispatch.js)
 #                   No-op when FACTORY_TUNNEL_URL is empty, so safe to leave on.
+#                   v1.2.26: was "* * * * *" (every minute) which burned
+#                   ~1,440 D1 row-reads/day on its own. 5-minute cadence
+#                   is enough for monitoring and saves 1,152 reads/day.
 [triggers]
-crons = ["0 14 * * *", "* * * * *"]
+crons = ["0 14 * * *", "*/5 * * * *"]
 
 # â”€â”€â”€ Rate limits (Workers Rate Limiting API â€” unique namespace_id per binding) â”€
 [[ratelimits]]
