@@ -31,6 +31,9 @@
  *   7. POST /api/tickets (no auth) — must return 401
  *   8. POST /api/tickets (bad category) — must return 422
  *   9. POST /api/tickets (synthetic emp_id) — must return 422
+ *  10. /api/d1-health            — v1.2.27 graceful-degradation probe
+ *  11. /static/ceo.css           — v1.2.28 external CSS with immutable headers
+ *  12. /ceo with If-None-Match   — v1.2.28 ETag/304 round-trip (when authed)
  */
 
 import { parseArgs } from 'node:util';
@@ -190,6 +193,53 @@ await step('10. /api/d1-health returns 200 + healthy', async () => {
   if (!r.body.ok) throw new Error(`body.ok not true: ${JSON.stringify(r.body)}`);
   if (r.body.d1 !== 'healthy') throw new Error(`expected d1='healthy', got '${r.body.d1}'`);
   logPass('/api/d1-health');
+});
+
+// v1.2.28 — external CSS route. Must be open (no CEO cookie needed),
+// serve text/css with Cache-Control: immutable, and return the byte
+// body that matches the version-stamped URL the HTML references.
+await step('11. /static/ceo.css serves the dashboard CSS with immutable cache', async () => {
+  // First fetch the HTML to learn the current CSS version (v=v=ABC123).
+  const htmlR = await fetch(BASE + '/ceo', { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const html = await htmlR.text();
+  const m = /\/static\/ceo\.css\?v=([0-9a-f]{8})/.exec(html);
+  if (!m) throw new Error('HTML does not reference /static/ceo.css?v=...');
+  const version = m[1];
+  // Now fetch the CSS at that version.
+  const r = await fetch(BASE + '/static/ceo.css?v=' + version, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (r.status !== 200) throw new Error(`expected 200, got ${r.status}`);
+  const ctype = r.headers.get('content-type') || '';
+  if (!/text\/css/.test(ctype)) throw new Error(`expected text/css, got '${ctype}'`);
+  const cache = r.headers.get('cache-control') || '';
+  if (!/immutable/.test(cache)) throw new Error(`expected Cache-Control: immutable, got '${cache}'`);
+  const body = await r.text();
+  if (!body.includes('--bg:') || !body.includes('.stat-card')) {
+    throw new Error('CSS body does not look like the dashboard stylesheet');
+  }
+  logPass(`/static/ceo.css?v=${version} (${body.length} bytes)`);
+});
+
+// v1.2.28 — ETag/304 on the CEO HTML. Two-step: fetch the HTML to
+// learn the ETag, then re-fetch with If-None-Match and assert 304.
+// (Note: the HTML response without a CEO cookie is the LOGIN page,
+// not the dashboard, so the ETag will be the login ETag. That's fine
+// — the test still proves the round-trip works.)
+await step('12. /ceo returns ETag, and If-None-Match yields 304', async () => {
+  const r1 = await fetch(BASE + '/ceo', { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (r1.status !== 200) throw new Error(`first fetch: expected 200, got ${r1.status}`);
+  const etag = r1.headers.get('etag');
+  if (!etag) throw new Error('first response missing ETag header');
+  if (!/^W\/"/.test(etag)) throw new Error(`expected weak ETag, got '${etag}'`);
+  const cache = r1.headers.get('cache-control') || '';
+  if (!/no-cache/.test(cache) && !/max-age=0/.test(cache)) {
+    throw new Error(`expected Cache-Control: no-cache or max-age=0, got '${cache}'`);
+  }
+  const r2 = await fetch(BASE + '/ceo', {
+    headers: { 'If-None-Match': etag },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (r2.status !== 304) throw new Error(`second fetch: expected 304, got ${r2.status}`);
+  logPass(`/ceo ETag=${etag} (200 → 304 round-trip)`);
 });
 
 console.log(`\nResult: ${passed} passed, ${failed} failed`);

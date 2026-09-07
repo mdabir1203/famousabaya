@@ -34,6 +34,7 @@ import {
 } from './handlers/tickets.js';
 import { sendEODSummary } from './eod-summary.js';
 import { getLoginPage, getCEODashboard, getServiceWorkerCleanupScript, getPrivacyPolicyPage, getTermsOfServicePage } from './ui/ceo-pages.js';
+import { DASHBOARD_CSS_BODY, dashboardCssHref, getDashboardHtmlEtag } from './ui/ceo-static.js';
 // Inlined instead of imported as a JSON module — Cloudflare Workers' bundler
 // doesn't always honor `assert { type: 'json' }` / `with { type: 'json' }`
 // import attributes, and a stale bundle crashed with 1027 on every request.
@@ -65,6 +66,27 @@ export default {
 
     if (path === '/api/health' && request.method === 'GET') {
       return jsonRes({ ok: true, service: 'abaya-track-worker' });
+    }
+
+    // ── v1.2.28 — External CSS for the CEO dashboard ─────────────────────────
+    // The dashboard's <style> block used to be 25 KB of inline CSS in the
+    // HTML response. Lifting it to a separate route with Cache-Control:
+    // immutable means the browser only downloads it on the first page
+    // load, then hits disk. The query string (?v=) carries the FNV-1a
+    // content hash so the URL changes (and the browser refetches) only
+    // when the CSS body changes.
+    //
+    // Open by design: the login page uses the same CSS, and the CSS
+    // body itself doesn't contain anything sensitive. The 25 KB file
+    // is served as a module-level string, so Worker cold-start cost is
+    // a single read of DASHBOARD_CSS_BODY.
+    if (path === '/static/ceo.css' && (request.method === 'GET' || request.method === 'HEAD')) {
+      const headers = new Headers();
+      headers.set('Content-Type', 'text/css; charset=utf-8');
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+      headers.set('CDN-Cache-Control', 'public, max-age=31536000, immutable');
+      headers.set('Access-Control-Allow-Origin', '*');
+      return new Response(request.method === 'HEAD' ? null : DASHBOARD_CSS_BODY, { headers });
     }
 
     // ── Desktop launcher OTA feed ─────────────────────────────────────────────
@@ -458,11 +480,31 @@ export default {
           appendCeoSessionCookies(headers, pair, cookieHttps(request));
           return new Response(null, { status: 302, headers });
         }
+        // v1.2.28: ETag/304 round-trip. The HTML is the same for all
+        // authed users of a given origin, so a weak ETag derived from
+        // (HTML version, CSS version, origin) lets the browser serve
+        // 304-with-no-body on page refresh instead of re-downloading
+        // the 200 KB HTML body. We use Cache-Control: private,
+        // no-cache (not no-store) so the browser stores the response
+        // and revalidates with If-None-Match on the next request.
+        // private keeps the CDN out of the loop (the response carries
+        // the CEO session cookie).
+        const htmlEtag = getDashboardHtmlEtag(url.origin);
+        const ifNoneMatch = (request.headers.get('If-None-Match') || '').trim();
+        if (ifNoneMatch && ifNoneMatch === htmlEtag) {
+          // Hit — return 304 with no body. ETag is echoed so the
+          // browser can match against the original response.
+          const notModifiedHeaders = new Headers();
+          notModifiedHeaders.set('ETag', htmlEtag);
+          notModifiedHeaders.set('Cache-Control', 'private, no-cache');
+          return new Response(null, { status: 304, headers: notModifiedHeaders });
+        }
         return new Response(getCEODashboard(url.origin), {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
-            'Cache-Control': 'no-store',
+            'Cache-Control': 'private, no-cache',
             'CDN-Cache-Control': 'no-store',
+            ETag: htmlEtag,
           },
         });
       }
