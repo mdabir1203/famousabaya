@@ -562,7 +562,7 @@ const WORK_TYPES_ORDER = ['Tailor (01)','Tailor (02)','Hand Work','Stone Work','
   // an identical body (the 5s server cache + 2s polling cadence means
   // ~80% of polls in steady state are no-ops).
   // _abayaIsCustomSet is rebuilt on every STATE arrival so lookups
-  // for `is_custom` are O(1) instead of O(catalog).
+  // for the is_custom flag are O(1) instead of O(catalog).
   let _lastStateHash = null;
   let _abayaIsCustomSet = new Set();
   // Per-block memoization. Set to a hash string after a render; if the

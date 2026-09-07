@@ -3209,6 +3209,14 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     throw err;
   }
   if (EMPLOYEES_XLSX_PATH) {
+    // Lock the chokidar watcher out of the file only for the duration of the
+    // disk write. The in-function reload that follows MUST run *after* the
+    // lock is cleared, otherwise the early-return guard at
+    // loadEmployeesFromXlsxFile() (line 3060) silently skips the reload —
+    // EMPLOYEES never updates, the chokidar never re-fires (its mtime
+    // check returns equal), and kiosks see the old roster until the
+    // operator refreshes the page. Bug observed 2026-09-07: a freshly
+    // added employee vanished from the kiosk.
     employeesXlsxWriteInProgress = true;
     try {
       const resolved = resolveEmployeesXlsxAbsolutePath();
@@ -3221,10 +3229,15 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
       const buf = buildEmployeesXlsxBuffer(nextEmployees, sheetName);
       atomicWriteBufferReplaceFile(resolved, buf);
       lastEmployeesXlsxMtime = 0;
-      loadEmployeesFromXlsxFile();
     } finally {
       employeesXlsxWriteInProgress = false;
     }
+    // Re-read the freshly-written xlsx (lastEmployeesXlsxMtime is 0 so the
+    // mtime short-circuit won't skip this) so EMPLOYEES / EMP_PERF /
+    // attachEmployeeImagesFromDisk / emitEmployeesChanged all run against
+    // the new roster. This is what the manual-JSON branch already does
+    // synchronously — we just need the chokidar window closed first.
+    loadEmployeesFromXlsxFile();
   } else {
     const prevPerfById = Object.create(null);
     for (let pi = 0; pi < EMP_PERF.length; pi++) {
