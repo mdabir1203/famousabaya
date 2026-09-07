@@ -62,16 +62,32 @@ export function _resetStateCacheForTest() { _stateCache = null; }
  *                       asks for `?days=400` so weekly / monthly / yearly
  *                       reports can be aggregated from the bundle.
  *   ?limit=<n>          hard cap on log rows; clamped to [1, 5000].
+ *   ?live=1             v1.2.30: opt-in cache bypass for the realtime
+ *                       stream. Skips both the 5s in-memory cache lookup
+ *                       and the cache write so every call hits D1 fresh.
+ *                       The CEO dashboard sends this when STATE.active
+ *                       is non-empty so the 1Hz poll shows the latest
+ *                       session Start/Finish events; otherwise it falls
+ *                       back to the cached 5s view to keep the free-tier
+ *                       D1 row budget in check.
  *
  * The endpoint stays backwards compatible: callers that only pass `?days=`
  * get the original "today + last N days of history" payload.
  */
 export async function handleState(env, url) {
+  // v1.2.30: ?live=1 opt-in bypasses both the 5s cache lookup AND the
+  // cache write. The CEO dashboard sends this when there are active
+  // sessions so the 1Hz poll reflects Start/Finish events immediately.
+  // The cache is still useful for the idle case (no active sessions,
+  // 4.5s poll cadence) where 5s staleness is invisible and D1 row_reads
+  // are a real cost on the free tier.
+  const liveMode = (url && url.searchParams && url.searchParams.get('live')) === '1';
   // 5s response cache. Identical query params within the TTL serve from
-  // memory. See _stateCacheKey() above for the key derivation.
+  // memory. See _stateCacheKey() above for the key derivation. Skipped
+  // entirely in live mode so the realtime stream always gets fresh data.
   const cacheKey = _stateCacheKey(url);
   const now = Date.now();
-  if (_stateCache && _stateCache.key === cacheKey &&
+  if (!liveMode && _stateCache && _stateCache.key === cacheKey &&
       (now - _stateCache.fetchedAt) < STATE_CACHE_TTL_MS) {
     // v1.2.27: tag the served payload with the cache age so the CEO
     // dashboard can show a "data is Xs old" banner if it polls a
@@ -771,7 +787,11 @@ export async function handleState(env, url) {
   };
   // Store the payload in the in-memory cache (see STATE_CACHE_TTL_MS above).
   // We rebuild the Response on every call rather than caching the Response
-  // object itself, because a Response body is a one-shot stream.
-  _stateCache = { key: cacheKey, fetchedAt: Date.now(), payload };
+  // object itself, because a Response body is a one-shot stream. Skipped
+  // in live mode (v1.2.30) so the realtime stream's fresh payload doesn't
+  // overwrite the 5s cached view that idle callers depend on.
+  if (!liveMode) {
+    _stateCache = { key: cacheKey, fetchedAt: Date.now(), payload };
+  }
   return jsonRes(payload, 200, CEO_JSON_NO_STORE);
 }

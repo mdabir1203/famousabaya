@@ -1080,7 +1080,7 @@ function renderLiveSessions() {
     // report, not just the live board. Do not delete the plumbing.
     const lastFinishDisplayMs = lastFinishMs && lastFinishMs < startedMs ? lastFinishMs : 0;
     // "Active today" — in-shift elapsed time for THIS active session, ticking
-    // because renderLiveSessions is called every 2.5s. Mirrors the cloud's
+    // every 1s via tickLiveSessions() (v1.2.30). Mirrors the cloud's
     // windowed_elapsed_sec (cloudflare/src/handlers/state.js, derived from
     // cloudflare/migrations/0016_active_session_live_state.sql). The local
     // server doesn't push that column yet, so we recompute client-side using
@@ -1090,38 +1090,22 @@ function renderLiveSessions() {
     // afternoon and is still running at 10am today shows only the 2h of
     // in-shift time since today's midnight — matching what the cloud D1
     // reports after the per-midnight rollup job.
-    const activeTodaySec = (function () {
-      const startYmd = ymdInTimezone(startedMs, tz);
-      let effStartMs = startedMs;
-      if (startYmd !== todayYmd) {
-        const d = new Date(serverNowMs);
-        const ymdParts = new Intl.DateTimeFormat('en-CA', {
-          timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
-        }).formatToParts(d);
-        const y  = Number(ymdParts.find(p => p.type === 'year').value);
-        const mo = Number(ymdParts.find(p => p.type === 'month').value);
-        const da = Number(ymdParts.find(p => p.type === 'day').value);
-        const localHMSStr = new Intl.DateTimeFormat('en-GB', {
-          timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-        }).format(new Date(serverNowMs));
-        const [hh, mm, ss] = localHMSStr.split(':').map(Number);
-        const tzOffsetMs = (hh * 3600 + mm * 60 + ss) * 1000
-          - ((serverNowMs % 86400000) + 86400000) % 86400000;
-        effStartMs = Date.UTC(y, mo - 1, da) - tzOffsetMs;
-      }
-      const st = Math.floor(effStartMs / 1000);
-      const end = serverNowSec;
-      if (end <= st) return 0;
-      let sec = 0;
-      for (let t = st; t < end; t += 60) {
-        const t2 = Math.min(end, t + 60);
-        if (inWindowClient(t)) sec += t2 - t;
-      }
-      return sec;
-    })();
+    const activeTodaySec = computeActiveTodaySec(startedMs, serverNowMs, serverNowSec, tz, todayYmd);
+    // "This build" — in-shift elapsed time for THIS active session on
+    // this abaya. Walk minute-by-minute from startedAt to now, summing
+    // only the seconds that fall inside a configured shift window.
+    const inShiftSec = computeInShiftSec(startedAtSec, serverNowSec);
 
+    // v1.2.30: data-tick attributes let tickLiveSessions() update ONLY
+    // the elapsed-time cells at 1Hz via targeted textContent writes,
+    // without re-running the full renderLiveSessions() (which rebuilds
+    // 100% of the innerHTML and would re-parse the entire DOM every
+    // second). The two attributes correspond to the two ticking cells:
+    //   data-tick="active-today"  -> the green "active today" counter
+    //   data-tick="build"         -> the amber "this build" counter
+    // data-emp-id lets the tick find the right cell per worker.
     return (
-      '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
+      '<div data-emp-id="' + escapeAttr(id) + '" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
         '<div class="emp-av" style="background:' + escapeAttr(color) + '">' + escapeHtml(initials) + '</div>' +
         '<div style="flex:1">' +
           '<div style="font-size:13px;font-weight:600">' +
@@ -1143,16 +1127,18 @@ function renderLiveSessions() {
         '</div>' +
         '<div style="text-align:right">' +
           // "Active today" — live in-shift elapsed time for THIS active
-          // session, ticking because renderLiveSessions runs every 2.5s.
-          // Sits at the top of the right column so the ticking counter is
-          // the first thing the operator sees. The "· Button" suffix names
-          // the process the worker is currently on, so the time is read in
-          // the context of "they've been doing Button for X". Mirrors
-          // cloudflare's windowed_elapsed_sec; recomputed client-side
-          // because the local server doesn't push that column yet.
+          // session, ticking every 1s via tickLiveSessions()'s
+          // textContent write on the [data-tick="active-today"] cell.
+          // Sits at the top of the right column so the ticking counter
+          // is the first thing the operator sees. The "Button" suffix
+          // names the process the worker is currently on, so the time
+          // is read in the context of "they've been doing Button for X".
+          // Mirrors cloudflare's windowed_elapsed_sec; recomputed
+          // client-side because the local server doesn't push that
+          // column yet.
           (function () {
             const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. For cross-day sessions, this resets at factory-TZ midnight. Recomputed client-side from started_at + inWindowClient; matches the cloud\u2019s windowed_elapsed_sec within \u00b160s (the function walks minute-by-minute for performance).';
-            return '<div title="' + escapeAttr(titleText) + '" style="font-size:18px;font-weight:700;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1.25;cursor:help">' +
+            return '<div data-tick="active-today" data-emp-id="' + escapeAttr(id) + '" title="' + escapeAttr(titleText) + '" style="font-size:18px;font-weight:700;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1.25;cursor:help">' +
               escapeHtml(fmtHMS(activeTodaySec)) +
             '</div>' +
             '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px">' +
@@ -1162,34 +1148,117 @@ function renderLiveSessions() {
           // "This build" — in-shift elapsed time for THIS active session on
           // this abaya (NOT wall-clock, so nights / weekends / lunch
           // breaks don't inflate the number). serverNowMs is anchored to
-          // the local server's clock via STATE.generated_at. We walk
-          // minute-by-minute from startedAt to now, summing only the
-          // seconds that fall inside a configured shift window. Same
-          // trade-off as activeTodaySec above (±1 min precision in
-          // exchange for ~60x fewer iterations than a per-second walk —
-          // plenty fast for sessions up to ~24h and well within budget
-          // even for the multi-day stuck-session outliers).
+          // the local server's clock via STATE.generated_at. Tick cell
+          // updated by tickLiveSessions() at 1Hz via [data-tick="build"].
           (function () {
             const customPill = isCustom
               ? ' <span title="Marked is_custom=1 in the local abaya catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
               : '';
-            const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every 2.5s; not the aggregate across sessions.';
-            const st = Math.floor(startedMs / 1000);
-            const end = serverNowSec;
-            let inShiftSec = 0;
-            if (end > st) {
-              for (let t = st; t < end; t += 60) {
-                const t2 = Math.min(end, t + 60);
-                if (inWindowClient(t)) inShiftSec += t2 - t;
-              }
-            }
-            return '<div title="' + titleText + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(inShiftSec)) + customPill + '</div>' +
+            const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every 1s; not the aggregate across sessions.';
+            return '<div data-tick="build" data-emp-id="' + escapeAttr(id) + '" title="' + titleText + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + escapeHtml(fmtHMS(inShiftSec)) + customPill + '</div>' +
               '<div style="font-size:9px;color:var(--tx3)">this build</div>';
           })() +
         '</div>' +
       '</div>'
     );
   }).join('');
+}
+
+// ─── ELAPSED-TIME HELPERS (v1.2.30) ───────────────────────────────────────────
+// Extracted from renderLiveSessions() so tickLiveSessions() can call them
+// at 1Hz without re-running the full DOM build. Both return integer
+// seconds. Pure functions (no DOM access) so tests can verify them in
+// isolation against fixed clock values.
+function computeInShiftSec(startedAtSec, serverNowSec) {
+  if (serverNowSec <= startedAtSec) return 0;
+  let sec = 0;
+  for (let t = startedAtSec; t < serverNowSec; t += 60) {
+    const t2 = Math.min(serverNowSec, t + 60);
+    if (inWindowClient(t)) sec += t2 - t;
+  }
+  return sec;
+}
+
+function computeActiveTodaySec(startedMs, serverNowMs, serverNowSec, tz, todayYmd) {
+  const startYmd = ymdInTimezone(startedMs, tz);
+  let effStartMs = startedMs;
+  if (startYmd !== todayYmd) {
+    // Cross-day clamp: effective start is today 00:00 in factory TZ.
+    const d = new Date(serverNowMs);
+    const ymdParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(d);
+    const y  = Number(ymdParts.find(p => p.type === 'year').value);
+    const mo = Number(ymdParts.find(p => p.type === 'month').value);
+    const da = Number(ymdParts.find(p => p.type === 'day').value);
+    const localHMSStr = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    }).format(new Date(serverNowMs));
+    const [hh, mm, ss] = localHMSStr.split(':').map(Number);
+    const tzOffsetMs = (hh * 3600 + mm * 60 + ss) * 1000
+      - ((serverNowMs % 86400000) + 86400000) % 86400000;
+    effStartMs = Date.UTC(y, mo - 1, da) - tzOffsetMs;
+  }
+  return computeInShiftSec(Math.floor(effStartMs / 1000), serverNowSec);
+}
+
+// ─── 1Hz LIVE TICK (v1.2.30) ─────────────────────────────────────────────────
+// Walks the live session rows and updates ONLY the elapsed-time cells
+// (data-tick="active-today" and data-tick="build") via targeted
+// textContent writes. Replaces the previous 2.5s full-innerHTML rebuild,
+// so the live counter visibly advances every second without the
+// browser re-parsing 100% of the row markup on every tick.
+//
+// Runs at 1Hz via setInterval(tickLiveSessions, 1000) at the bottom of
+// this file. renderLiveSessions() still runs on every state_update to
+// pick up new/finished sessions — this tick is purely a counter
+// refresh, not a list refresh.
+function tickLiveSessions() {
+  const el = document.getElementById('live-sessions');
+  if (!el) return;
+  const active = STATE.active || {};
+  const ids = Object.keys(active);
+  if (ids.length === 0) return;
+  // Server-anchored "now" so the tick matches the local server's view
+  // of the world, not the browser's local clock. Same logic as
+  // renderLiveSessions above — keeping the formula in one place matters
+  // because a clock-skew bug here would diverge the live counter from
+  // the local server's. Mirrors the cloud's STATE.ts usage in
+  // ceo-pages.js#computeActiveTimingCache.
+  const browserMs = Date.now();
+  const snapshotMs = Number(STATE.generated_at) || 0;
+  const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
+  const serverNowMs = snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs;
+  const serverNowSec = Math.floor(serverNowMs / 1000);
+  const tz = whTimezone();
+  const todayYmd = ymdInTimezone(serverNowMs, tz);
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const sess = active[id];
+    if (!sess) continue;
+    const startedMs = Number(sess.started_at) || browserMs;
+    const startedAtSec = Math.floor(startedMs / 1000);
+    if (serverNowSec <= startedAtSec) continue;
+    const activeTodaySec = computeActiveTodaySec(startedMs, serverNowMs, serverNowSec, tz, todayYmd);
+    const inShiftSec = computeInShiftSec(startedAtSec, serverNowSec);
+    // Targeted textContent writes. CSS attribute selector avoids a
+    // getElementById per row and works in any browser back to IE10.
+    const activeTodayCell = el.querySelector('[data-tick="active-today"][data-emp-id="' + cssEscapeAttr(id) + '"]');
+    if (activeTodayCell && activeTodayCell.textContent !== fmtHMS(activeTodaySec)) {
+      activeTodayCell.textContent = fmtHMS(activeTodaySec);
+    }
+    const buildCell = el.querySelector('[data-tick="build"][data-emp-id="' + cssEscapeAttr(id) + '"]');
+    if (buildCell && buildCell.textContent !== fmtHMS(inShiftSec)) {
+      buildCell.textContent = fmtHMS(inShiftSec);
+    }
+  }
+}
+
+// CSS attribute-selector escape: the emp_id is already constrained to
+// the e_bc_<digits> form by the AGENTS.md contract, but attribute
+// selectors still need quotes-and-double-quote escape for the value.
+function cssEscapeAttr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 // â”€â”€â”€ EMPLOYEE PERF BARS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -2926,7 +2995,14 @@ window.addEventListener('load', () => {
   fetchStateExtendedHistory();
   /** Clock ticks every second; heavy live DOM refreshes throttle to reduce INP / main-thread work */
   setInterval(updateClock, 1000);
-  setInterval(renderLiveSessions, 2500);
+  // v1.2.30: the previous code did a full `renderLiveSessions()` innerHTML
+  // rebuild every 2.5s, which re-parsed every row's markup on every tick.
+  // Now the innerHTML rebuild runs on state_update (so new/finished
+  // sessions appear immediately) and tickLiveSessions() handles the
+  // 1Hz counter refresh via targeted textContent writes on the
+  // [data-tick="..."] cells. Result: the live counter advances every
+  // second visibly, and the browser does ~10x less DOM work.
+  setInterval(tickLiveSessions, 1000);
 
   // â”€â”€ Custom-range + Every-Employee-Every-Task wiring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const repCustomApply = document.getElementById('rep-custom-apply');

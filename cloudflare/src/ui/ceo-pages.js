@@ -828,8 +828,19 @@ async function poll(skipRefreshRetry) {
     // showing today even when the user had clearly asked for a past
     // period. Day picker wins over month picker (more specific).
     const rangeQs = getPickedRangeQs();
+    // v1.2.30: when STATE has at least one active session, append
+    // live=1 so the Worker bypasses the 5s in-memory response cache
+    // and serves fresh D1 data on every poll. Without this, the 1Hz
+    // poll cadence (see nextPollDelayMs) would mostly hit the cached
+    // 5s snapshot and a fresh Start/Finish would not appear on the
+    // live board for up to 5s. When there are no active sessions the
+    // dashboard falls back to the 4.5s cadence and does not send
+    // live=1, so the cache is free to serve the same payload for the
+    // entire idle window and the D1 row_read budget stays healthy.
+    const liveActive = Object.keys((STATE && STATE.active) || {}).length > 0;
+    const liveQs = liveActive ? '&live=1' : '';
     const url =
-      BASE + '/api/state?ts=' + Date.now() + '&r=' + Math.random().toString(36).slice(2, 10) + rangeQs;
+      BASE + '/api/state?ts=' + Date.now() + '&r=' + Math.random().toString(36).slice(2, 10) + liveQs + rangeQs;
     const r = await fetchWithRetry(url, {
       cache: 'no-store',
       headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
@@ -956,7 +967,13 @@ function nextPollDelayMs() {
   if (sessionExpired) return 8000;
   const activeCount = Object.keys((STATE && STATE.active) || {}).length;
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return 7000;
-  return activeCount > 0 ? 2000 : 4500;
+  // v1.2.30: 1s cadence when active > 0 so the live board reflects
+  // Start/Finish events within ~1s end-to-end. The 2s the previous
+  // version used meant an operator staring at the live board during a
+  // busy shift could see a 2s lag between when a worker tapped Finish
+  // and when the row disappeared. Idle cadence stays at 4.5s (was the
+  // same) so the no-active baseline doesn't burn D1 row_reads.
+  return activeCount > 0 ? 1000 : 4500;
 }
 
 function schedulePollLoop() {
