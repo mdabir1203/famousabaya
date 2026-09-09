@@ -1,8 +1,8 @@
-version: 1.2.23
+version: 1.2.31
 files:
-  - url: AbaYa-Track-Launcher-Setup-1.2.23.exe
-    sha512: IRUpiRbNZuNTfVTUelk8aCCLnG+KrWyf0iIsYCjgL2hLpnLP0qORLg6o9X5mjuZgutJOrFYcllnHptk5qYvQSw==
-    size: 92736264
-path: AbaYa-Track-Launcher-Setup-1.2.23.exe
-sha512: IRUpiRbNZuNTfVTUelk8aCCLnG+KrWyf0iIsYCjgL2hLpnLP0qORLg6o9X5mjuZgutJOrFYcllnHptk5qYvQSw==
-releaseDate: '2026-09-04T17:12:25.935Z'
+  - url: AbaYa-Track-Launcher-Setup-1.2.31.exe
+    sha512: 8Qf7pddYMuYyZDqUTuJ9TmfAGkpeEUN1VMEqOtuzMyuJMTdEyFQb3dJxz9Mszkv0hkkUvW6C1L2z1NXeo5OlkQ==
+    size: 92736192
+path: AbaYa-Track-Launcher-Setup-1.2.31.exe
+sha512: 8Qf7pddYMuYyZDqUTuJ9TmfAGkpeEUN1VMEqOtuzMyuJMTdEyFQb3dJxz9Mszkv0hkkUvW6C1L2z1NXeo5OlkQ==
+releaseDate: '2026-09-09T21:44:58.227Z'
