@@ -39,6 +39,7 @@ const RAW_RUNTIME_STATE =
           ["qrcode", "npm:1.5.4"],\
           ["sharp", "npm:0.33.5"],\
           ["socket.io", "npm:4.8.3"],\
+          ["socket.io-client", "npm:4.8.3"],\
           ["sql.js", "npm:1.14.1"],\
           ["unenv", "npm:2.0.0-rc.24"],\
           ["wrangler", "virtual:79363d961c52c7f3ef86a9bf5ba673dfb246720a2c7f3342ee33205e4898ee57a420e38785bb8a0811bb68101adf280a0e32d6b511b08059abb10bedcf2934f4#npm:4.100.0"],\
@@ -943,6 +944,7 @@ const RAW_RUNTIME_STATE =
           ["qrcode", "npm:1.5.4"],\
           ["sharp", "npm:0.33.5"],\
           ["socket.io", "npm:4.8.3"],\
+          ["socket.io-client", "npm:4.8.3"],\
           ["sql.js", "npm:1.14.1"],\
           ["unenv", "npm:2.0.0-rc.24"],\
           ["wrangler", "virtual:79363d961c52c7f3ef86a9bf5ba673dfb246720a2c7f3342ee33205e4898ee57a420e38785bb8a0811bb68101adf280a0e32d6b511b08059abb10bedcf2934f4#npm:4.100.0"],\
@@ -1626,6 +1628,20 @@ const RAW_RUNTIME_STATE =
           ["engine.io", "npm:6.6.8"],\
           ["engine.io-parser", "npm:5.2.3"],\
           ["ws", "virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["engine.io-client", [\
+      ["npm:6.6.6", {\
+        "packageLocation": "./.yarn/cache/engine.io-client-npm-6.6.6-fd14f4b531-805995b57b.zip/node_modules/engine.io-client/",\
+        "packageDependencies": [\
+          ["@socket.io/component-emitter", "npm:3.1.2"],\
+          ["debug", "virtual:2aa532c1f49066b59fcb4bddb85d46b307c0cb749b137fb60fb864ab70bb03332a1ba03b8e24891c225741d1f7ab01a9d2ae738fc966f7ddfc02ac074fee79eb#npm:4.4.3"],\
+          ["engine.io-client", "npm:6.6.6"],\
+          ["engine.io-parser", "npm:5.2.3"],\
+          ["ws", "virtual:e6e235124f4ad4755b7629af1640891c603520cbf875d49147b9a7deb863c15644b216c8933334d0f3ef1fb62836147d616e9c1a4c879ed1fef0cb906d9c3836#npm:8.21.3"],\
+          ["xmlhttprequest-ssl", "npm:2.1.2"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -3114,6 +3130,19 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["socket.io-client", [\
+      ["npm:4.8.3", {\
+        "packageLocation": "./.yarn/cache/socket.io-client-npm-4.8.3-6800638250-76c0d86de0.zip/node_modules/socket.io-client/",\
+        "packageDependencies": [\
+          ["@socket.io/component-emitter", "npm:3.1.2"],\
+          ["debug", "virtual:2aa532c1f49066b59fcb4bddb85d46b307c0cb749b137fb60fb864ab70bb03332a1ba03b8e24891c225741d1f7ab01a9d2ae738fc966f7ddfc02ac074fee79eb#npm:4.4.3"],\
+          ["engine.io-client", "npm:6.6.6"],\
+          ["socket.io-client", "npm:4.8.3"],\
+          ["socket.io-parser", "npm:4.2.6"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["socket.io-parser", [\
       ["npm:4.2.6", {\
         "packageLocation": "./.yarn/cache/socket.io-parser-npm-4.2.6-35d9c58722-ba0a0b541b.zip/node_modules/socket.io-parser/",\
@@ -3596,6 +3625,15 @@ const RAW_RUNTIME_STATE =
           ["wmf", "npm:1.0.2"],\
           ["word", "npm:0.3.0"],\
           ["xlsx", "npm:0.18.5"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["xmlhttprequest-ssl", [\
+      ["npm:2.1.2", {\
+        "packageLocation": "./.yarn/cache/xmlhttprequest-ssl-npm-2.1.2-7d8e3817bc-70d6086932.zip/node_modules/xmlhttprequest-ssl/",\
+        "packageDependencies": [\
+          ["xmlhttprequest-ssl", "npm:2.1.2"]\
         ],\
         "linkType": "HARD"\
       }]\

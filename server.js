@@ -1358,6 +1358,37 @@ let ACTIVE_SESSIONS = {};
 let COMPLETED_LOGS = [];
 let EMP_PERF = EMPLOYEES.map(e => ({id: e.id, units: 0, eff: 0, act: 0, idl: 0}));
 
+/**
+ * v1.2.32: Drop any ACTIVE_SESSIONS row that's a "ghost" — empty emp_id,
+ * empty abaya_id, AND empty process. These appear as the
+ * "Tailor (01) — STARTED Mon 15:50:26, no name, no item" rows the
+ * operator kept seeing in the live board, and they're the result of an
+ * older code path that didn't validate socket payloads. Idempotent:
+ * safe to call on every boot and on demand. Returns the number of
+ * rows removed so the caller can log it.
+ */
+function dropGhostActiveSessions() {
+  const keys = Object.keys(ACTIVE_SESSIONS);
+  let removed = 0;
+  for (const k of keys) {
+    const s = ACTIVE_SESSIONS[k];
+    if (!s) {
+      delete ACTIVE_SESSIONS[k];
+      removed++;
+      continue;
+    }
+    const empId = String(s.emp_id == null ? '' : s.emp_id).trim();
+    const abayaId = String(s.abaya_id == null ? '' : s.abaya_id).trim();
+    const process = String(s.process == null ? '' : s.process).trim();
+    if (!empId || (!abayaId && !process)) {
+      console.warn('[active] dropping ghost active session', { key: k, empId, abayaId, process, started_at: s.started_at });
+      delete ACTIVE_SESSIONS[k];
+      removed++;
+    }
+  }
+  return removed;
+}
+
 // STATE_LOG_WINDOW_MS: how far back /api/state broadcasts logs in its realtime bundle.
 // Default 400 days — long enough to back every report (Daily / Weekly / Monthly /
 // Yearly / Custom) without the report panel having to issue a separate fetch.
@@ -2206,8 +2237,15 @@ io.on('connection', (socket) => {
   });
 
   socket.on('req_startWork', (data, callback) => {
-    const { emp_id, abaya_id, process: selectedProcess } = data;
-    if (ACTIVE_SESSIONS[emp_id]) return callback({ok:false, error:'Already has active session'});
+    const raw = (data && typeof data === 'object') ? data : {};
+    const { abaya_id, process: selectedProcess } = raw;
+    // v1.2.32: drop empty/missing emp_id at the boundary so a malformed
+    // socket call can't create a ghost row in ACTIVE_SESSIONS (the
+    // "Tailor (01) — STARTED Mon 15:50:26, no name, no item" record
+    // the operator kept seeing in the live board).
+    const empIdStr = typeof raw.emp_id === 'string' ? raw.emp_id.trim() : '';
+    if (!empIdStr) return callback({ok:false, error:'Missing emp_id'});
+    if (ACTIVE_SESSIONS[empIdStr]) return callback({ok:false, error:'Already has active session'});
 
     const nowSec = Math.floor(Date.now() / 1000);
     if (!isInWorkingWindow(nowSec)) {
@@ -2217,7 +2255,7 @@ io.on('connection', (socket) => {
       });
     }
 
-    const emp = EMPLOYEES.find(e => e.id === emp_id);
+    const emp = EMPLOYEES.find(e => e.id === empIdStr);
     const ab  = abayaCatalog.find(a => a.id === abaya_id);
     // Use the role the employee selected on the kiosk, fall back to their default
     const selectedProcessClean = String(selectedProcess != null ? selectedProcess : '').trim();
@@ -2228,9 +2266,9 @@ io.on('connection', (socket) => {
         error: 'Invalid work type. Refresh the page and choose a role from the factory list.',
       });
     }
-    const log_id = 'WL-' + emp_id + '-' + Date.now();
+    const log_id = 'WL-' + empIdStr + '-' + Date.now();
     const started_at_sec = nowSec;
-    ACTIVE_SESSIONS[emp_id] = { emp_id, abaya_id, log_id, started_at: Date.now(), process: sessionProcess };
+    ACTIVE_SESSIONS[empIdStr] = { emp_id: empIdStr, abaya_id, log_id, started_at: Date.now(), process: sessionProcess };
 
     broadcastState();
     setImmediate(persistOfflineDashboardReport);
@@ -2239,7 +2277,7 @@ io.on('connection', (socket) => {
     // ← Non-blocking push to Cloudflare (fire-and-forget)
     if (emp) {
       pushToCloudflare('session_start', {
-        emp_id, emp_name: emp.name, emp_code: emp.code,
+        emp_id: empIdStr, emp_name: emp.name, emp_code: emp.code,
         emp_process: sessionProcess, emp_color: emp.color, emp_initials: emp.initials,
         abaya_id, abaya_code: ab ? ab.code : null,
         station: 'S-02', started_at: started_at_sec,
@@ -2352,26 +2390,45 @@ io.on('connection', (socket) => {
     };
     callback(cbPayload);
 
-    if (emp) {
-      var cfPayload = {
-        emp_id, emp_name: emp.name, emp_code: emp.code,
-        emp_process: record.process, emp_color: emp.color, emp_initials: emp.initials,
-        abaya_id: record.abaya_id, abaya_code,
-        station: 'S-02',
-        started_at: Math.floor(record.start / 1000),
-        ended_at: Math.floor(record.end / 1000),
-        duration_sec: duration_seconds,
-      };
-      if (record.process === 'Invoice maker') {
-        cfPayload.invoice_count = record.invoice_count;
-        cfPayload.invoice_serial = record.invoice_serial;
-      }
-      if (record.process === 'Checker') {
-        cfPayload.quantity = record.quantity;
-        cfPayload.checker_barcode = checker_barcode;
-      }
-      pushToCloudflare('session_finish', cfPayload);
+    // v1.2.31: do NOT gate the cloud push on `if (emp)`. The local
+    // ACTIVE_SESSIONS row was just deleted and the COMPLETED_LOGS entry was
+    // already written, so the in-floor state is correct. The cloud D1 still
+    // has the matching active_sessions row from the session_start; if we
+    // skip this push, refreshCloudToday (every 30 s) re-merges the row and
+    // the LAN dashboard shows the employee as active again — indefinitely,
+    // because the cloud never gets a session_finish to DELETE it. The
+    // emp_name/code/color/initials are optional enrichments; the Worker
+    // only requires emp_id + ended_at (see ingest.js:118-121).
+    if (!emp) {
+      console.warn(
+        '[req_finishWork] emp lookup missed for', emp_id,
+        '— pushing session_finish without local enrichment. ' +
+        'Likely a mid-session roster reload changed the id. Cloud DELETE will still land.'
+      );
     }
+    var cfPayload = {
+      emp_id,
+      emp_name: emp ? emp.name : null,
+      emp_code: emp ? emp.code : null,
+      emp_process: record.process,
+      emp_color: emp ? emp.color : null,
+      emp_initials: emp ? emp.initials : null,
+      abaya_id: record.abaya_id,
+      abaya_code,
+      station: 'S-02',
+      started_at: Math.floor(record.start / 1000),
+      ended_at: Math.floor(record.end / 1000),
+      duration_sec: duration_seconds,
+    };
+    if (record.process === 'Invoice maker') {
+      cfPayload.invoice_count = record.invoice_count;
+      cfPayload.invoice_serial = record.invoice_serial;
+    }
+    if (record.process === 'Checker') {
+      cfPayload.quantity = record.quantity;
+      cfPayload.checker_barcode = checker_barcode;
+    }
+    pushToCloudflare('session_finish', cfPayload);
   });
 
   /**
@@ -2459,23 +2516,25 @@ io.on('connection', (socket) => {
       delete ACTIVE_SESSIONS[emp_id];
       setImmediate(persistOfflineDashboardReport);
       setImmediate(() => { void persistSqliteSnapshot(); });
-      if (emp) {
-        pushToCloudflare('session_finish', {
-          emp_id: emp_id,
-          emp_name: emp.name,
-          emp_code: emp.code,
-          emp_process: sess.process,
-          emp_color: emp.color,
-          emp_initials: emp.initials,
-          abaya_id: sess.abaya_id,
-          abaya_code: abaya ? abaya.code : null,
-          station: 'S-02',
-          started_at: Math.floor(sess.started_at / 1000),
-          ended_at: Math.floor(endMs / 1000),
-          duration_sec: duration_sec,
-          auto_closed: true,
-        });
-      }
+      // v1.2.31: same as req_finishWork — do NOT gate the cloud push on
+      // `if (emp)`. The orphan session was already deleted from
+      // ACTIVE_SESSIONS; if we skip this push, the cloud D1 keeps the row
+      // and refreshCloudToday resurrects it on the LAN dashboard.
+      pushToCloudflare('session_finish', {
+        emp_id: emp_id,
+        emp_name: emp ? emp.name : null,
+        emp_code: emp ? emp.code : null,
+        emp_process: sess.process,
+        emp_color: emp ? emp.color : null,
+        emp_initials: emp ? emp.initials : null,
+        abaya_id: sess.abaya_id,
+        abaya_code: abaya ? abaya.code : null,
+        station: 'S-02',
+        started_at: Math.floor(sess.started_at / 1000),
+        ended_at: Math.floor(endMs / 1000),
+        duration_sec: duration_sec,
+        auto_closed: true,
+      });
       results.push(Object.assign({ closed: true }, summary));
       closedCount++;
     }
@@ -3037,13 +3096,35 @@ function parseEmployeesXlsxFile(filePath) {
     const initials = (out.name || '?').slice(0, 2).toUpperCase();
     var photo = out.photo || '';
     if (!photo) {
-      var uploadsBase = path.join(__dirname, 'public', 'uploads');
+      // v1.2.31: name-based photo fallback must search the same dual
+      // roots as attachEmployeeImagesFromDisk (stable data dir + install-
+      // relative), and must also check the `employees/` subfolder where
+      // the upload endpoint writes. Pre-fix this only checked
+      // __dirname/public/uploads in the root, so any photo named after
+      // the employee (Misbah.jpeg) that lived in the stable data dir
+      // — which is where the launcher stores the gallery post-install —
+      // was silently missed and the browser fell back to initials.
+      var photoRoots = STABLE_UPLOADS_PUBLIC
+        ? [STABLE_UPLOADS_PUBLIC, path.join(__dirname, 'public', 'uploads')]
+        : [path.join(__dirname, 'public', 'uploads')];
+      var photoSubdirs = ['', 'employees'];
       var nameVariants = [out.name, out.name.toLowerCase(), out.name.replace(/\s+/g, '')];
-      var photoExts = ['.jpeg', '.jpg', '.png'];
-      for (var ni = 0; ni < nameVariants.length && !photo; ni++) {
-        for (var ei = 0; ei < photoExts.length && !photo; ei++) {
-          var candidate = path.join(uploadsBase, nameVariants[ni] + photoExts[ei]);
-          if (fs.existsSync(candidate)) photo = 'uploads/' + nameVariants[ni] + photoExts[ei];
+      var photoExts = ['.jpeg', '.jpg', '.png', '.webp', '.gif'];
+      outer: for (var ri = 0; ri < photoRoots.length; ri++) {
+        for (var si = 0; si < photoSubdirs.length; si++) {
+          for (var ni = 0; ni < nameVariants.length; ni++) {
+            for (var ei = 0; ei < photoExts.length; ei++) {
+              var file = nameVariants[ni] + photoExts[ei];
+              var subdir = photoSubdirs[si];
+              var candidate = subdir
+                ? path.join(photoRoots[ri], subdir, file)
+                : path.join(photoRoots[ri], file);
+              if (fs.existsSync(candidate)) {
+                photo = subdir ? (subdir + '/' + file) : file;
+                break outer;
+              }
+            }
+          }
         }
       }
     }
@@ -3943,6 +4024,19 @@ app.get('/api/ceo-ingest-status', (req, res) => {
     rejectedQueue: getRejectedQueueStats(),
     alerts: getAlertHealth(),
     cloudToday: getCloudRefreshHealth(),
+    // v1.2.31: surface the local CF_INGEST_SECRET fingerprint so the
+    // operator can compare it to the cloud's INGEST_SECRET (via
+    // `wrangler secret list`) without revealing the full secret. The
+    // 401 diagnostic is the #1 question operators ask when push auth
+    // silently breaks; this answer is "the local secret starts with
+    // X…Y and is N chars long" — enough to confirm a mismatch.
+    auth: {
+      cfIngestSecretSet: !!CF_SECRET,
+      cfIngestSecretLength: CF_SECRET.length,
+      cfIngestSecretFingerprint: CF_SECRET
+        ? CF_SECRET.slice(0, 3) + '…' + CF_SECRET.slice(-3)
+        : null,
+    },
   });
 });
 
@@ -4341,6 +4435,15 @@ server.listen(PORT, bindHost, () => {
   ensureCeoQueueDir();
   recoverCeoIngestQueue();
   syncCeoPendingCountFromDisk();
+  // v1.2.32: drop ghost ACTIVE_SESSIONS rows (empty emp_id or
+  // empty abaya_id + process) left over from older code paths before
+  // the socket payload guard was added. Idempotent and safe on every
+  // boot — the operator had been seeing these as the
+  // "Tailor (01) — no name, no item" rows on the live board.
+  const ghostsRemoved = dropGhostActiveSessions();
+  if (ghostsRemoved > 0) {
+    console.log(`[boot] dropped ${ghostsRemoved} ghost active session(s)`);
+  }
   void drainCeoIngestQueue();
   if (CF_URL && CF_SECRET) {
     setInterval(function () { void drainCeoIngestQueue(); }, CEO_INGEST_RETRY_MS);

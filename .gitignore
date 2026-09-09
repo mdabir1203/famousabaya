@@ -105,10 +105,35 @@ install/*.zip
 # Build output staging directories (electron-builder --prepackaged or alternate output)
 tools/desktop-launcher/build-out*/
 tools/desktop-launcher/build-prepacked*/
+tools/desktop-launcher/install-v1213-build/
 install-v127/
+install-v1210-build/
+
+# Stale intermediate build outputs left over from older dev cycles
+install/v1212-out*/
+install/v1211-build*/
+install/v1213-build*/
 
 # Local runtime state and generated database snapshots
 data/desktop-launcher/
 data/pm2-home/
 data/sqlite-snapshots/
 data/offline-dashboard-reports/
+data/lan-update-mirror/
+data/ceo-ingest-rejected.jsonl
+
+# Top-level release staging files
+/latest.yml
+/release-notes.md
+
+# One-off debug / scratch scripts (kept out of source control)
+extract-css.cjs
+generate-static.cjs
+patch-*.cjs
+verify-css.cjs
+test-socket.cjs
+test-socket.mjs
+test-sio-client.cjs
+test-sio-http.cjs
+
+.great_cto/

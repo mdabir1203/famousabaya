@@ -84,7 +84,22 @@ function ensurePm2CliPathOnDisk(initialPath) {
 cliPath = ensurePm2CliPathOnDisk(cliPath);
 
 const nodeArgs = [];
-if (fs.existsSync(pnpPath)) {
+// v1.2.32: PM2 was working in v1.2.27 but stopped showing after v1.2.30
+// because we were unconditionally preloading the project's .pnp.cjs into
+// the PM2 CLI process itself. The PM2 CLI is a standalone binary with
+// its own deps (in C:\Users\mabba\AppData\Local\nvm\<ver>\node_modules\pm2\
+// after `yarn unplug pm2` runs). Loading our .pnp.cjs makes Yarn PnP
+// claim ownership of PM2's own requires — `debug`, `@pm2/agent`, etc.
+// fail with "tried to access X, but it isn't declared in your
+// dependencies" and PM2 dies before it can spawn any process.
+//
+// The PnP preload IS still needed for the ABAYA-SERVER process that
+// PM2 will fork. That happens automatically via the NODE_OPTIONS
+// below (PM2 inherits env into its forks).
+//
+// So: only preload .pnp.cjs if cliPath is still inside Yarn's zipfs
+// (i.e. unplug failed and we have to run it from the virtual path).
+if (fs.existsSync(pnpPath) && isZipVirtualPath(cliPath)) {
   nodeArgs.push('-r', pnpPath);
 }
 nodeArgs.push(cliPath, ...userArgs);
