@@ -41,19 +41,6 @@ const COMMON_RESTART = {
   watch: false,
 };
 
-/**
- * Pick the yarn-pnp loader when the project uses PnP; otherwise plain node.
- *
- * This repo is PnP (`nodeLinker: pnp`), so the root has `.pnp.cjs` and no real
- * `node_modules`. Launching `node server.js` without `-r ./.pnp.cjs` fails with
- * `Cannot find module 'dotenv'` and PM2 crash-loops. Note a stray
- * `node_modules/.cache` can exist without any dependencies, so presence of the
- * directory is NOT a reliable signal — key off `.pnp.cjs`.
- */
-function resolveNodeArgs() {
-  return fs.existsSync(path.join(ROOT, '.pnp.cjs')) ? ['-r', './.pnp.cjs'] : [];
-}
-
 function logPath(name) {
   return {
     out_file: path.join(LOG_DIR, `${name}.out.log`),
@@ -67,9 +54,24 @@ const factoryServer = Object.assign(
   {
     name: 'abaya-server',
     cwd: ROOT,
-    script: 'server.js',
+    // v1.2.33: launch via a plain-Node wrapper instead of `-r ./.pnp.cjs`
+    // directly. PM2 wraps every fork-mode app in its own
+    // ProcessContainerFork.js, which `require('pm2-io-bpm')` at startup.
+    // With `-r ./.pnp.cjs` in the same process, PnP rejects pm2's own
+    // internal deps (debug, etc.) with "isn't declared in your
+    // dependencies" before our server.js ever loads. The wrapper script
+    // is plain Node (NO PnP) — PM2's wrapper can safely require
+    // pm2-io-bpm. The wrapper then spawns the real server.js with
+    // `-r ./.pnp.cjs` in a CHILD process, where PnP applies only to
+    // the factory code. See install/pm2-abaya-wrapper.js.
+    //
+    // We use `interpreter: 'node'` (no interpreter_args, no node_args)
+    // so PM2 launches `node <pm2-wrapper> install/pm2-abaya-wrapper.js`
+    // cleanly. The pm2 wrapper does its own require('pm2-io-bpm') first,
+    // then requires our wrapper.js, which is plain Node and has no
+    // PnP-aware deps to load.
+    script: 'install\\pm2-abaya-wrapper.js',
     interpreter: 'node',
-    interpreter_args: resolveNodeArgs(),
     env: {
       NODE_ENV: 'production',
       PM2_MANAGED: '1',
@@ -146,15 +148,17 @@ const watcherDir = path.join(ROOT, 'tools', 'catalog-watcher');
 const watcherCfg = path.join(watcherDir, 'config.json');
 const watcherEntry = path.join(watcherDir, 'watch-catalog.js');
 if (fs.existsSync(watcherCfg) && fs.existsSync(watcherEntry) && process.env.PM2_DISABLE_WATCHER !== '1') {
-  const watcherPnp = path.join(watcherDir, '.pnp.cjs');
+  // v1.2.33: same plain-Node wrapper pattern as the factory server.
+  // See the long block comment above the factoryServer app for the
+  // full PnP-vs-PM2-wrapper rationale. The wrapper script lives in
+  // install/ and cd's into the watcher dir before spawning.
   apps.push(
     Object.assign(
       {
         name: 'catalog-watcher',
         cwd: watcherDir,
-        script: 'watch-catalog.js',
+        script: '..\\..\\install\\pm2-catalog-watcher-wrapper.js',
         interpreter: 'node',
-        interpreter_args: fs.existsSync(watcherPnp) ? ['-r', './.pnp.cjs'] : [],
         env: { NODE_ENV: 'production', PM2_MANAGED: '1' },
       },
       COMMON_RESTART,

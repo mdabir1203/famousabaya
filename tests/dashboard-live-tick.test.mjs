@@ -298,3 +298,179 @@ test('public/dashboard.js parses cleanly', () => {
     assert.fail('public/dashboard.js failed node --check: ' + msg);
   }
 });
+
+test('ceo-pages.js: every regex/replacement inside the getCEODashboard template literal escapes backslashes correctly', () => {
+  // v1.2.33: getCEODashboard() returns a giant template literal spanning
+  // lines 108..4505 of ceo-pages.js. ANY regex literal or string
+  // replacement INSIDE that template literal must have its backslashes
+  // DOUBLED, because the template-literal parser eats `\\` -> `\` on the
+  // way out. v1.2.32 introduced cssEscapeAttr() (line 1620) inside the
+  // template-literal scope as part of the 1Hz tick refactor and wrote
+  // `/\\/g` (single-backslash escape in source), which the template
+  // literal collapsed to `/\/g` in the rendered HTML — a regex literal
+  // that the browser's JS parser rejected with "Invalid regular
+  // expression: /\/g, '\\').replace(/: Unmatched ')'" on every /ceo
+  // page load. The Worker bundle parsed fine (so /api/state kept
+  // returning JSON), but the inline script in /ceo was unparseable.
+  //
+  // This test scans the template-literal body for every regex literal
+  // and verifies that the template-literal collapse doesn't break it.
+  // We do that by simulating the template-literal collapse ourselves
+  // (replace every \\ with \ EXCEPT \\ that the JS source would
+  // actually emit) and re-checking each regex is still well-formed.
+  //
+  // The collapse model is intentionally simple: any backslash in the
+  // template body that isn't itself escaped (\\), and isn't part of an
+  // intentional template escape (\`, \$, \\), will be preserved
+  // verbatim by the template literal. For our purposes we just need to
+  // know "if the source contains N backslashes inside a regex literal,
+  // will the rendered regex still be a valid regex?" — the answer is
+  // yes iff the source N is even (each pair collapses to one in output,
+  // which the JS regex parser still accepts).
+  const CEO_PAGES_JS = path.join(__dirname, '..', 'cloudflare', 'src', 'ui', 'ceo-pages.js');
+  const ceoSrc = fs.readFileSync(CEO_PAGES_JS, 'utf8');
+  const lines = ceoSrc.split('\n');
+
+  // Find the bounds of the getCEODashboard() template literal. We
+  // scan for the opening "return `<!DOCTYPE html>" and the matching
+  // closing "`);" at column 0.
+  let tplStart = -1;
+  let tplEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (tplStart < 0 && /^\s*return `<!DOCTYPE html>/.test(lines[i])) {
+      tplStart = i;
+    } else if (tplStart >= 0 && /^\s*`\);\s*$/.test(lines[i])) {
+      tplEnd = i;
+      break;
+    }
+  }
+  assert.notEqual(tplStart, -1, 'could not locate getCEODashboard() opening backtick');
+  assert.notEqual(tplEnd, -1, 'could not locate getCEODashboard() closing backtick');
+  assert.ok(tplEnd > tplStart, 'getCEODashboard template literal is empty?');
+
+  // Pull out each regex literal between tplStart and tplEnd and
+  // verify the backslashes inside it are doubled (so that after the
+  // template-literal collapse, the regex is still valid JS).
+  //
+  // Regex-literal matcher: /pattern/flags. We approximate the regex
+  // pattern with a non-greedy class that matches anything except /
+  // or newlines, plus escaped chars. This won't perfectly identify
+  // every regex in the file (some regexes contain / via \/, others
+  // span lines) but it will catch the common case AND it will
+  // false-positive on comment / string text. To make it precise, we
+  // skip any line that starts with `//` (single-line comment) and
+  // track open/close of /* */ block comments so we don't catch
+  // regex-shaped text inside JSDoc.
+  const regexLiterals = [];
+  const regexRe = /\/((?:[^\/\n\\]|\\.)+)\/([gimsuy]*)/g;
+  let inBlockComment = false;
+  for (let i = tplStart; i <= tplEnd; i++) {
+    const line = lines[i];
+    // Skip pure comment lines and lines inside /* */ block comments.
+    if (inBlockComment) {
+      if (/\*\//.test(line)) inBlockComment = false;
+      continue;
+    }
+    if (/^\s*\/\//.test(line)) continue;
+    if (/^\s*\/\*/.test(line) && !/\*\//.test(line)) { inBlockComment = true; continue; }
+    if (/^\s*\/\*/.test(line) && /\*\//.test(line)) continue;
+
+    let m;
+    regexRe.lastIndex = 0;
+    while ((m = regexRe.exec(line)) !== null) {
+      // Skip false positives: text that is clearly prose. Heuristic:
+      //   - regex is preceded by `://` (HTML/JS URL)
+      //   - regex contains spaces, < or > (HTML markers)
+      //   - regex body is preceded by a quote on the same line (could
+      //     be a string literal that happens to look regex-ish, e.g.
+      //     inside a CSS string)
+      const before = line.slice(0, m.index);
+      if (/:\/\//.test(before.slice(-10))) continue;
+      if (/[\s<>]/.test(m[1])) continue;
+      regexLiterals.push({
+        line: i + 1,
+        pattern: m[1],
+        flags: m[2],
+        fullMatch: m[0],
+      });
+    }
+  }
+
+  // For each regex literal, count the backslashes in the pattern.
+  // After the template-literal collapse, every backslash in the
+  // output corresponds to TWO backslashes in the source. So if the
+  // source pattern has an ODD number of "ordinary" backslashes
+  // (i.e. backslashes that are NOT part of a \`-style backtick
+  // escape), the output pattern is malformed.
+  //
+  // The v1.2.32 cssEscapeAttr() bug had source pattern `\\` (one
+  // backslash) — the template literal collapsed that to `\` in
+  // output and the regex became `/\/g` (invalid). The v1.2.32
+  // escWA() fix on line 1225 uses `\`` to escape a backtick
+  // inside the template literal; that single backslash is a
+  // template-literal escape, NOT a regex-backslash-escape, so it
+  // is correct as-is and should NOT be flagged.
+  const offenders = [];
+  for (const rl of regexLiterals) {
+    // Count backslashes in the pattern that are NOT part of a `\``
+    // (backtick escape). Strip `\`` pairs first, then count what's
+    // left. What's left must be an EVEN count (each pair collapses
+    // to one backslash in the output, which the JS regex parser
+    // can handle).
+    const withoutBacktickEscapes = rl.pattern.replace(/\\`/g, '');
+    const bs = (withoutBacktickEscapes.match(/\\/g) || []).length;
+    if (bs % 2 !== 0) {
+      offenders.push({
+        line: rl.line,
+        pattern: rl.pattern,
+        sourceBackslashes: bs,
+        fullMatch: rl.fullMatch,
+      });
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    'ceo-pages.js: every regex literal inside the getCEODashboard template literal must have an EVEN number of backslashes in the source (so the template-literal collapse produces a valid regex in the rendered HTML). Offenders: ' +
+      JSON.stringify(offenders, null, 2)
+  );
+
+  // Bonus check: verify cssEscapeAttr() works correctly after the template
+  // collapse. Render the dashboard, find the function in the rendered
+  // HTML, eval it, and assert its behavior matches the original
+  // intended semantics: backslashes doubled, double-quotes backslash-
+  // escaped. See the next test below for the full execution.
+});
+
+test('ceo-pages.js: rendered cssEscapeAttr() correctly escapes backslashes and quotes', () => {
+  // v1.2.33: render the dashboard, locate the cssEscapeAttr() function
+  // inside the inline script, execute it, and verify it produces the
+  // expected escape output. This is the EXACT function the cloud
+  // dashboard's tickLiveSessions() calls on every 1Hz tick to build a
+  // CSS attribute selector — if it returns garbage, the row.querySelector
+  // returns null, the tick silently no-ops on every active session, and
+  // the operator sees the same :00-second frozen counter as v1.2.31.
+  const CEO_PAGES_JS = path.join(__dirname, '..', 'cloudflare', 'src', 'ui', 'ceo-pages.js');
+  return import('../cloudflare/src/ui/ceo-pages.js').then((m) => {
+    const html = m.getCEODashboard('http://localhost');
+    const lines = html.split('\n');
+    let fnStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/^function cssEscapeAttr\(s\) \{$/.test(lines[i])) {
+        fnStart = i;
+        break;
+      }
+    }
+    assert.notEqual(fnStart, -1, 'cssEscapeAttr() must be present in the rendered /ceo HTML');
+    const fnText = lines.slice(fnStart, fnStart + 3).join('\n');
+    // Eval the function in a sandbox and verify behavior.
+    const factory = new Function(fnText + '\nreturn cssEscapeAttr;');
+    const fn = factory();
+    assert.equal(fn('e_bc_00001'), 'e_bc_00001', 'plain emp_id is unchanged');
+    assert.equal(fn('a\\b'), 'a\\\\b', 'each backslash is doubled');
+    assert.equal(fn('a"b'), 'a\\"b', 'double-quote is escaped with a single backslash');
+    assert.equal(fn('a\\"b'), 'a\\\\\\"b', 'both backslashes AND double-quotes are escaped');
+    assert.equal(fn(''), '', 'empty string passes through');
+    assert.equal(fn(null), 'null', 'null becomes the string "null" (mirrors String(null))');
+  });
+});

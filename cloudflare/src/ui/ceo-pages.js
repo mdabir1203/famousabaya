@@ -1617,8 +1617,19 @@ function tickLiveSessions() {
 // CSS attribute-selector escape: the emp_id is already constrained to
 // the e_bc_<digits> form by the AGENTS.md contract, but attribute
 // selectors still need quotes-and-double-quote escape for the value.
+//
+// v1.2.33: every backslash here is DOUBLED because this function lives
+// INSIDE the getCEODashboard() template literal (lines 108..4505). The
+// template-literal parser eats a doubled backslash and turns it into a
+// single one in the rendered output, so a regex written as /\\/g in
+// this source becomes /\/g in the rendered HTML — an invalid regex
+// that breaks the whole /ceo page on first parse. This bug shipped in
+// v1.2.32 (the 1Hz tick work moved cssEscapeAttr into the
+// template-literal scope as part of the live-cells refactor). Pattern
+// mirrors escWA() above: any regex/replacement inside this template
+// literal must have its backslashes doubled.
 function cssEscapeAttr(s) {
-  return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return String(s).replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
 }
 
 /** Show a non-blocking error banner at the top of the body so render failures

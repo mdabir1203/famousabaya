@@ -1,11 +1,28 @@
 'use strict';
 /**
- * Run project-bundled PM2 CLI (works with Yarn PnP — no global pm2 required).
+ * Run the GLOBAL pm2 CLI against this project's ecosystem.
+ *
+ * Why global, not the project's pm2: the project uses Yarn 4 PnP, so the
+ * project's `pm2` is "unplugged" into .yarn/unplugged/. Loading it via the
+ * project's .pnp.cjs makes Yarn PnP claim ownership of pm2's own deps
+ * (debug, pm2-io-bpm, etc. that live in the global nvm dir) and the Daemon
+ * child crashes with "isn't declared in your dependencies" before it can
+ * fork anything. That was the 2026-09-09 PM2 regression: v1.2.27 worked
+ * because pm2 was globally installed and resolveable on PATH, v1.2.30
+ * started using the project's unplugged pm2 via PnP and broke.
+ *
+ * v1.2.33: the abaya-server uses the new plain-Node wrapper
+ * install/pm2-abaya-wrapper.js (PnP only in the spawned child) instead
+ * of `interpreter_args: ['-r', './.pnp.cjs']` — the PnP-vs-PM2-wrapper
+ * race is gone, so PM2 itself is no longer PnP-loaded. But we still
+ * strip NODE_OPTIONS here as a belt-and-braces guard in case someone
+ * launches run-pm2.cjs via `node -r ./.pnp.cjs install/run-pm2.cjs ...`.
+ * Only PM2 itself bypasses PnP.
+ *
  * Usage: node [-r ./.pnp.cjs] install/run-pm2.cjs <pm2-args...>
  */
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
@@ -27,82 +44,47 @@ if (!userArgs.length) {
   process.exit(1);
 }
 
-let cliPath;
-try {
-  cliPath = require.resolve('pm2/lib/binaries/CLI.js');
-} catch (e) {
-  console.error('[pm2] Package not found. Run install\\INSTALL.bat or: yarn install');
-  console.error(String(e && e.message ? e.message : e));
+// Resolve the GLOBAL pm2 CLI (not the project's unplugged copy).
+let cliPath = null;
+const globalPm2Candidates = [
+  // From the npm_node_execpath env var (Windows convention: the dir
+  // holding node.exe is what `npm bin -g` reports).
+  () => {
+    const execpath = process.env.npm_node_execpath || process.env.NVM_BIN;
+    if (!execpath) return null;
+    const cliJs = path.join(path.dirname(execpath), 'node_modules', 'pm2', 'lib', 'binaries', 'CLI.js');
+    return fs.existsSync(cliJs) ? cliJs : null;
+  },
+  // From NVM_HOME + NODE_VERSION.
+  () => {
+    const home = process.env.NVM_HOME || process.env.NVM_DIR;
+    if (!home) return null;
+    const nodeVer = process.env.NODE_VERSION;
+    if (!nodeVer) return null;
+    const cliJs = path.join(home, 'v' + nodeVer, 'node_modules', 'pm2', 'lib', 'binaries', 'CLI.js');
+    return fs.existsSync(cliJs) ? cliJs : null;
+  },
+  // From the running node's own location (works for any install, including
+  // choco/scoop/winget and manual installs).
+  () => {
+    const dir = path.dirname(process.execPath);
+    const cliJs = path.join(dir, 'node_modules', 'pm2', 'lib', 'binaries', 'CLI.js');
+    return fs.existsSync(cliJs) ? cliJs : null;
+  },
+];
+for (const candidate of globalPm2Candidates) {
+  try {
+    const found = candidate();
+    if (found) { cliPath = found; break; }
+  } catch (_) { /* try next */ }
+}
+if (!cliPath) {
+  console.error('[pm2] Global pm2 not found. Tried NVM_BIN, NVM_HOME+NODE_VERSION, and process.execPath siblings.');
+  console.error('[pm2] Install pm2 globally: npm install -g pm2');
   process.exit(1);
 }
 
-function isZipVirtualPath(p) {
-  const s = String(p || '');
-  return s.includes('.zip\\') || s.includes('.zip/');
-}
-
-/**
- * PM2 daemon is spawned by plain Node and cannot execute a main script inside
- * Yarn zipfs virtual paths. Ensure PM2 is unplugged to a real on-disk path.
- */
-function ensurePm2CliPathOnDisk(initialPath) {
-  if (!isZipVirtualPath(initialPath)) return initialPath;
-  const runners = [
-    { cmd: 'corepack', args: ['yarn', 'unplug', 'pm2'] },
-    { cmd: 'yarn', args: ['unplug', 'pm2'] },
-  ];
-  let unplugged = false;
-  for (const r of runners) {
-    const rr = spawnSync(r.cmd, r.args, {
-      cwd: root,
-      env: process.env,
-      encoding: 'utf8',
-      stdio: 'pipe',
-      shell: true,
-      windowsHide: true,
-    });
-    if (!rr.error && rr.status === 0) {
-      unplugged = true;
-      break;
-    }
-  }
-  try {
-    cliPath = require.resolve('pm2/lib/binaries/CLI.js');
-  } catch (_) {
-    cliPath = initialPath;
-  }
-  if (isZipVirtualPath(cliPath)) {
-    if (unplugged) {
-      console.error('[pm2] PM2 still resolves to Yarn zipfs path after unplug.');
-    }
-    console.error('[pm2] Run `yarn unplug pm2` and retry.');
-    process.exit(1);
-  }
-  return cliPath;
-}
-
-cliPath = ensurePm2CliPathOnDisk(cliPath);
-
-const nodeArgs = [];
-// v1.2.32: PM2 was working in v1.2.27 but stopped showing after v1.2.30
-// because we were unconditionally preloading the project's .pnp.cjs into
-// the PM2 CLI process itself. The PM2 CLI is a standalone binary with
-// its own deps (in C:\Users\mabba\AppData\Local\nvm\<ver>\node_modules\pm2\
-// after `yarn unplug pm2` runs). Loading our .pnp.cjs makes Yarn PnP
-// claim ownership of PM2's own requires — `debug`, `@pm2/agent`, etc.
-// fail with "tried to access X, but it isn't declared in your
-// dependencies" and PM2 dies before it can spawn any process.
-//
-// The PnP preload IS still needed for the ABAYA-SERVER process that
-// PM2 will fork. That happens automatically via the NODE_OPTIONS
-// below (PM2 inherits env into its forks).
-//
-// So: only preload .pnp.cjs if cliPath is still inside Yarn's zipfs
-// (i.e. unplug failed and we have to run it from the virtual path).
-if (fs.existsSync(pnpPath) && isZipVirtualPath(cliPath)) {
-  nodeArgs.push('-r', pnpPath);
-}
-nodeArgs.push(cliPath, ...userArgs);
+const nodeArgs = [cliPath, ...userArgs];
 
 const portableNodeDir = path.join(root, '.bin', 'node-v20.12.2-win-x64');
 const pm2Home = path.join(root, 'data', 'pm2-home');
@@ -110,17 +92,17 @@ try {
   fs.mkdirSync(pm2Home, { recursive: true });
 } catch (_) {}
 
+// Strip Yarn PnP from NODE_OPTIONS before passing to PM2's CLI. PM2 is a
+// standalone binary whose own deps live next to its own CLI.js (in the
+// global nvm dir); the project's PnP loader must not be inherited by the
+// PM2 Daemon or it will try to claim ownership of those deps and crash.
+// The abaya-server still gets PnP via `interpreter_args` in
+// ecosystem.config.cjs.
 const env = Object.assign({}, process.env, { PM2_HOME: pm2Home });
 if (process.platform === 'win32' && fs.existsSync(path.join(portableNodeDir, 'node.exe'))) {
   env.PATH = portableNodeDir + path.delimiter + (env.PATH || '');
 }
-if (fs.existsSync(pnpPath)) {
-  const existingNodeOpts = String(env.NODE_OPTIONS || '').trim();
-  const preloadOpt = '-r ' + pnpPath.replace(/\\/g, '/');
-  if (!existingNodeOpts.includes(pnpPath)) {
-    env.NODE_OPTIONS = existingNodeOpts ? (existingNodeOpts + ' ' + preloadOpt) : preloadOpt;
-  }
-}
+delete env.NODE_OPTIONS;
 
 const pipeMode = process.env.PM2_RUNNER_PIPE === '1';
 const result = spawnSync(process.execPath, nodeArgs, {
