@@ -1202,12 +1202,65 @@ function computeActiveTodaySec(startedMs, serverNowMs, serverNowSec, tz, todayYm
   return computeInShiftSec(Math.floor(effStartMs / 1000), serverNowSec);
 }
 
-// ─── 1Hz LIVE TICK (v1.2.30) ─────────────────────────────────────────────────
+// ─── PER-SESSION BASE CACHE (v1.2.32) ─────────────────────────────────────────
+// Snapshot of the in-shift elapsed from session start to STATE arrival,
+// keyed by STATE.generated_at + the sorted list of active emp_ids. The
+// tickLiveSessions() 1Hz function reads from this cache and adds the
+// raw elapsed since STATE.generated_at (capped at +30s) so the displayed
+// "active today" and "this build" counters tick every second even
+// though the underlying in-shift walks use 60s/600s/3600s steps. Without
+// this base, the per-second tick would either need to re-walk every
+// second (expensive for multi-hour sessions) or display values that
+// snap to minute boundaries and never change visibly between minutes.
+var _liveBaseCache = { key: '', activeTodayByEmpId: {}, thisBuildByEmpId: {} };
+function computeLiveBaseCache() {
+  const snapshotMs = Number(STATE.generated_at) || 0;
+  const active = STATE.active || {};
+  const ids = Object.keys(active).sort();
+  const key = String(snapshotMs) + '::' + String(ids.join('|'));
+  if (_liveBaseCache.key === key) return _liveBaseCache;
+  const tz = whTimezone();
+  const todayYmd = ymdInTimezone(snapshotMs || Date.now(), tz);
+  const todayYmdForBuild = ymdInTimezone(snapshotMs || Date.now(), tz);
+  const serverNowMs = snapshotMs > 0 ? snapshotMs : Date.now();
+  const serverNowSec = Math.floor(serverNowMs / 1000);
+  const activeTodayByEmpId = {};
+  const thisBuildByEmpId = {};
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const sess = active[id];
+    if (!sess) continue;
+    const startedMs = Number(sess.started_at) || 0;
+    const startedAtSec = Math.floor(startedMs / 1000);
+    if (!startedAtSec) continue;
+    // "active today" base — in-shift elapsed from session start (or
+    // today 00:00 for cross-day) up to the STATE snapshot.
+    activeTodayByEmpId[id] = computeActiveTodaySec(
+      startedMs, serverNowMs, serverNowSec, tz, todayYmd
+    );
+    // "this build" base — in-shift elapsed from session start up to
+    // the STATE snapshot. Same walk as the "active today" cell
+    // except no cross-day clamp (the build total spans the whole
+    // session, not just today).
+    thisBuildByEmpId[id] = computeInShiftSec(startedAtSec, serverNowSec);
+  }
+  _liveBaseCache = { key, activeTodayByEmpId, thisBuildByEmpId };
+  return _liveBaseCache;
+}
+
+// ─── 1Hz LIVE TICK (v1.2.30, refined v1.2.32) ─────────────────────────────────
 // Walks the live session rows and updates ONLY the elapsed-time cells
 // (data-tick="active-today" and data-tick="build") via targeted
 // textContent writes. Replaces the previous 2.5s full-innerHTML rebuild,
 // so the live counter visibly advances every second without the
 // browser re-parsing 100% of the row markup on every tick.
+//
+// v1.2.32: use base+live formula. The base (per-session in-shift elapsed
+// at STATE arrival) is computed once per state_update and memoized in
+// computeLiveBaseCache(); the live contribution is min(30, elapsed
+// since snapshot) if currently in shift. Same shape as the cloud's
+// ceo-pages.js#computeThisBuildBaseCache so the two dashboards show
+// the same number for the same session.
 //
 // Runs at 1Hz via setInterval(tickLiveSessions, 1000) at the bottom of
 // this file. renderLiveSessions() still runs on every state_update to
@@ -1227,29 +1280,38 @@ function tickLiveSessions() {
   // ceo-pages.js#computeActiveTimingCache.
   const browserMs = Date.now();
   const snapshotMs = Number(STATE.generated_at) || 0;
-  const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
-  const serverNowMs = snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs;
-  const serverNowSec = Math.floor(serverNowMs / 1000);
-  const tz = whTimezone();
-  const todayYmd = ymdInTimezone(serverNowMs, tz);
+  const elapsedSinceSec = snapshotMs > 0
+    ? Math.max(0, Math.min(30, Math.floor((browserMs - snapshotMs) / 1000)))
+    : 0;
+  const inShiftNow = inWindowClient(Math.floor(browserMs / 1000));
+  const live = inShiftNow ? elapsedSinceSec : 0;
+  const base = computeLiveBaseCache();
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     const sess = active[id];
     if (!sess) continue;
-    const startedMs = Number(sess.started_at) || browserMs;
-    const startedAtSec = Math.floor(startedMs / 1000);
-    if (serverNowSec <= startedAtSec) continue;
-    const activeTodaySec = computeActiveTodaySec(startedMs, serverNowMs, serverNowSec, tz, todayYmd);
-    const inShiftSec = computeInShiftSec(startedAtSec, serverNowSec);
+    const activeTodayBase = Math.floor(Number(base.activeTodayByEmpId[id]) || 0);
+    const buildBase = Math.floor(Number(base.thisBuildByEmpId[id]) || 0);
+    const activeTodaySec = activeTodayBase + live;
+    const buildSec = buildBase + live;
     // Targeted textContent writes. CSS attribute selector avoids a
     // getElementById per row and works in any browser back to IE10.
     const activeTodayCell = el.querySelector('[data-tick="active-today"][data-emp-id="' + cssEscapeAttr(id) + '"]');
-    if (activeTodayCell && activeTodayCell.textContent !== fmtHMS(activeTodaySec)) {
-      activeTodayCell.textContent = fmtHMS(activeTodaySec);
+    if (activeTodayCell) {
+      const txt = fmtHMS(activeTodaySec);
+      if (activeTodayCell.textContent !== txt) activeTodayCell.textContent = txt;
     }
     const buildCell = el.querySelector('[data-tick="build"][data-emp-id="' + cssEscapeAttr(id) + '"]');
-    if (buildCell && buildCell.textContent !== fmtHMS(inShiftSec)) {
-      buildCell.textContent = fmtHMS(inShiftSec);
+    if (buildCell) {
+      const txt = fmtHMS(buildSec);
+      // Preserve any "Custom" pill appended inside the cell by the
+      // initial render. The pill is "<space><span ...>Custom</span>"
+      // so textContent shows e.g. "1h 5m 22s Custom". We rewrite the
+      // textContent with `txt + pillSuffix` so the pill stays put.
+      const current = buildCell.textContent || '';
+      const suffix = current.length > txt.length ? current.slice(txt.length) : '';
+      const desired = txt + suffix;
+      if (current !== desired) buildCell.textContent = desired;
     }
   }
 }

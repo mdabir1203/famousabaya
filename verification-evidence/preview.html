@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AbaYa Track — Live Active Session Preview (v1.2.32)</title>
+<style>
+  body { background: #1f1633; color: #fff; font-family: 'Sora', 'Rubik', sans-serif; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 8px; letter-spacing: -0.3px; }
+  .sub { font-size: 12px; color: rgba(255,255,255,0.65); margin-bottom: 16px; }
+  .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(54,45,89,0.5); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
+  .title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: rgba(255,255,255,0.55); margin-bottom: 8px; font-weight: 700; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid rgba(54,45,89,0.35); }
+  .row:last-child { border-bottom: 0; }
+  .emp { display: flex; gap: 10px; align-items: center; }
+  .av { width: 30px; height: 30px; border-radius: 50%; background: #6a5fc1; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; }
+  .emp-name { font-size: 13px; font-weight: 600; }
+  .emp-meta { font-size: 10px; color: rgba(255,255,255,0.55); margin-top: 2px; }
+  .nums { text-align: right; }
+  .today { font-size: 18px; font-weight: 700; color: #4ade80; font-variant-numeric: tabular-nums; }
+  .build { font-size: 14px; font-weight: 700; color: #fbbf24; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .small { font-size: 9px; color: rgba(255,255,255,0.55); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; margin-top: 2px; }
+  .pill { display: inline-block; margin-left: 6px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #c4b5fd; background: rgba(124,58,237,0.18); border: 1px solid rgba(167,139,250,0.4); border-radius: 8px; padding: 1px 6px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<h1>Live Active Sessions — v1.2.32 preview</h1>
+<div class="sub">Counter is updated every 1 s by <code>tickLiveSessions()</code>. Base = in-shift elapsed at STATE arrival; live = <code>min(30, browserMs − STATE.ts)</code> if currently in shift.</div>
+
+<div id="live-sessions">
+  <div data-emp-id="e_bc_00000141" class="row" style="display:flex;align-items:center;gap:10px;">
+    <div class="emp">
+      <div class="av">FA</div>
+      <div>
+        <div class="emp-name">Farhan <span style="font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#fcd34d;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:1px 6px;margin-left:6px">Outside shift</span></div>
+        <div class="emp-meta">EMP129 · Hand Work · FWAP 3852 PRE-O</div>
+        <div class="emp-meta">Started Sat 02:17:38</div>
+      </div>
+    </div>
+    <div class="nums">
+      <div class="today" data-tick="active-today" data-emp-id="e_bc_00000141">22h 0m 52s</div>
+      <div class="small">active today · Hand Work</div>
+      <div class="build" data-tick="build" data-emp-id="e_bc_00000141">131h 52m 4s</div>
+      <div class="small">this build</div>
+    </div>
+  </div>
+
+  <div data-emp-id="e_bc_00000144" class="row" style="display:flex;align-items:center;gap:10px;">
+    <div class="emp">
+      <div class="av">MO</div>
+      <div>
+        <div class="emp-name">Mouthirahman</div>
+        <div class="emp-meta">EMP125 · Hand Work · CF111 STD-O</div>
+        <div class="emp-meta">Started Sat 10:29:26</div>
+      </div>
+    </div>
+    <div class="nums">
+      <div class="today" data-tick="active-today" data-emp-id="e_bc_00000144">17h 52m 51s</div>
+      <div class="small">active today · Hand Work</div>
+      <div class="build" data-tick="build" data-emp-id="e_bc_00000144">60h 11m 55s <span class="pill" title="is_custom=1 in abaya_catalog">Custom</span></div>
+      <div class="small">this build</div>
+    </div>
+  </div>
+
+  <div data-emp-id="e_bc_00000152" class="row" style="display:flex;align-items:center;gap:10px;">
+    <div class="emp">
+      <div class="av">WA</div>
+      <div>
+        <div class="emp-name">Wasim</div>
+        <div class="emp-meta">EMP132 · Hand Work · CF111 STD-O</div>
+        <div class="emp-meta">Started Sat 15:20:21</div>
+      </div>
+    </div>
+    <div class="nums">
+      <div class="today" data-tick="active-today" data-emp-id="e_bc_00000152">18h 31m 33s</div>
+      <div class="small">active today · Hand Work</div>
+      <div class="build" data-tick="build" data-emp-id="e_bc_00000152">60h 11m 55s <span class="pill">Custom</span></div>
+      <div class="small">this build</div>
+    </div>
+  </div>
+
+  <div data-emp-id="e_bc_00000154" class="row" style="display:flex;align-items:center;gap:10px;">
+    <div class="emp">
+      <div class="av">RA</div>
+      <div>
+        <div class="emp-name">Raees</div>
+        <div class="emp-meta">EMP134 · Hand Work · CF111 STD-O</div>
+        <div class="emp-meta">Started Sat 21:02:46</div>
+      </div>
+    </div>
+    <div class="nums">
+      <div class="today" data-tick="active-today" data-emp-id="e_bc_00000154">19h 03m 47s</div>
+      <div class="small">active today · Hand Work</div>
+      <div class="build" data-tick="build" data-emp-id="e_bc_00000154">60h 11m 55s <span class="pill">Custom</span></div>
+      <div class="small">this build</div>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:18px">
+  <div class="title">Behavior (v1.2.32)</div>
+  <div style="font-size:11.5px;line-height:1.6">
+    <b>active today</b>: <code>windowed_elapsed_sec</code> (per-employee, from <code>STATE.active[id].windowed_elapsed_sec</code> recomputed by the Worker at read time) + <code>min(30, (browserMs − STATE.ts) / 1000)</code> when currently in shift. Tick fires every 1 s via <code>setInterval(tickLiveSessions, 1000)</code>; cell text is updated via <code>textContent</code> on the existing <code>[data-tick="active-today"]</code> element.<br><br>
+    <b>this build</b>: per-session in-shift walk (<code>startedAtSec → STATE.ts</code>) computed once per STATE arrival and memoized in <code>computeThisBuildBaseCache()</code>; same <code>+ min(30, …)</code> live contribution. Replaces the v1.2.19 minute-by-minute walk that only changed text on minute boundaries.
+  </div>
+</div>
+
+<script>
+// Standalone preview tick: bumps the "live contribution" by 1s every
+// second on top of the per-session base values baked into the markup.
+// Same base+live formula as the real offline dashboard's
+// tickLiveSessions() — just hard-coded base values because this is a
+// static preview (the real one would read them from STATE.active).
+const bases = {
+  'e_bc_00000141': { active: 22 * 3600 + 0 * 60 + 52, build: 131 * 3600 + 52 * 60 + 4 },
+  'e_bc_00000144': { active: 17 * 3600 + 52 * 60 + 51, build: 60 * 3600 + 11 * 60 + 55 },
+  'e_bc_00000152': { active: 18 * 3600 + 31 * 60 + 33, build: 60 * 3600 + 11 * 60 + 55 },
+  'e_bc_00000154': { active: 19 * 3600 + 3 * 60 + 47, build: 60 * 3600 + 11 * 60 + 55 },
+};
+const inShift = {
+  'e_bc_00000141': false, // Farhan is "Outside shift" right now
+  'e_bc_00000144': true,
+  'e_bc_00000152': true,
+  'e_bc_00000154': true,
+};
+
+function fmtHMS(sec) {
+  const n = Math.floor(Number(sec) || 0);
+  if (n < 1) return '0s';
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  const s = n % 60;
+  if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+let tickCount = 0;
+setInterval(function () {
+  tickCount = (tickCount + 1) % 30; // mirror the +30s live cap
+  Object.keys(bases).forEach(function (id) {
+    const live = inShift[id] ? tickCount : 0;
+    const todayCell = document.querySelector('[data-tick="active-today"][data-emp-id="' + id + '"]');
+    const buildCell = document.querySelector('[data-tick="build"][data-emp-id="' + id + '"]');
+    if (todayCell) todayCell.textContent = fmtHMS(bases[id].active + live);
+    if (buildCell) {
+      // Preserve the trailing "Custom" pill span
+      const txt = fmtHMS(bases[id].build + live);
+      const cur = buildCell.textContent || '';
+      const suf = cur.length > txt.length ? cur.slice(txt.length) : '';
+      buildCell.textContent = txt + suf;
+    }
+  });
+}, 1000);
+</script>
+</body>
+</html>

@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_JS = path.join(__dirname, '..', 'public', 'dashboard.js');
@@ -173,4 +174,127 @@ test('dashboard.js renderLiveSessions tags the elapsed cells with data-tick', ()
     /data-tick="build"[^>]*data-emp-id="/.test(SRC) ||
     /data-emp-id="[^"]*"[^>]*data-tick="build"/.test(SRC);
   assert.ok(buildOk, 'build cell must also carry data-emp-id for per-worker lookup');
+});
+
+// v1.2.32 — both "active today" and "this build" cells must tick
+// every second. Before this fix, the cloud's "this build" cell used a
+// minute-by-minute walk that only changed the displayed text when
+// crossing a minute boundary, and the offline's tickLiveSessions()
+// re-ran the same walk every second (same snapping). The fix is the
+// base+live formula: base = in-shift seconds at STATE arrival, live =
+// min(30, browserMs - snapshotMs) if currently in shift. So a session
+// that's been in shift for 60 minutes, 5 seconds, shows "1h 0m 5s"
+// not "1h 0m 0s". The two attributes above are how the tick function
+// finds the cells; the formula below is what it writes.
+test('dashboard.js tickLiveSessions uses base+live formula (ticks every second)', () => {
+  // The tick must add elapsed-since-snapshot to the per-session base,
+  // not re-walk minute-by-minute on every tick. Source-level guard:
+  //   1. computeLiveBaseCache() exists and is memoized on the snapshot
+  //      timestamp + the sorted active-id list.
+  //   2. tickLiveSessions() reads from that cache and adds the live
+  //      contribution (elapsedSinceSec, capped at 30).
+  assert.ok(
+    /function computeLiveBaseCache\s*\(/.test(SRC),
+    'dashboard.js must define computeLiveBaseCache() to memoize the per-session base'
+  );
+  assert.ok(
+    /computeLiveBaseCache\s*\(\s*\)/.test(SRC),
+    'tickLiveSessions must read from computeLiveBaseCache()'
+  );
+  // The cache must be busted on STATE.generated_at changes — otherwise
+  // the base would never refresh after a state_update lands.
+  assert.ok(
+    /_liveBaseCache\s*=/.test(SRC),
+    'computeLiveBaseCache must write to the _liveBaseCache module-level slot'
+  );
+  // The 1Hz tick must compute live = min(30, ...) so a stale tab
+  // doesn't accumulate wild drift between poll-driven renders.
+  assert.ok(
+    /min\s*\(\s*30\s*,\s*Math\.floor\s*\(\s*\(\s*browserMs\s*-\s*snapshotMs\s*\)\s*\/\s*1000/.test(SRC),
+    'tickLiveSessions must compute live as min(30, (browserMs-snapshotMs)/1000)'
+  );
+});
+
+test('ceo-pages.js (cloud) adds data-tick and 1Hz tickLiveSessions', () => {
+  // v1.2.32 mirror — the cloud dashboard must also emit the two
+  // data-tick cells and schedule a 1Hz tickLiveSessions() that drives
+  // the "active today" / "this build" counters. Without this, the
+  // cloud dashboard's "this build" cell only updated once a minute
+  // (minute-by-minute in-shift walk in buildLiveSessionsHtml) while
+  // the offline dashboard already ticked every second — operators
+  // saw the same factory event rendered at different granularities on
+  // the two dashboards, which made the cloud look frozen.
+  const CEO_PAGES_JS = path.join(__dirname, '..', 'cloudflare', 'src', 'ui', 'ceo-pages.js');
+  const ceoSrc = fs.readFileSync(CEO_PAGES_JS, 'utf8');
+  assert.ok(
+    /data-tick="active-today"/.test(ceoSrc),
+    'ceo-pages.js buildLiveSessionsHtml must emit data-tick="active-today"'
+  );
+  assert.ok(
+    /data-tick="build"/.test(ceoSrc),
+    'ceo-pages.js buildLiveSessionsHtml must emit data-tick="build"'
+  );
+  assert.ok(
+    /function tickLiveSessions\s*\(/.test(ceoSrc),
+    'ceo-pages.js must define tickLiveSessions() — the 1Hz cloud tick'
+  );
+  assert.ok(
+    /setInterval\s*\(\s*function\s*\(\s*\)\s*\{[\s\S]*?tickLiveSessions\(\)/.test(ceoSrc),
+    'ceo-pages.js must schedule setInterval(... tickLiveSessions(), 1000)'
+  );
+  // The cloud tick must use the base+live formula, not a fresh minute
+  // walk per second. thisBuildSecondsFor() is the helper that reads
+  // the memoized thisBuildBaseCache and adds the live contribution.
+  assert.ok(
+    /function thisBuildSecondsFor\s*\(/.test(ceoSrc),
+    'ceo-pages.js must define thisBuildSecondsFor() — base+live resolver for the cloud tick'
+  );
+  assert.ok(
+    /function computeThisBuildBaseCache\s*\(/.test(ceoSrc),
+    'ceo-pages.js must define computeThisBuildBaseCache() — memoized per-session base'
+  );
+});
+
+test('ceo-pages.js (cloud) parses cleanly — guards against unescaped backticks in template literals', () => {
+  // v1.2.32: getCEODashboard() returns a giant template literal spanning
+  // thousands of lines. Any unescaped backtick (\\`) inside the template
+  // literal body — even inside what looks like a JS comment — closes the
+  // template prematurely and leaves the trailing JS to be parsed as code,
+  // breaking the entire Worker bundle. When the bundle fails to parse,
+  // every route (including /api/state) returns 404 to the dashboard,
+  // and the operator sees an empty cloud dashboard.
+  //
+  // This regression test runs node --check on the file. It catches:
+  //   - Unescaped backticks inside getCEODashboard() / getLoginPage() /
+  //     getPrivacyPolicyPage() / getTermsOfServicePage() template bodies
+  //   - Any other JS syntax error that would break the wrangler bundle.
+  // Run with: `node --check cloudflare/src/ui/ceo-pages.js` — must exit 0.
+  const CEO_PAGES_JS = path.join(__dirname, '..', 'cloudflare', 'src', 'ui', 'ceo-pages.js');
+  let stdout = '';
+  try {
+    stdout = execFileSync(process.execPath, ['--check', CEO_PAGES_JS], { stdio: 'pipe', encoding: 'utf8' });
+  } catch (e) {
+    // Surface the actual parser error so a future regression names the
+    // line + column instead of just "the cloud is 404ing again".
+    const msg = (e && e.stderr ? e.stderr.toString() : '') || (e && e.message) || String(e);
+    assert.fail('ceo-pages.js failed node --check: ' + msg);
+  }
+  assert.ok(typeof stdout === 'string', 'ceo-pages.js parses cleanly');
+});
+
+test('public/dashboard.js parses cleanly', () => {
+  // Same guard for the offline dashboard. The file is a single script
+  // (no template literals wrapping it), but a syntax error here still
+  // bricks the LAN kiosk dashboard — the operator would see a blank
+  // page with no console errors. The 8 dashboard-live-tick tests
+  // already load the file via fs.readFileSync (regex only) but never
+  // actually parse it; this test runs node --check so a typo in a
+  // helper name or a missing brace fails CI before it hits the floor.
+  const DASHBOARD_JS = path.join(__dirname, '..', 'public', 'dashboard.js');
+  try {
+    execFileSync(process.execPath, ['--check', DASHBOARD_JS], { stdio: 'pipe' });
+  } catch (e) {
+    const msg = (e && e.stderr ? e.stderr.toString() : '') || (e && e.message) || String(e);
+    assert.fail('public/dashboard.js failed node --check: ' + msg);
+  }
 });

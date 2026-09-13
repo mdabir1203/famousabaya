@@ -753,6 +753,21 @@ let activeTimingCache = {
   byEmpId: {},
   byGarmentId: {},
 };
+// Per-session in-shift base seconds for the "this build" cell, snapshotted
+// at STATE arrival. Recomputed only when STATE changes (a new session_start
+// arrived or a session_finish removed a row) — never per second. The 1Hz
+// tick reads this cache and adds \`elapsedSinceStateSec\` if currently in
+// shift, so the displayed counter ticks every second instead of every
+// minute. Mirrors the activeTimingCache.byEmpId pattern that drives the
+// "active today" cell, but the base here is a per-session in-shift walk
+// (startedAt → STATE.ts) instead of the cloud-pushed windowed_elapsed_sec
+// — because the "this build" cell counts the worker's time on THIS abaya
+// across the whole session, not just the snapshot's cap-aware in-shift
+// seconds (which is per-employee and may have been clamped for cross-day).
+let thisBuildBaseCache = {
+  cacheKey: '',
+  byEmpId: {},
+};
 
 function timeoutSignal(ms) {
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
@@ -1122,6 +1137,69 @@ function computeActiveTimingCache() {
   return activeTimingCache;
 }
 
+// Per-session "this build" base = in-shift seconds from session start to
+// STATE snapshot. Recomputed only when STATE arrives (a new session_start
+// landed, a session_finish removed a row, or a Start was pushed late and
+// the snapshot age changed). The 1Hz tick adds \`elapsedSinceStateSec\` if
+// currently in shift, so the displayed counter ticks every second.
+//
+// Why a per-session walk instead of the existing abaya_builds
+// .total_in_window_sec? The "this build" cell counts the worker's time
+// on this abaya for THIS current session — not the sum across all
+// finished sessions on this abaya_id. The build total still lives on the
+// Daily/Weekly/Monthly/Yearly reports and the per-abaya totals panel.
+function computeThisBuildBaseCache() {
+  const active = STATE && STATE.active ? STATE.active : {};
+  const activeIds = Object.keys(active).sort();
+  const stateTs = Number(STATE && STATE.ts) || 0;
+  const wh = STATE && STATE.working_hours;
+  const key = String(activeIds.join('|')) + '::' + String(stateTs) + '::' + String(wh ? 'wh' : 'noh');
+  if (thisBuildBaseCache.cacheKey === key) return thisBuildBaseCache;
+  const byEmpId = {};
+  activeIds.forEach(function (id) {
+    const s = active[id] || {};
+    const startedSec = Math.floor(Number(s.started_at) / 1000);
+    if (!Number.isFinite(startedSec) || startedSec <= 0) {
+      byEmpId[id] = 0;
+      return;
+    }
+    if (!wh) {
+      // No working_hours in STATE yet (very first paint, or the
+      // worker hasn't pushed any sessions). Use raw wall-clock as a
+      // safe lower bound — the operator can still see something
+      // ticking while the live config hydrates.
+      const serverNowSec = Math.floor((stateTs > 0 ? stateTs : Date.now()) / 1000);
+      byEmpId[id] = Math.max(0, serverNowSec - startedSec);
+      return;
+    }
+    const serverNowSec = Math.floor((stateTs > 0 ? stateTs : Date.now()) / 1000);
+    const base = window.__ceoPerf && typeof window.__ceoPerf.overlapSecWithWindowsClient === 'function'
+      ? window.__ceoPerf.overlapSecWithWindowsClient(startedSec, serverNowSec, wh)
+      : 0;
+    byEmpId[id] = Math.max(0, Math.floor(Number(base) || 0));
+  });
+  thisBuildBaseCache = { cacheKey: key, byEmpId: byEmpId };
+  return thisBuildBaseCache;
+}
+
+// Resolved "this build" seconds for a given emp_id: the per-session
+// base at snapshot + the live contribution if currently in shift.
+// Capped at +30s so a stale tab (no poll in >30s) doesn't accumulate
+// wild drift. Mirrors the "active today" formula so the two ticking
+// cells share the same freshness rule.
+function thisBuildSecondsFor(empId) {
+  const id = String(empId == null ? '' : empId);
+  if (!id) return 0;
+  const cache = computeThisBuildBaseCache();
+  const base = Math.floor(Number(cache.byEmpId[id]) || 0);
+  const nowMs = Date.now();
+  const stateTs = Number(STATE && STATE.ts) || 0;
+  const elapsedSinceStateSec = stateTs > 0 ? Math.max(0, Math.min(30, Math.floor((nowMs - stateTs) / 1000))) : 0;
+  const inShiftNow = inWindowClient(Math.floor(nowMs / 1000));
+  const live = inShiftNow ? elapsedSinceStateSec : 0;
+  return Math.max(0, base + live);
+}
+
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -1406,10 +1484,15 @@ function buildLiveSessionsHtml() {
         // operators wanted the live ticking counter (this one) and not a
         // static timestamp. The last_finish data is still available for
         // the per-emp/per-abaya report code.
+        // v1.2.32: data-tick="active-today" lets tickLiveSessions()
+        // update ONLY this cell at 1Hz via targeted textContent writes,
+        // mirroring public/dashboard.js#tickLiveSessions. The render
+        // still emits the same value at paint time so the first frame
+        // after a STATE arrival is correct.
         (function () {
           const activeTodaySec = Math.max(0, Math.floor(Number(elapsed) || 0));
           const titleText = 'In-shift elapsed time for this active session, counted only inside the configured shift windows. For cross-day sessions, this resets at factory-TZ midnight. Computed from the local server\u2019s windowed_elapsed_sec + the seconds elapsed since the state snapshot (capped at +30s by computeActiveTimingCache).';
-          return '<div title="' + esc(titleText) + '" style="font-size:18px;font-weight:700;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1.25;cursor:help">' +
+          return '<div data-tick="active-today" data-emp-id="' + esc(id) + '" title="' + esc(titleText) + '" style="font-size:18px;font-weight:700;color:var(--gr);font-variant-numeric:tabular-nums;line-height:1.25;cursor:help">' +
             esc(fmtHMS(activeTodaySec)) +
             '</div>' +
             '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px">' +
@@ -1418,38 +1501,23 @@ function buildLiveSessionsHtml() {
         })() +
         // "This build" — in-shift elapsed time for THIS active session on
         // this abaya (NOT wall-clock, so nights / weekends / lunch
-        // breaks don't inflate the number). Mirrors the local
-        // dashboard's inWindowClient walk. serverNowMs is anchored to
-        // the cloud's clock via STATE.ts. We walk minute-by-minute from
-        // startedAtSec to serverNowSec, summing only the seconds that
-        // fall inside a configured shift window. Same trade-off as the
-        // "active today" cell above (±1 min precision in exchange for
-        // ~60x fewer iterations than a per-second walk — plenty fast for
-        // sessions up to ~24h and well within budget even for multi-day
-        // stuck-session outliers).
+        // breaks don't inflate the number). Same base+live formula as
+        // the "active today" cell so both counters tick every second:
+        // the base is computed once per STATE arrival from the per-
+        // session in-shift walk (startedAt → STATE.ts), and the live
+        // contribution is min(30, elapsedSinceStateSec) if currently in
+        // shift. Replaces the v1.2.19 minute-by-minute walk which only
+        // updated the displayed text when crossing a minute boundary,
+        // making the counter look frozen between minutes (v1.2.32).
         (function () {
           const buildTitle = isCustom
             ? 'In-shift elapsed time for this active session on this custom abaya. Multi-week build is expected for this style.'
-            : 'In-shift elapsed time for this active session on this abaya. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every poll; not the aggregate across sessions.';
+            : 'In-shift elapsed time for this active session on this abaya. Resets at factory-TZ midnight (cross-day sessions accumulate from the original Start, but the daily/weekly/monthly/yearly reports show the per-day breakdown). Per-session counter that ticks every second; not the aggregate across sessions.';
           const customPill = isCustom
             ? ' <span title="Marked is_custom=1 in abaya_catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
             : '';
-          // Server-anchored "now" so the displayed elapsed matches the
-          // cloud's view of the world, not the browser's local clock.
-          // Mirrors the offline dashboard's use of STATE.generated_at
-          // in public/dashboard.js#renderLiveSessions.
-          const browserMs = Date.now();
-          const snapshotMs = Number(STATE && STATE.ts) || 0;
-          const elapsedMs = snapshotMs > 0 ? Math.max(0, Math.min(30000, browserMs - snapshotMs)) : 0;
-          const serverNowSec = Math.floor((snapshotMs > 0 ? snapshotMs + elapsedMs : browserMs) / 1000);
-          // v1.2.28: sweep-line port of server's overlapSecWithWindows.
-          // Same 60s/600s/3600s step heuristic, same inWin memo, same
-          // 48h HARD_CAP. Was O(1440) for a 24h stuck session, now O(1)
-          // windows * 1 lookup per window (with memo for repeated calls).
-          const inShiftSec = (window.__ceoPerf && STATE && STATE.working_hours)
-            ? window.__ceoPerf.overlapSecWithWindowsClient(startedAtSec, serverNowSec, STATE.working_hours)
-            : 0;
-          return '<div title="' + buildTitle + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(inShiftSec)) + customPill + '</div>' +
+          const inShiftSec = thisBuildSecondsFor(id);
+          return '<div data-tick="build" data-emp-id="' + esc(id) + '" title="' + esc(buildTitle) + '" style="font-size:14px;font-weight:700;color:var(--am);margin-top:6px;cursor:help;font-variant-numeric:tabular-nums;line-height:1.25">' + esc(fmtHMS(inShiftSec)) + customPill + '</div>' +
             '<div style="font-size:9px;color:var(--tx3)">this build</div>';
         })() +
         '</div></div>'
@@ -1494,6 +1562,63 @@ function renderRecentInvoiceLogs() {
   });
   html += '</div>';
   el.innerHTML = html;
+}
+
+// ─── 1Hz LIVE TICK (v1.2.32) ──────────────────────────────────────────────────
+// Mirrors public/dashboard.js#tickLiveSessions. Walks every active row and
+// updates ONLY the elapsed-time cells via targeted textContent writes —
+// no innerHTML rebuild, no DOM re-parse. This is what makes the "active
+// today" and "this build" counters visibly advance every second even
+// when the underlying minute-by-minute walks only change once per minute.
+//
+// Both cells use the base+live formula:
+//   total = baseAtSnapshot + min(30, (browserMs - STATE.ts) / 1000) [if in shift]
+// The 30s cap protects against wild drift on a stale tab; the live poll
+// cadence (1s when active > 0, 4.5s when idle) refreshes STATE.ts long
+// before the cap is reached in normal use.
+function tickLiveSessions() {
+  const el = document.getElementById('live-sessions');
+  if (!el) return;
+  const active = STATE && STATE.active ? STATE.active : {};
+  const ids = Object.keys(active);
+  if (ids.length === 0) return;
+  // Force a per-second recompute of computeActiveTimingCache() — its
+  // memo key already includes Math.floor(nowMs/1000), so it busts on
+  // its own each second; we just call it here so the tick can read
+  // the freshest byEmpId map without a full renderAll().
+  const timingCache = computeActiveTimingCache();
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    const activeTodaySec = Math.floor(Number(timingCache.byEmpId[id]) || 0);
+    const buildSec = thisBuildSecondsFor(id);
+    const activeTodayCell = el.querySelector('[data-tick="active-today"][data-emp-id="' + cssEscapeAttr(id) + '"]');
+    if (activeTodayCell) {
+      const txt = fmtHMS(activeTodaySec);
+      if (activeTodayCell.textContent !== txt) activeTodayCell.textContent = txt;
+    }
+    const buildCell = el.querySelector('[data-tick="build"][data-emp-id="' + cssEscapeAttr(id) + '"]');
+    if (buildCell) {
+      const txt = fmtHMS(buildSec);
+      // Preserve any "Custom" pill that was appended inside the cell
+      // by the initial render. The pill is a sibling span after the
+      // bare text, so textContent collapses to e.g. "1h 5m 22s Custom"
+      // (space-separated). We rewrite textContent with \`txt + suffix\`
+      // so the pill stays put. Cheap because the tick fires at most
+      // once per second and only writes when the value actually
+      // changed.
+      const current = buildCell.textContent || '';
+      const suffix = current.length > txt.length ? current.slice(txt.length) : '';
+      const desired = txt + suffix;
+      if (current !== desired) buildCell.textContent = desired;
+    }
+  }
+}
+
+// CSS attribute-selector escape: the emp_id is already constrained to
+// the e_bc_<digits> form by the AGENTS.md contract, but attribute
+// selectors still need quotes-and-double-quote escape for the value.
+function cssEscapeAttr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 /** Show a non-blocking error banner at the top of the body so render failures
@@ -3413,6 +3538,20 @@ loadEmployeeDayOptions();
 wireTraceCombobox();
 schedulePollLoop();
 wireByEmpRowDelegation();
+// v1.2.32: 1Hz tick on the live cells so the "active today" and "this
+// build" counters advance every second even between poll-driven renders.
+// The poll cadence is 1s when active sessions exist, but the underlying
+// in-shift walk uses 60s/600s/3600s steps so the displayed text would
+// otherwise jump once a minute. The tick keeps the text fresh without
+// rebuilding the DOM — same pattern as public/dashboard.js's offline
+// tick. Pauses while the tab is hidden (visibilitychange resumes) and
+// while the session has expired (no point ticking a stale page).
+setInterval(function () {
+  if (typeof document === 'undefined') return;
+  if (document.visibilityState !== 'visible') return;
+  if (sessionExpired) return;
+  try { tickLiveSessions(); } catch (_) { /* never let a tick break the page */ }
+}, 1000);
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'visible') poll();
 });
