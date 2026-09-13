@@ -33,7 +33,7 @@ const RAW_RUNTIME_STATE =
           ["cors", "npm:2.8.6"],\
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
-          ["multer", "npm:2.1.1"],\
+          ["multer", "npm:2.3.0"],\
           ["package", "npm:1.0.1"],\
           ["pm2", "npm:7.0.3"],\
           ["qrcode", "npm:1.5.4"],\
@@ -938,7 +938,7 @@ const RAW_RUNTIME_STATE =
           ["cors", "npm:2.8.6"],\
           ["dotenv", "npm:16.6.1"],\
           ["express", "npm:5.2.1"],\
-          ["multer", "npm:2.1.1"],\
+          ["multer", "npm:2.3.0"],\
           ["package", "npm:1.0.1"],\
           ["pm2", "npm:7.0.3"],\
           ["qrcode", "npm:1.5.4"],\
@@ -2416,13 +2416,13 @@ const RAW_RUNTIME_STATE =
       }]\
     ]],\
     ["multer", [\
-      ["npm:2.1.1", {\
-        "packageLocation": "./.yarn/cache/multer-npm-2.1.1-f8d312dc4a-2ec4e02833.zip/node_modules/multer/",\
+      ["npm:2.3.0", {\
+        "packageLocation": "./.yarn/cache/multer-npm-2.3.0-0fd10819bb-e78fe6b1fe.zip/node_modules/multer/",\
         "packageDependencies": [\
           ["append-field", "npm:1.0.0"],\
           ["busboy", "npm:1.6.0"],\
           ["concat-stream", "npm:2.0.0"],\
-          ["multer", "npm:2.1.1"],\
+          ["multer", "npm:2.3.0"],\
           ["type-is", "npm:1.6.18"]\
         ],\
         "linkType": "HARD"\
