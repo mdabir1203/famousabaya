@@ -15,7 +15,7 @@
     "node": ">=18"
   },
   "devDependencies": {
-    "electron": "^34.2.0",
+    "electron": "^39.8.10",
     "electron-builder": "^24.13.3"
   },
   "build": {
