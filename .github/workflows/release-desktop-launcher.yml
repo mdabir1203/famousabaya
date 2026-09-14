@@ -511,6 +511,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          # v1.2.38: fail CI fast when the Cloudflare secrets are missing --
+          # otherwise wrangler exits with a cryptic auth error after uploading
+          # 0 bytes, the verify step sees a stale latest.yml, and the build
+          # silently ships without ever updating the R2 mirror. Three CI
+          # builds (v1.2.35, v1.2.36, v1.2.37) all hit this trap.
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and/or CLOUDFLARE_ACCOUNT_ID secrets are missing."
+            echo "::error::Add them at https://github.com/mdabir1203/famousabaya/settings/secrets/actions"
+            echo "::error::The R2 OTA feed at dashboard.farewellabaya.com/updates/stable/ won't update"
+            echo "::error::until you do. Workaround: run scripts/publish-r2-update.mjs from your dev box"
+            echo "::error::with CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in your local .env."
+            exit 1
+          fi
           node scripts/publish-r2-update.mjs --channel stable
           echo ""
           echo "=========================================="
