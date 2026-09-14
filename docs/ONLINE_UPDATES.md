@@ -107,7 +107,38 @@ Optional rollout control:
    - installer (`.exe`)
    - blockmap
    - `latest.yml` (stable tags) or `beta.yml` (beta tags)
-5. Install current previous version on test laptop and verify update prompt/download/install path.
+5. **Verify the R2 OTA feed was updated** — open
+   `https://dashboard.farewellabaya.com/updates/stable/latest.yml`
+   and confirm `version:` matches the just-shipped release. The CI
+   publishes to R2 automatically (added v1.2.35+); older releases
+   v1.2.31..v1.2.34 shipped to GitHub only — if the cloud mirror
+   still shows an older version, run on your dev box:
+   ```bash
+   node scripts/publish-r2-update.mjs --channel stable
+   ```
+   This uploads the same `install/` directory contents to the
+   `abaya-updates` R2 bucket under `stable/`. The Worker serves them
+   at the URL above. (CI uses the same script with the
+   `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` repo secrets.)
+6. **Publish to the LAN mirror** — CI cannot reach the factory's
+   192.168.0.x LAN. On the factory Node server, run:
+   ```bash
+   cd C:/Abaya-Track-v1.0.2      # or wherever the factory repo lives
+   node scripts/publish-lan-update-mirror.mjs --channel stable \
+     --from install
+   ```
+   This copies `latest.yml` + `AbaYa-Track-Launcher-Setup-X.Y.Z.exe`
+   + `.exe.blockmap` into `data/lan-update-mirror/stable/`, which the
+   local server.js serves at `/updates/stable/`. The launcher's
+   PRIMARY feed is this LAN mirror; the R2 mirror is the fallback
+   when LAN is unreachable.
+7. Confirm `/api/updates/mirror-health` (from any tablet) shows the
+   new `latest.yml` mtime. If a factory laptop is stuck on an old
+   version: restart the launcher (it triggers an immediate probe) or
+   wait `checkIntervalMinutes` (default 360 = 6 h, randomized with
+   ±20% jitter).
+8. Install current previous version on test laptop and verify update
+   prompt/download/install path.
 
 ## Staged Rollout Strategy (Pareto)
 

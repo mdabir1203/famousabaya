@@ -487,3 +487,115 @@ jobs:
           echo "Commit  : $GITHUB_SHA"
           echo "Trigger : $GITHUB_EVENT_NAME"
           echo "=========================================="
+
+
+      # ----------------------------------------------------------
+      # PUBLISH TO CLOUD R2 OTA FEED
+      # ----------------------------------------------------------
+      # The desktop launcher's electron-updater reads from a GenericProvider
+      # feed. By default the launcher uses ABAYA_UPDATE_MIRROR_BASE_URL
+      # (LAN mirror at http://192.168.x.x:3111/updates/stable/) and falls
+      # back to ABAYA_CLOUD_UPDATE_BASE_URL (https://dashboard.farewellabaya.com/
+      # updates/stable/) which is served by the Worker from the abaya-updates
+      # R2 bucket. Without this step, GitHub Releases are published but the
+      # factory's autoupdater keeps polling the mirror and seeing the OLD
+      # version -- so the install never auto-updates.
+      #
+      # Without this step, the v1.2.31+ releases shipped to GitHub but the
+      # factory's R2 mirror still served v1.2.23 -- every factory laptop
+      # stayed on v1.2.23 until a manual publish-r2-update.mjs was run.
+      # See docs/ONLINE_UPDATES.md "R2 OTA feed".
+      - name: ☁️ Publish to R2 OTA feed
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          node scripts/publish-r2-update.mjs --channel stable
+          echo ""
+          echo "=========================================="
+          echo "✅ R2 OTA feed updated to ${{ steps.version.outputs.version }}"
+          echo "    URL: https://dashboard.farewellabaya.com/updates/stable/latest.yml"
+          echo "=========================================="
+
+
+      # ----------------------------------------------------------
+      # VERIFY R2 PUBLISH REACHED THE CLOUD MIRROR
+      # ----------------------------------------------------------
+      # electron-updater caches latest.yml + the .exe ETag aggressively. The
+      # cache TTL on .yml is 60 s (see cloudflare/src/index.js), so we wait
+      # 75 s before probing to give the CDN time to serve the new latest.yml
+      # from every edge. A probe at this point catches the common failure
+      # modes -- wrong wrangler auth, wrong bucket name, network blip --
+      # before the factory laptop ever asks for the new version.
+      - name: ✅ Verify R2 mirror reachable
+        shell: bash
+        run: |
+          echo "Waiting 75s for R2 CDN to propagate new latest.yml..."
+          sleep 75
+
+          URL="https://dashboard.farewellabaya.com/updates/stable/latest.yml"
+          EXPECTED_VERSION="${{ steps.version.outputs.version }}"
+          echo "Probing $URL ..."
+
+          TMP="$(mktemp)"
+          HTTP_CODE="$(curl -sS -o "$TMP" -w '%{http_code}' "$URL" || echo 000)"
+          BODY="$(cat "$TMP")"
+          rm -f "$TMP"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::R2 latest.yml returned HTTP $HTTP_CODE (expected 200)"
+            echo "Body: $BODY"
+            exit 1
+          fi
+
+          # latest.yml must reference the version we just published, not the
+          # previous one. The factory's autoupdater compares this string to
+          # the installed version (package.json) and skips if equal.
+          if ! echo "$BODY" | grep -qE "^version: ${EXPECTED_VERSION}"; then
+            echo "::error::R2 latest.yml does not reference version ${EXPECTED_VERSION}"
+            echo "Body: $BODY"
+            exit 1
+          fi
+
+          echo "✓ R2 mirror reachable: $URL"
+          echo "✓ latest.yml references version: $EXPECTED_VERSION"
+
+
+      # ----------------------------------------------------------
+      # LAN MIRROR -- operator action required
+      # ----------------------------------------------------------
+      # The factory's local Node server (server.js) serves /updates/stable/
+      # from data/lan-update-mirror/stable/ on the LAN. This is the PRIMARY
+      # feed the desktop launcher polls (faster than R2, no internet round
+      # trip). The factory operator must run publish-lan-update-mirror.mjs
+      # ON the factory Node server after this CI run completes -- CI has no
+      # access to the factory's 192.168.0.x LAN, so we don't push from here.
+      #
+      # We print a copy-paste-ready command for the operator instead.
+      - name: 📝 Print LAN mirror publish instructions
+        shell: bash
+        run: |
+          echo '=========================================='
+          echo 'LAN MIRROR PUBLISH -- operator action required'
+          echo '=========================================='
+          echo ''
+          echo 'The factory Node server (192.168.0.x) serves /updates/stable/ from'
+          echo 'data/lan-update-mirror/stable/. The launcher's PRIMARY feed is this'
+          echo 'LAN mirror (faster than R2). After this CI run completes, the'
+          echo 'operator MUST run the publish on the factory Node server --'
+          echo ''
+          echo '  cd C:/Abaya-Track-v1.0.2      # or wherever the factory repo lives'
+          echo '  node scripts/publish-lan-update-mirror.mjs --channel stable --from install'
+          echo ''
+          echo 'This copies install/latest.yml + AbaYa-Track-Launcher-Setup-VERSION.exe'
+          echo '+ .exe.blockmap into data/lan-update-mirror/stable/ so the factory'
+          echo "laptop's electron-updater picks them up on the next probe cycle"
+          echo '(default checkIntervalMinutes=360 = 6 h; restart the launcher to'
+          echo 'trigger an immediate probe).'
+          echo ''
+          echo 'If the LAN mirror is unreachable from the factory, the launcher'
+          echo 'falls back to the R2 mirror (which this CI just updated). So a'
+          echo 'missing LAN publish is degraded, not broken.'
+          echo ''
+          echo "Version: ${{ steps.version.outputs.version }}"

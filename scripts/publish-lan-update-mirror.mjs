@@ -76,16 +76,27 @@ if (!exes.length) {
   process.exit(1);
 }
 
-/** Prefer NSIS exe matching channel in filename if multiple */
+/** Prefer the .exe named in latest.yml's `path:` field — that's the
+ * canonical one electron-updater will request. Falls back to the
+ * channel-substring scoring when latest.yml is missing or unreadable. */
 let exe = exes[0];
-if (exes.length > 1) {
-  const want = args.channel === 'beta' ? 'beta' : 'stable';
-  const scored = exes.map((n) => ({
-    n,
-    score: n.toLowerCase().includes(want) ? 1 : 0,
-  }));
-  scored.sort((a, b) => b.score - a.score);
-  exe = scored[0].n;
+try {
+  const ymlBody = fs.readFileSync(path.join(args.from, yml), 'utf8');
+  const pathLine = ymlBody.match(/^path:\s*(\S+)/m);
+  if (pathLine && exes.includes(pathLine[1])) {
+    exe = pathLine[1];
+  } else if (exes.length > 1) {
+    // Fallback: prefer channel-named file, then alphabetically newest version.
+    const want = args.channel === 'beta' ? 'beta' : 'stable';
+    const scored = exes.map((n) => ({
+      n,
+      score: n.toLowerCase().includes(want) ? 1 : 0,
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    exe = scored[0].n;
+  }
+} catch (_) {
+  // Fall through to default exes[0].
 }
 
 const blockmap = blockmaps.find((b) => b.startsWith(exe.replace(/\.exe$/i, ''))) || blockmaps[0];
