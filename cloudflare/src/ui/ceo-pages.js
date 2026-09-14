@@ -1372,9 +1372,53 @@ function renderAbayaTotalsTable() {
     '</div>';
 }
 
+/** v1.2.34: Hide "zombie" active sessions from the live board.
+ *  A zombie = a session that's been open >8 hours AND is currently outside
+ *  a shift window. These are forgotten-Finish sessions (worker tapped Start,
+ *  walked away, never tapped Finish). They show up in STATE.active and in the
+ *  cloud's active_sessions D1 table because no session_finish event ever
+ *  landed, but no real human is on the floor anymore.
+ *
+ *  The dashboard already labels them with a red "STUCK" pill — that's the
+ *  cue for the operator to investigate. But counting them as "Active Workers"
+ *  and listing them in the LIVE ACTIVE SESSIONS panel was misleading: the
+ *  factory could be empty and the cloud still shows N=12.
+ *
+ *  Rule: hide when (now - started_at) > 8h AND outside_shift === true.
+ *  Mirrors the rule in shared/live-row-state.cjs so the local factory
+ *  snapshot and the cloud dashboard agree. We keep the rows in D1 / STATE
+ *  so historical "who was open" stays queryable — this is UI-only filtering.
+ */
+const ZOMBIE_MAX_AGE_SEC = 8 * 3600;
+function isZombieActive(s, nowMs) {
+  if (!s) return false;
+  const startedMs = Number(s.started_at) || 0;
+  if (!startedMs) return false;
+  const ageSec = (nowMs - startedMs) / 1000;
+  if (ageSec <= ZOMBIE_MAX_AGE_SEC) return false;
+  // outside_shift is the cloud's authoritative flag (migration 0016). For
+  // legacy rows where the flag is missing, recompute from inWindowClient.
+  let outside = s.outside_shift === true || s.outside_shift === 1;
+  if (s.outside_shift == null) {
+    const inShiftStart = inWindowClient(Math.floor(startedMs / 1000));
+    outside = !inShiftStart;
+  }
+  return outside;
+}
+
+function liveActiveIds(active, nowMs) {
+  const now = nowMs || Date.now();
+  return Object.keys(active || {}).filter(function (id) {
+    return !isZombieActive(active[id], now);
+  });
+}
+
 function buildLiveSessionsHtml() {
   const active = STATE.active || {};
-  const activeIds = Object.keys(active);
+  const nowMs = Date.now();
+  // v1.2.34: filter out forgotten-Finish zombies (>8h open AND outside shift)
+  // so the live board only shows workers who are actually on the floor.
+  const activeIds = liveActiveIds(active, nowMs);
   const timingCache = computeActiveTimingCache();
   if (activeIds.length === 0) {
     return '<div style="color:var(--tx3);font-size:12px;text-align:center;padding:20px">No active sessions right now</div>';
@@ -1675,7 +1719,11 @@ function safeRender(stage, fn) {
 function renderAll() {
   const active = STATE.active || {};
   const perf = STATE.perf || [];
-  const activeIds = Object.keys(active);
+  // v1.2.34: count only live (non-zombie) sessions so "Active Workers" matches
+  // who's actually on the floor. Zombies still live in STATE.active and in
+  // D1 — this is purely a UI filter.
+  const nowMsRender = Date.now();
+  const activeIds = liveActiveIds(active, nowMsRender);
 
   safeRender('kpi', function () {
     const completed = Number(STATE.completed_today) || 0;

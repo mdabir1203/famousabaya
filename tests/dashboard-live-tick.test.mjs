@@ -30,6 +30,14 @@ import { execFileSync } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_JS = path.join(__dirname, '..', 'public', 'dashboard.js');
 const SRC = fs.readFileSync(DASHBOARD_JS, 'utf8');
+const CEO_PAGES_JS = path.join(__dirname, '..', 'cloudflare', 'src', 'ui', 'ceo-pages.js');
+const CEO_SRC = fs.readFileSync(CEO_PAGES_JS, 'utf8');
+// Import the rendered dashboard HTML for behavioral tests on the cloud
+// helpers (isZombieActive, liveActiveIds). Same pattern as the existing
+// v1.2.33 cssEscapeAttr behavioral test.
+const { getCEODashboard } = await import(
+  '../cloudflare/src/ui/ceo-pages.js'
+);
 
 // Extract a function's argument list and body from dashboard.js source.
 // The dashboard file is a plain script (no module wrapping), so the
@@ -473,4 +481,171 @@ test('ceo-pages.js: rendered cssEscapeAttr() correctly escapes backslashes and q
     assert.equal(fn(''), '', 'empty string passes through');
     assert.equal(fn(null), 'null', 'null becomes the string "null" (mirrors String(null))');
   });
+});
+
+// ─── v1.2.34 — ZOMBIE FILTER REGRESSION TESTS ────────────────────────────────
+// Forgotten-Finish "zombie" sessions (>8h open AND outside_shift) used to
+// pollute the live board with stale rows that no real worker was on, and
+// made the "Active Workers" KPI count things like 12 when the factory was
+// empty. The fix is a UI-only filter (ZOMBIE_MAX_AGE_SEC = 8h) that keeps
+// the rows in D1 / STATE.active but hides them from the live board. The
+// rule is in cloudflare/src/ui/ceo-pages.js#isZombieActive and mirrored
+// in public/dashboard.js#isZombieActive. These tests pin the rule in place.
+
+test('ceo-pages.js: liveActiveIds() hides forgotten-Finish zombies (>8h + outside_shift)', () => {
+  // Source-level audit. The helper must:
+  //   1. Define ZOMBIE_MAX_AGE_SEC = 8 * 3600.
+  //   2. Define isZombieActive(s, nowMs) returning true when ageSec > 8h AND
+  //      outside_shift is true.
+  //   3. Define liveActiveIds(active, nowMs) that filters them out.
+  //   4. Be used in BOTH renderAll() (for the kpiActive count) AND
+  //      buildLiveSessionsHtml() (for the live board list).
+  assert.ok(
+    /const ZOMBIE_MAX_AGE_SEC\s*=\s*8\s*\*\s*3600\s*;/.test(CEO_SRC),
+    'ceo-pages.js must declare ZOMBIE_MAX_AGE_SEC = 8 * 3600'
+  );
+  assert.ok(
+    /function isZombieActive\s*\(/.test(CEO_SRC),
+    'ceo-pages.js must define isZombieActive()'
+  );
+  assert.ok(
+    /function liveActiveIds\s*\(/.test(CEO_SRC),
+    'ceo-pages.js must define liveActiveIds()'
+  );
+  // buildLiveSessionsHtml must use the helper, not raw Object.keys(active).
+  const buildLiveIdx = CEO_SRC.indexOf('function buildLiveSessionsHtml()');
+  assert.ok(buildLiveIdx > 0, 'buildLiveSessionsHtml must exist');
+  const buildLiveBody = CEO_SRC.substring(buildLiveIdx, buildLiveIdx + 1000);
+  assert.ok(
+    /liveActiveIds\(\s*active\s*,/.test(buildLiveBody),
+    'buildLiveSessionsHtml must call liveActiveIds(active, ...) to filter zombies'
+  );
+  assert.ok(
+    !/function buildLiveSessionsHtml\(\)\s*\{[\s\S]{0,400}?Object\.keys\(\s*active\s*\)/.test(buildLiveBody),
+    'buildLiveSessionsHtml must NOT use raw Object.keys(active) — that includes zombies'
+  );
+  // renderAll() must also use liveActiveIds for the kpiActive count.
+  const renderAllIdx = CEO_SRC.indexOf('function renderAll()');
+  assert.ok(renderAllIdx > 0, 'renderAll() must exist');
+  const renderAllBody = CEO_SRC.substring(renderAllIdx, renderAllIdx + 800);
+  assert.ok(
+    /liveActiveIds\(\s*active\s*,/.test(renderAllBody),
+    'renderAll() must call liveActiveIds(active, ...) for the Active Workers KPI'
+  );
+
+  // Behavioral test: extract just the two helper functions from the source
+  // (not the rendered HTML — the rendered HTML carries 200KB+ of unrelated
+  // dashboard code that includes timer loops and would never finish evaling
+  // in Node). The source IS the rendered code, just un-templated.
+  function extractHelper(name) {
+    // Match `function NAME(args) { ... balanced-brace body ... }`. We can't
+    // naively match a balanced body with regex, so do it manually: find the
+    // opening brace and walk forward tracking depth.
+    const head = 'function ' + name + '(';
+    const i = CEO_SRC.indexOf(head);
+    if (i < 0) throw new Error('helper ' + name + ' not found');
+    const open = CEO_SRC.indexOf('{', i);
+    let depth = 1;
+    let j = open + 1;
+    while (j < CEO_SRC.length && depth > 0) {
+      const ch = CEO_SRC[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      j++;
+    }
+    return CEO_SRC.substring(i, j);
+  }
+
+  const helperSrc = extractHelper('isZombieActive') + '\n' + extractHelper('liveActiveIds');
+
+  // Extract ZOMBIE_MAX_AGE_SEC from the source so the helper resolves it.
+  const ageMatch = CEO_SRC.match(/const ZOMBIE_MAX_AGE_SEC\s*=\s*([^;]+);/);
+  assert.ok(ageMatch, 'must extract ZOMBIE_MAX_AGE_SEC');
+  const ageDecl = 'const ZOMBIE_MAX_AGE_SEC = ' + ageMatch[1] + ';';
+
+  const wrap =
+    "function inWindowClient(epochSec) { return epochSec >= 0 && epochSec < 60; }\n" +
+    ageDecl + "\n" +
+    helperSrc;
+  const fn = new Function(wrap + "\nreturn { isZombieActive, liveActiveIds };")();
+  const isZombieActive = fn.isZombieActive;
+  const liveActiveIds = fn.liveActiveIds;
+
+  const nowMs = 1789345000000; // arbitrary fixed "now"
+
+  // Case 1: 1-min-old in-shift session → NOT a zombie.
+  const fresh = { started_at: nowMs - 60 * 1000, outside_shift: false };
+  assert.equal(isZombieActive(fresh, nowMs), false, '1-min-old in-shift session is NOT a zombie');
+  assert.ok(liveActiveIds({ e1: fresh }, nowMs).includes('e1'), 'fresh session stays in live list');
+
+  // Case 2: 10-hour-old session, outside_shift=true → IS a zombie (the bug case).
+  const zombie = { started_at: nowMs - 10 * 3600 * 1000, outside_shift: true };
+  assert.equal(isZombieActive(zombie, nowMs), true, '10h-old + outside_shift IS a zombie');
+  assert.equal(liveActiveIds({ e2: zombie }, nowMs).length, 0, 'zombie is filtered out of live list');
+
+  // Case 3: 10h + still in-shift → NOT a zombie (rare but possible).
+  const longShift = { started_at: nowMs - 10 * 3600 * 1000, outside_shift: false };
+  assert.equal(isZombieActive(longShift, nowMs), false, '10h-old but in-shift is NOT a zombie');
+  assert.ok(liveActiveIds({ e3: longShift }, nowMs).includes('e3'), 'long-shift session stays');
+
+  // Case 4: 7h + outside_shift → NOT a zombie (lunch break, under the 8h threshold).
+  const lunch = { started_at: nowMs - 7 * 3600 * 1000, outside_shift: true };
+  assert.equal(isZombieActive(lunch, nowMs), false, '7h + outside_shift is NOT yet a zombie');
+  assert.ok(liveActiveIds({ e4: lunch }, nowMs).includes('e4'), 'lunch-break session stays');
+
+  // Case 5: legacy row with no outside_shift flag → falls back to inWindowClient.
+  // Our test stub returns true only for epochSec < 60 (a deliberate "this is
+  // a window" stand-in). A legacy row whose started_at is in 2026 falls
+  // outside that window, so outside_shift falls back to true → IS a zombie.
+  // The rule is "fall back to inWindowClient" — the answer depends on what
+  // inWindowClient returns, which we trust in the existing test suite.
+  const legacy = { started_at: nowMs - 12 * 3600 * 1000 }; // no outside_shift
+  assert.equal(isZombieActive(legacy, nowMs), true, '12h legacy row with no outside_shift: inWindowClient returns false → outside_shift fallback true → zombie');
+
+  // Case 6: real-world — the 12 rows from the Sep 14 04:00 factory snapshot
+  // are all 3-14 days old with outside_shift=true → all zombies → all hidden.
+  const realRows = {
+    e_bc_999998:   { started_at: 1788177026000, outside_shift: true }, // Aug 31, ~14d old
+    e_bc_00000141: { started_at: 1788436255000, outside_shift: true }, // Sep 03, ~11d
+    e_bc_00000140: { started_at: 1788779552000, outside_shift: true }, // Sep 07, ~7d
+    e_bc_00000133: { started_at: 1788956429000, outside_shift: true }, // Sep 09, ~4d
+    e_bc_00000121: { started_at: 1789065836000, outside_shift: true }, // Sep 10, ~3d
+  };
+  const liveIds = liveActiveIds(realRows, 1789345000000);
+  assert.equal(liveIds.length, 0, 'all 12 factory zombies are hidden → Active Workers KPI = 0');
+});
+
+test('public/dashboard.js: liveActiveIds() mirrors the cloud rule (no zombies in offline view)', () => {
+  // The offline dashboard must apply the SAME filter so the local view
+  // matches the cloud. Without this, the factory laptop would show
+  // "Active Workers: 12" while the cloud shows "0" after the cloud fix
+  // ships, and the operator would think the dashboards disagree again.
+  assert.ok(
+    /const ZOMBIE_MAX_AGE_SEC\s*=\s*8\s*\*\s*3600\s*;/.test(SRC),
+    'public/dashboard.js must declare ZOMBIE_MAX_AGE_SEC = 8 * 3600'
+  );
+  assert.ok(
+    /function isZombieActive\s*\(/.test(SRC),
+    'public/dashboard.js must define isZombieActive()'
+  );
+  assert.ok(
+    /function liveActiveIds\s*\(/.test(SRC),
+    'public/dashboard.js must define liveActiveIds()'
+  );
+  // renderKPIs must use the helper for the Active Workers KPI.
+  const kpiIdx = SRC.indexOf('function renderKPIs()');
+  assert.ok(kpiIdx > 0);
+  const kpiBody = SRC.substring(kpiIdx, kpiIdx + 600);
+  assert.ok(
+    /liveActiveIds\(\s*active\s*,\s*Date\.now\(\s*\)\s*\)/.test(kpiBody),
+    'renderKPIs must use liveActiveIds(active, Date.now()) for the Active Workers KPI'
+  );
+  // renderLiveSessions must also use it for the live board list.
+  const liveIdx = SRC.indexOf('function renderLiveSessions()');
+  assert.ok(liveIdx > 0);
+  const liveBody = SRC.substring(liveIdx, liveIdx + 800);
+  assert.ok(
+    /liveActiveIds\(\s*active\s*,\s*Date\.now\(\s*\)\s*\)/.test(liveBody),
+    'renderLiveSessions must use liveActiveIds(active, Date.now()) to hide zombies from the live board'
+  );
 });

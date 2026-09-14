@@ -1316,6 +1316,23 @@ async function refreshEmployeesFromCloud() {
     const ver = j.version != null ? String(j.version) : '0';
     if (j.employees.length === 0 && ver === '0') return; // empty cloud — don't wipe local
     if (ver === employeesCloudVersion) return;            // unchanged
+    // v1.2.34 safety guard: refuse to wipe local with a SHRUNK cloud roster.
+    // If the cloud just lost most of its rows (a buggy PUT, an operator
+    // wiping the wrong table, an unfinished seed), blindly replacing local
+    // EMPLOYEES with j.employees would silently drop the factory's
+    // real roster. The local server is the source of truth for who is on
+    // the floor; the cloud is a seed/backup. Only sync DOWN when the
+    // local roster is genuinely absent (handled by
+    // seedRosterFromCloudIfLocalMissing) — otherwise a shrunk cloud is
+    // treated as a regression and ignored.
+    if (EMPLOYEES.length >= 5 && j.employees.length < EMPLOYEES.length / 2) {
+      console.warn(
+        '[employees] Refusing cloud sync — cloud shrunk from',
+        EMPLOYEES.length, 'local rows to', j.employees.length,
+        'cloud rows (v' + ver + '). Treats this as a cloud-side regression, not an authoritative update.'
+      );
+      return;
+    }
     const prevPerfById = Object.create(null);
     for (let i = 0; i < EMP_PERF.length; i++) prevPerfById[EMP_PERF[i].id] = EMP_PERF[i];
     EMPLOYEES = j.employees;

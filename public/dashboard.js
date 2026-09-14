@@ -731,6 +731,15 @@ function totalSecForGarment(aggMap, abaya_id) {
  * Logs with no ended_at or non-finite duration_sec are skipped.
  */
 function aggregateBuildsByAbaya(logs) {
+  // Per-build map is a pure function of STATE.logs — same fingerprint as
+  // aggregateRealtime, so the cache and the per-render walk share the
+  // bust signal. Without this, renderLiveSessions() did an O(n) walk
+  // over 5,400+ logs every state_update (~3s in normal traffic, faster
+  // when the floor is busy).
+  const fingerprint = logsFingerprint(logs);
+  if (buildMapCache.value && buildMapCache.fingerprint === fingerprint) {
+    return buildMapCache.value;
+  }
   const by = Object.create(null);
   (logs || []).forEach(function (l) {
     if (!l || l.abaya_id == null || l.abaya_id === '') return;
@@ -751,6 +760,8 @@ function aggregateBuildsByAbaya(logs) {
     }
     if (endMs > o.lastEndMs) o.lastEndMs = endMs;
   });
+  buildMapCache.value = by;
+  buildMapCache.fingerprint = fingerprint;
   return by;
 }
 
@@ -814,9 +825,37 @@ function renderAll() {
 }
 
 // â”€â”€â”€ KPIs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ────────────────────────────────────────────────────────────────────────────
+// v1.2.34: Hide forgotten-Finish "zombie" active sessions (>8h open AND
+// outside shift) so the live board only shows workers actually on the floor.
+// Mirrors ceo-pages.js#liveActiveIds in the cloud dashboard. The rows stay
+// in STATE.active and the local SQLite snapshot — this is UI-only filtering.
+const ZOMBIE_MAX_AGE_SEC = 8 * 3600;
+function isZombieActive(s, nowMs) {
+  if (!s) return false;
+  const startedMs = Number(s.started_at) || 0;
+  if (!startedMs) return false;
+  const ageSec = (nowMs - startedMs) / 1000;
+  if (ageSec <= ZOMBIE_MAX_AGE_SEC) return false;
+  // Prefer the cloud-pushed outside_shift flag (migration 0016); fall back
+  // to a local recompute via inWindowClient for rows that predate the flag.
+  let outside = s.outside_shift === true || s.outside_shift === 1;
+  if (s.outside_shift == null) {
+    outside = !inWindowClient(Math.floor(startedMs / 1000));
+  }
+  return outside;
+}
+
+function liveActiveIds(active, nowMs) {
+  const now = nowMs || Date.now();
+  return Object.keys(active || {}).filter(function (id) {
+    return !isZombieActive(active[id], now);
+  });
+}
+
 function renderKPIs() {
   const active = STATE.active || {};
-  const actCount = Object.keys(active).length;
+  const actCount = liveActiveIds(active, Date.now()).length;
   const tz = whTimezone();
   const todayYmd = ymdInTimezone(Date.now(), tz);
   // Single-pass realtime aggregate (cached, fingerprint-busted on state_update).
@@ -928,7 +967,8 @@ function renderAbayaItemTotals() {
 function renderLiveSessions() {
   const el = document.getElementById('live-sessions');
   const active = STATE.active || {};
-  const ids = Object.keys(active);
+  // v1.2.34: filter out forgotten-Finish zombies (>8h open AND outside shift).
+  const ids = liveActiveIds(active, Date.now());
   // Per-build (24h-gap rule) totals + build start. Drives the amber
   // "this build" wall-clock age cell. See cloudflare/src/handlers/state.js
   // for the server-side equivalent.
@@ -1923,22 +1963,90 @@ function aggregateReport(logs) {
  */
 const dashboardAggregateCache = { value: null, fingerprint: '' };
 
+// Per-build (24h-gap rule) map is computed once per STATE arrival and shared
+// across all live-session rows in renderLiveSessions(). Was an O(n) walk
+// over STATE.logs on every render — busting the dashboard cache on each
+// state_update made the live panel the slowest hot path. Same fingerprint
+// scheme as dashboardAggregateCache so both invalidate together.
+const buildMapCache = { value: null, fingerprint: '' };
+
+// Per-fingerprint caches for the two scopes of aggregateRealtime():
+//   - todayCache (today's per-emp / per-process / hour buckets) — keyed on
+//     a fingerprint that ONLY changes when today's data changes. The
+//     previous fingerprint (logs.length + ':' + lastEnd) invalidated on
+//     every historical-log append too, so adding a session for an abaya
+//     from yesterday made every panel that only cared about today
+//     re-walk all 5,400 logs. Splitting the cache gives those panels
+//     O(1) cache hits on historical-only changes.
+//   - itemAggCache (all-time per-abaya totals) — keyed on the full log
+//     fingerprint because itemAgg depends on EVERY log.
+const todayCache = { value: null, fingerprint: '' };
+const itemAggCache = { value: null, fingerprint: '' };
+
+function dashboardAggregateCacheClear() {
+  dashboardAggregateCache.value = null;
+  dashboardAggregateCache.fingerprint = '';
+  buildMapCache.value = null;
+  buildMapCache.fingerprint = '';
+  todayCache.value = null;
+  todayCache.fingerprint = '';
+  itemAggCache.value = null;
+  itemAggCache.fingerprint = '';
+}
+
+// Build a fingerprint that only changes when TODAY's data changes. Used
+// for the today-only panels (KPI, Pareto, Hourly, Process Eff,
+// Employee Perf) so adding a historical log doesn't bust the cache.
+// Walks the logs once (O(n)) at fingerprint-build time — still cheaper
+// than the rebuild of all 5 today-only panels combined.
+function todayFingerprint(logs, tz, todayYmd) {
+  if (!logs || !logs.length) return '0|' + (todayYmd || '') + '|' + (tz || '');
+  let count = 0;
+  let lastEndToday = 0;
+  for (let i = 0; i < logs.length; i++) {
+    const l = logs[i];
+    if (!l) continue;
+    const end = Number(l.end);
+    if (!Number.isFinite(end)) continue;
+    if (ymdInTimezone(end, tz) === todayYmd) {
+      count++;
+      if (end > lastEndToday) lastEndToday = end;
+    }
+  }
+  return count + '|' + lastEndToday + '|' + (todayYmd || '') + '|' + (tz || '');
+}
+
 function aggregateRealtime(logs, tz, todayYmd) {
-  const fingerprint = (tz || '') + '|' + (todayYmd || '') + '|' + logsFingerprint(logs);
-  if (dashboardAggregateCache.value && dashboardAggregateCache.fingerprint === fingerprint) {
-    return dashboardAggregateCache.value;
+  // Cheap fast path: serve a synthetic result assembled from the two
+  // sub-caches. If both sub-caches hit, this is O(1).
+  const todayKey = todayFingerprint(logs, tz, todayYmd);
+  const itemKey = logsFingerprint(logs);
+  if (
+    todayCache.value && todayCache.fingerprint === todayKey &&
+    itemAggCache.value && itemAggCache.fingerprint === itemKey
+  ) {
+    return {
+      todayCount: todayCache.value.todayCount,
+      todaySec: todayCache.value.todaySec,
+      todayAvgSec: todayCache.value.todayAvgSec,
+      todayEmp: todayCache.value.todayEmp,
+      todayProc: todayCache.value.todayProc,
+      itemAgg: itemAggCache.value.itemAgg,
+      hourBuckets: todayCache.value.hourBuckets,
+    };
   }
 
+  // Single-pass walk that fills whichever sub-cache is cold. Most calls
+  // hit the fast path above; this loop runs only when a log actually
+  // landed in today (todayCache miss) OR any log landed at all
+  // (itemAggCache miss).
   const n = logs ? logs.length : 0;
-  // Today's buckets
-  const todayUnits = 0;
   let todayCount = 0;
   let todaySec = 0;
-  const todayEmp = Object.create(null);     // empId -> { units, lastEnd, lastProcess }
-  const todayProc = Object.create(null);    // procName -> { units, totalSec }
-  // All-time buckets
-  const itemAgg = Object.create(null);      // abayaId -> { units, totalSec, segments, activeSec }
-  const hourBuckets = Object.create(null);  // hour (0-23) -> count
+  const todayEmp = Object.create(null);
+  const todayProc = Object.create(null);
+  const itemAgg = Object.create(null);
+  const hourBuckets = Object.create(null);
 
   for (let i = 0; i < n; i++) {
     const l = logs[i];
@@ -1947,11 +2055,10 @@ function aggregateRealtime(logs, tz, todayYmd) {
     const endNum = Number(end);
     if (!Number.isFinite(endNum)) continue;
     const sec = logDurationSec(l);
-    const d = new Date(endNum);
     const ymd = ymdInTimezone(endNum, tz);
+    const d = new Date(endNum);
     const hour = d.getHours();
 
-    // Hour bucket (cheap, no allocation)
     hourBuckets[hour] = (hourBuckets[hour] || 0) + 1;
 
     if (ymd === todayYmd) {
@@ -1974,7 +2081,6 @@ function aggregateRealtime(logs, tz, todayYmd) {
       pRow.totalSec += sec;
     }
 
-    // Item-code aggregation (all-time, used by renderAbayaItemTotals)
     const abayaId = l.abaya_id;
     if (abayaId != null && abayaId !== '') {
       const ak = String(abayaId);
@@ -1986,23 +2092,27 @@ function aggregateRealtime(logs, tz, todayYmd) {
     }
   }
 
-  const out = {
+  todayCache.value = {
     todayCount: todayCount,
     todaySec: todaySec,
     todayAvgSec: todayCount > 0 ? Math.round(todaySec / todayCount) : 0,
     todayEmp: todayEmp,
     todayProc: todayProc,
-    itemAgg: itemAgg,
     hourBuckets: hourBuckets,
   };
-  dashboardAggregateCache.value = out;
-  dashboardAggregateCache.fingerprint = fingerprint;
-  return out;
-}
+  todayCache.fingerprint = todayKey;
+  itemAggCache.value = { itemAgg: itemAgg };
+  itemAggCache.fingerprint = itemKey;
 
-function dashboardAggregateCacheClear() {
-  dashboardAggregateCache.value = null;
-  dashboardAggregateCache.fingerprint = '';
+  return {
+    todayCount: todayCache.value.todayCount,
+    todaySec: todayCache.value.todaySec,
+    todayAvgSec: todayCache.value.todayAvgSec,
+    todayEmp: todayCache.value.todayEmp,
+    todayProc: todayCache.value.todayProc,
+    itemAgg: itemAggCache.value.itemAgg,
+    hourBuckets: todayCache.value.hourBuckets,
+  };
 }
 
 
