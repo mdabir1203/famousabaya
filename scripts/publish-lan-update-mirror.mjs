@@ -49,6 +49,29 @@ const args = parseArgs(process.argv);
 assertChannel(args.channel);
 
 const destDir = args.dest || path.join(REPO_ROOT, 'data', 'lan-update-mirror', args.channel);
+
+// Sanity header so the operator always sees exactly where files come from and where
+// they will land. Misreading REPO_ROOT is the #1 cause of "publish seemed to work
+// but the launcher still sees the old version" — printing it up-front catches that.
+console.log('=========================================');
+console.log('[publish-lan] REPO_ROOT      :', REPO_ROOT);
+console.log('[publish-lan] --from         :', args.from);
+console.log('[publish-lan] --channel      :', args.channel);
+console.log('[publish-lan] -> destDir      :', destDir);
+const serverJs = path.join(REPO_ROOT, '..', 'server.js');
+const serverJsAlt = path.join(REPO_ROOT, 'server.js');
+const serverFound = fs.existsSync(serverJs) ? serverJs : (fs.existsSync(serverJsAlt) ? serverJsAlt : null);
+if (serverFound) {
+  console.log('[publish-lan] server.js co-located at:', serverFound);
+} else {
+  console.warn('[publish-lan] WARNING: server.js not found next to this script.');
+  console.warn('[publish-lan]   expected at: ' + serverJs + ' OR ' + serverJsAlt);
+  console.warn('[publish-lan]   server.js will NOT serve the files you are publishing unless');
+  console.warn('[publish-lan]   it runs from the same REPO_ROOT, or ABAYA_LAN_UPDATE_MIRROR_DIR');
+  console.warn('[publish-lan]   points at destDir above.');
+}
+console.log('=========================================');
+
 if (!fs.existsSync(args.from) || !fs.statSync(args.from).isDirectory()) {
   console.error('Source directory not found:', args.from);
   process.exit(1);
