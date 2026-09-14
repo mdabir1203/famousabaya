@@ -25,15 +25,24 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const ROOT = path.resolve(__dirname, '..');
 process.chdir(ROOT);
 
-// Spawn the real factory with Yarn PnP preloaded. stdio: 'inherit' makes
-// the child's console.log flow into our stdout, which PM2 captures into
-// data/pm2-logs/abaya-server.{out,err}.log.
+// v1.2.37: mirror the watcher's .pnp.cjs fallback. The bundled install ships
+// node_modules/ (from the CI `Bundle factory runtime deps` step's `npm install`)
+// but NOT .pnp.cjs (only `yarn install` produces that). On a freshly-installed
+// factory laptop that hasn't run LAUNCH-ALL.bat yet, `./.pnp.cjs` doesn't
+// exist and `node -r ./.pnp.cjs server.js` crashes with the cjs/loader error.
+// Same fix as install/pm2-catalog-watcher-wrapper.js.
+const PNP_PATH = path.join(ROOT, '.pnp.cjs');
+const args = fs.existsSync(PNP_PATH)
+  ? ['-r', './.pnp.cjs', 'server.js']
+  : ['server.js'];
+
 const NODE = process.execPath;
-const child = spawn(NODE, ['-r', './.pnp.cjs', 'server.js'], {
+const child = spawn(NODE, args, {
   cwd: ROOT,
   env: process.env,
   stdio: 'inherit',

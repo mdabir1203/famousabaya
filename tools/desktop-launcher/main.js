@@ -1447,10 +1447,22 @@ function nodeRunArgs(scriptDir, script) {
   return fs.existsSync(pnp) ? ['-r', pnp, script] : [script];
 }
 
-/** True when the repo has an installed dependency graph (PnP or real node_modules). */
+/** True when the repo has an installed dependency graph (PnP or real node_modules).
+ *  v1.2.37: the bundled NSIS installer puts the runtime deps in
+ *  install/.factory-deps/node_modules/ (written by `slim-install.cjs` after
+ *  CI's `Bundle factory runtime deps` step), NOT in node_modules/ at the
+ *  repo root. The bundled case is the common one on a factory laptop --
+ *  the operator rarely runs `yarn install` after the install -- so we
+ *  have to recognize both paths before declaring the dep graph missing.
+ *  Without this, `resolvePm2Wrapper()` returns null and the launcher's
+ *  PM2 pane shows "PM2 not running" even though `install/run-pm2.cjs`
+ *  + `.factory-deps/node_modules/pm2` are both present and ready. */
 function factoryDepsInstalled() {
   if (fs.existsSync(path.join(REPO_ROOT, '.pnp.cjs'))) return true;
-  return fs.existsSync(path.join(REPO_ROOT, 'node_modules', 'express'));
+  if (fs.existsSync(path.join(REPO_ROOT, 'node_modules', 'express'))) return true;
+  // Bundled NSIS installer: the slim-installed runtime deps live here.
+  if (fs.existsSync(path.join(REPO_ROOT, 'install', '.factory-deps', 'node_modules', 'express'))) return true;
+  return false;
 }
 
 function spawnFactoryServer() {
