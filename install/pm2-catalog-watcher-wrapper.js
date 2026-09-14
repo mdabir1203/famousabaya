@@ -22,8 +22,21 @@ const NODE = process.execPath;
 // NOT .pnp.cjs. The previous hardcoded `-r ./.pnp.cjs` then crashed with
 // `Cannot find module ... .pnp.cjs` from the cjs/loader on the factory
 // laptop. Mirror the same fallback as install/lib/bootstrap.cjs#serverInvocation.
+//
+// v1.2.39 (install-coherence-2026-09-14): also check that the Yarn 4 PnP cache
+// (`.yarn/cache/`) exists. A factory laptop that has run LAUNCH-ALL.bat once
+// will have .pnp.cjs but the .yarn/cache/ can be wiped/empty — then .pnp.cjs
+// loads, tries to resolve chokidar at
+// .yarn/cache/chokidar-npm-3.6.0-<hash>.zip/node_modules/chokidar/, fails,
+// and the watcher exits (1). PM2 then crash-loops it. Same shape on the
+// factory-server wrapper (pm2-abaya-wrapper.js).
 const PNP_PATH = path.join(WATCHER_DIR, '.pnp.cjs');
-const args = fs.existsSync(PNP_PATH)
+const YARN_CACHE = path.join(WATCHER_DIR, '.yarn');
+const usePnp = fs.existsSync(PNP_PATH) && fs.existsSync(YARN_CACHE);
+if (!usePnp && fs.existsSync(PNP_PATH) && !fs.existsSync(YARN_CACHE)) {
+  console.warn('[pm2-catalog-watcher-wrapper] .pnp.cjs present but .yarn/cache/ missing — falling back to plain node. The watcher will use node_modules/ instead of PnP.');
+}
+const args = usePnp
   ? ['-r', './.pnp.cjs', 'watch-catalog.js']
   : ['watch-catalog.js'];
 

@@ -36,8 +36,19 @@ process.chdir(ROOT);
 // factory laptop that hasn't run LAUNCH-ALL.bat yet, `./.pnp.cjs` doesn't
 // exist and `node -r ./.pnp.cjs server.js` crashes with the cjs/loader error.
 // Same fix as install/pm2-catalog-watcher-wrapper.js.
+//
+// v1.2.39 (install-coherence-2026-09-14): also require that .yarn/cache/ exists.
+// A factory laptop with .pnp.cjs but a wiped/empty .yarn/cache/ would crash the
+// same way the watcher did (cjs/loader: Cannot find module ... chokidar in
+// .yarn/cache/...). Falling back to plain node uses node_modules/ from CI's
+// `npm install` step, which is always present in the bundled install.
 const PNP_PATH = path.join(ROOT, '.pnp.cjs');
-const args = fs.existsSync(PNP_PATH)
+const YARN_CACHE = path.join(ROOT, '.yarn');
+const usePnp = fs.existsSync(PNP_PATH) && fs.existsSync(YARN_CACHE);
+if (!usePnp && fs.existsSync(PNP_PATH) && !fs.existsSync(YARN_CACHE)) {
+  console.warn('[pm2-abaya-wrapper] .pnp.cjs present but .yarn/cache/ missing — falling back to plain node. server.js will use node_modules/ instead of PnP.');
+}
+const args = usePnp
   ? ['-r', './.pnp.cjs', 'server.js']
   : ['server.js'];
 
