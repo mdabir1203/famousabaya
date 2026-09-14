@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AbaYa Track - Network Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&family=Sora:wght@600;700;800&display=optional" rel="stylesheet"></noscript>
+<style>
+  body { background: #1f1633; color: #ffffff; font-family: 'Rubik', -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .hub { background: rgba(255,255,255,0.08); border: 1px solid rgba(54,45,89,0.5); padding: 40px; border-radius: 20px; text-align: center; max-width: 400px; width: 100%; box-shadow: rgba(22,15,36,0.9) 0px 4px 4px 9px; backdrop-filter: blur(18px) saturate(180%); }
+  .icon { font-size: 48px; margin-bottom: 20px; }
+  h1 { font-family: 'Sora', 'Rubik', sans-serif; font-size: 24px; margin: 0 0 8px 0; font-weight: 700; letter-spacing: -0.5px; }
+  p { color: #e5e7eb; font-size: 14px; margin-bottom: 30px; line-height: 1.5; }
+  .btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 16px; margin-bottom: 12px; border-radius: 13px; font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none; transition: all 0.2s; box-sizing: border-box; font-family: 'Rubik', sans-serif; text-transform: uppercase; letter-spacing: 0.2px; }
+  .btn-kiosk { background: #6a5fc1; color: #fff; border: 1px solid #584674; box-shadow: rgba(0,0,0,0.1) 0px 1px 3px 0px inset; }
+  .btn-kiosk:hover { box-shadow: rgba(0,0,0,0.18) 0px 0.5rem 1.5rem; transform: translateY(-2px); }
+  .btn-dash { background: #79628c; color: #fff; border: 1px solid #584674; box-shadow: rgba(0,0,0,0.1) 0px 1px 3px 0px inset; }
+  .btn-dash:hover { box-shadow: rgba(0,0,0,0.18) 0px 0.5rem 1.5rem; transform: translateY(-2px); }
+  .btn-setup { background: rgba(194,239,78,0.12); color: #c2ef4e; border: 1px solid rgba(194,239,78,0.3); }
+  .btn-setup:hover { background: rgba(194,239,78,0.22); border-color: rgba(194,239,78,0.5); transform: translateY(-2px); }
+  .status { font-size: 10px; color: #c2ef4e; margin-top: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.25px; }
+  .dot { width: 6px; height: 6px; background: #c2ef4e; border-radius: 50%; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(194,239,78,0.4); } 70% { box-shadow: 0 0 0 6px rgba(194,239,78,0); } 100% { box-shadow: 0 0 0 0 rgba(194,239,78,0); } }
+</style>
+</head>
+<body>
+<div class="hub">
+  <div class="icon">&#128300;</div>
+  <h1>AbaYa Hub Node</h1>
+  <p>Connected to Local Area Network. Select connection protocol below.</p>
+  
+  <a href="/kiosk.html" class="btn btn-kiosk">&#128241; Open Floor Kiosk</a>
+  <a href="/dashboard.html" class="btn btn-dash">&#128200; Open CEO Dashboard</a>
+  <a href="/setup" class="btn btn-setup">&#128247; QR Tablet Setup</a>
+  <a href="/asset-upload.html" class="btn btn-setup" style="margin-top:4px">&#128444; Media upload (items + employees)</a>
+  
+  <div class="status"><div class="dot"></div> Server Online & Broadcast Active</div>
+</div>
+</body>
+</html>

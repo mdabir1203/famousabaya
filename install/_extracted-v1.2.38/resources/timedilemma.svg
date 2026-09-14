@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161310"/>
+      <stop offset="50%" stop-color="#0b0a08"/>
+      <stop offset="100%" stop-color="#1e1a16"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f2e6c8"/>
+      <stop offset="40%" stop-color="#c9a05a"/>
+      <stop offset="100%" stop-color="#8f6b38"/>
+    </linearGradient>
+    <linearGradient id="goldLine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e8d4a8"/>
+      <stop offset="100%" stop-color="#a67c3d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <rect x="2.5" y="2.5" width="507" height="507" rx="105.5" fill="none" stroke="url(#gold)" stroke-width="2.5" opacity="0.5"/>
+
+  <g font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" fill="url(#goldLine)" opacity="0.88">
+    <text x="256" y="112" text-anchor="middle" font-size="20" font-weight="600" letter-spacing="0.62em">TIME</text>
+    <text x="256" y="142" text-anchor="middle" font-size="20" font-weight="600" letter-spacing="0.22em">DILEMMA</text>
+  </g>
+
+  <g transform="translate(0 12)">
+    <rect x="238" y="168" width="36" height="168" rx="2" fill="url(#gold)"/>
+    <rect x="148" y="168" width="216" height="34" rx="3" fill="url(#gold)"/>
+    <path fill="url(#gold)" d="M274 220 h52 c70 0 118 48 118 112 s-48 112-118 112 h-52 V368 h46 c48 0 78-40 78-88 s-30-88-78-88h-46z"/>
+  </g>
+
+  <text x="256" y="412" text-anchor="middle" font-family="Georgia, Times New Roman, serif" font-size="32" font-weight="400" letter-spacing="0.14em" fill="url(#gold)">Timedilemma</text>
+  <text x="256" y="442" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" font-weight="600" letter-spacing="0.38em" fill="#6e655a">TIME &#215; DILEMMA</text>
+</svg>

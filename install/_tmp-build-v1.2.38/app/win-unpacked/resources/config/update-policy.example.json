@@ -1,0 +1,11 @@
+{
+  "defaultChannel": "stable",
+  "betaPercent": 5,
+  "checkIntervalMinutes": 360,
+  "retryIntervalMinutes": 15,
+  "maxBackoffMinutes": 720,
+  "jitterPercent": 20,
+  "rolloutSeed": "replace-with-company-controlled-seed",
+  "auditLogMaxBytes": 2097152,
+  "auditLogMaxArchives": 5
+}

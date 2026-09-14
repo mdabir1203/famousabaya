@@ -1,0 +1,28 @@
+{
+  "name": "abaya-track-video",
+  "version": "1.0.0",
+  "description": "3D motion video — AbaYa-Track architecture explainer",
+  "scripts": {
+    "start": "remotion studio",
+    "build": "remotion render src/index.tsx AbaYaTrack out/abaya-track.mp4",
+    "build-gif": "remotion render src/index.tsx AbaYaTrack out/abaya-track.gif --codec=gif",
+    "upgrade": "remotion upgrade",
+    "still": "remotion still src/index.tsx AbaYaTrack out/still.png --frame=180"
+  },
+  "dependencies": {
+    "@remotion/three": "4.0.250",
+    "@remotion/cli": "4.0.250",
+    "@remotion/noise": "4.0.250",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.250",
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.10.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@types/three": "0.160.0",
+    "typescript": "5.3.3"
+  }
+}
