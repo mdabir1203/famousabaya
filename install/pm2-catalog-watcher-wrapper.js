@@ -10,12 +10,24 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const WATCHER_DIR = path.resolve(__dirname, '..', 'tools', 'catalog-watcher');
 process.chdir(WATCHER_DIR);
 
 const NODE = process.execPath;
-const child = spawn(NODE, ['-r', './.pnp.cjs', 'watch-catalog.js'], {
+// v1.2.36: detect whether .pnp.cjs exists in the watcher's own dir. The CI
+// build uses `npm install` (creates node_modules/) not `yarn install`
+// (would create .pnp.cjs), so the bundled installer ships node_modules/ but
+// NOT .pnp.cjs. The previous hardcoded `-r ./.pnp.cjs` then crashed with
+// `Cannot find module ... .pnp.cjs` from the cjs/loader on the factory
+// laptop. Mirror the same fallback as install/lib/bootstrap.cjs#serverInvocation.
+const PNP_PATH = path.join(WATCHER_DIR, '.pnp.cjs');
+const args = fs.existsSync(PNP_PATH)
+  ? ['-r', './.pnp.cjs', 'watch-catalog.js']
+  : ['watch-catalog.js'];
+
+const child = spawn(NODE, args, {
   cwd: WATCHER_DIR,
   env: process.env,
   stdio: 'inherit',
