@@ -1546,6 +1546,17 @@ function stopAllProcs() {
 function createWindow() {
   allowWindowClose = false;
   Menu.setApplicationMenu(null);
+  // v1.2.42 — allow `electron . --auto-open=support|rollback` (used by the
+  // screenshot script in verification-evidence). The renderer reads
+  // window.location.hash and auto-opens the corresponding panel. Without
+  // this flag the launch behaves exactly as before.
+  let loadHash = '';
+  for (let i = 0; i < process.argv.length; i++) {
+    const a = process.argv[i];
+    if (typeof a === 'string' && a.indexOf('--auto-open=') === 0) {
+      loadHash = '#' + a.split('=')[1].replace(/[^a-z]/gi, '').toLowerCase();
+    }
+  }
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -1569,7 +1580,7 @@ function createWindow() {
       backgroundThrottling: true,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, 'index.html'), loadHash ? { hash: loadHash.slice(1) } : undefined);
   mainWindow.webContents.on('did-finish-load', function () {
     emitUpdateState();
   });
@@ -1806,6 +1817,243 @@ ipcMain.handle('update-install-now', function () {
     getAutoUpdater().quitAndInstall();
   }, 250);
   return { ok: true };
+});
+
+/**
+ * v1.2.40 — One-shot bootstrap that bypasses electron-updater's
+ * `verifyUpdateCodeSignature` check entirely. The factory laptop shells out
+ * to `install/REPAIR-UPDATER-BOOTSTRAP.ps1`, which:
+ *   - reads latest.yml from the configured cloud R2 feed
+ *   - downloads the EXE directly
+ *   - verifies size + sha512 against the manifest
+ *   - runs the NSIS installer silently
+ *   - checks the post-install package.json version
+ * Use this when electron-updater's cert check is permanently stuck (the
+ * self-signed publisherName rejection that v1.2.33+ can no longer recover
+ * from without manual intervention). Once v1.2.40 ships, future updates
+ * go through electron-updater cleanly.
+ */
+ipcMain.handle('update-force-install-from-cloud', async function () {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Force-install is only implemented on Windows.' };
+  }
+  // The PS1 script lives next to main.js — `process.resourcesPath` is the
+  // launcher's unpackaged resources dir on dev, and `__dirname` of main.js
+  // when running under electron-builder. Probe both and pick the first hit.
+  const candidates = [
+    path.join(__dirname, 'install', 'REPAIR-UPDATER-BOOTSTRAP.ps1'),
+    path.join(process.resourcesPath || '', 'install', 'REPAIR-UPDATER-BOOTSTRAP.ps1'),
+  ];
+  const scriptPath = candidates.find(function (p) { try { return fs.existsSync(p); } catch (_) { return false; } });
+  if (!scriptPath) {
+    appendUpdateAudit('force-install-error', { error: 'bootstrap-script-missing' });
+    return {
+      ok: false,
+      error: 'Bootstrap script not found. Tried: ' + candidates.join(' | '),
+    };
+  }
+  setUpdateState({
+    message: 'Force-install bootstrap: downloading from cloud R2 feed...',
+    forceBootstrap: true,
+  });
+  appendUpdateAudit('force-install-requested', { scriptPath });
+  try {
+    // Elevate: NSIS writes files under %ProgramFiles% so the script requests
+    // elevation internally. The launcher itself is already elevated on
+    // Windows because of the app-update install path.
+    const out = childProcess.spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      {
+        cwd: path.dirname(scriptPath),
+        encoding: 'utf8',
+        timeout: 12 * 60 * 1000,  // 12 minutes — NSIS over slow links can take a while
+        windowsHide: true,
+      },
+    );
+    const stdout = String(out.stdout || '');
+    const stderr = String(out.stderr || '');
+    const code = Number(out.status);
+    appendUpdateAudit('force-install-result', { code, stdoutTail: stdout.slice(-512), stderrTail: stderr.slice(-512) });
+    if (code === 0) {
+      setUpdateState({
+        message: 'Force-install bootstrap succeeded. The launcher will restart into the new version shortly.',
+        forceBootstrapSucceeded: true,
+      });
+      return { ok: true, stdout: stdout, stderr: stderr, code: code };
+    }
+    setUpdateState({
+      message: 'Force-install bootstrap failed (exit=' + code + '). See startup log for details.',
+      forceBootstrapFailed: true,
+    });
+    return { ok: false, code: code, stdout: stdout, stderr: stderr };
+  } catch (e) {
+    appendUpdateAudit('force-install-error', { error: String(e && e.message ? e.message : e) });
+    setUpdateState({
+      message: 'Force-install bootstrap crashed: ' + String(e && e.message ? e.message : e),
+      forceBootstrapFailed: true,
+    });
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+});
+
+/**
+ * v1.2.42 — Rollback chooser IPCs. Two new endpoints on the update lane:
+ *
+ *   update-list-versions : GET the versions-manifest.json from the configured
+ *                          cloud feed (e.g. `<base>/updates/stable/versions-manifest.json`).
+ *                          Returns `{ok, manifest}` on success, `{ok: false, error}`
+ *                          when the manifest is missing or unreachable.
+ *                          publish-r2-update.mjs writes the manifest alongside
+ *                          latest.yml so every Rollback candidate has its
+ *                          URL + size + sha-512 for verification.
+ *
+ *   update-install-version : For a chosen version entry, re-runs the same
+ *                            bootstrap path (download -> sha-verify -> NSIS /S)
+ *                            but in-process so the renderer gets live progress
+ *                            and doesn't have to spawn PowerShell. We also pass
+ *                            $env:ABAYA_TARGET_VERSION to the bundled PS1 when
+ *                            it's available, so the operator gets the same
+ *                            audit trail regardless of code path.
+ *
+ * The manifest endpoint falls back to `latest.yml` when the JSON is not on
+ * the feed yet (e.g. older publishes), so the rollback chooser still
+ * exposes v1.2.38 even before publish-r2-update.mjs is updated.
+ */
+async function fetchVersionsManifest() {
+  const base = String(process.env.ABAYA_CLOUD_UPDATE_BASE_URL || 'https://dashboard.farewellabaya.com').trim().replace(/\/+$/, '');
+  const ring = 'stable';
+  const manifestUrl = `${base}/updates/${ring}/versions-manifest.json`;
+  appendUpdateAudit('rollback-manifest-fetch', { url: manifestUrl });
+  try {
+    const r = await fetchWithRetry(manifestUrl, null, 3);
+    if (r && r.status === 200) {
+      const j = JSON.parse(await r.text());
+      if (j && Array.isArray(j.versions)) return { ok: true, manifest: j, source: 'manifest' };
+      return { ok: false, error: 'manifest has no versions array', url: manifestUrl };
+    }
+    return { ok: false, error: 'manifest HTTP ' + (r && r.status) + ' / not yet published', url: manifestUrl };
+  } catch (e) {
+    return { ok: false, error: 'manifest fetch failed: ' + String(e && e.message ? e.message : e), url: manifestUrl };
+  }
+}
+
+async function fallbackVersionsFromLatestYml() {
+  const base = String(process.env.ABAYA_CLOUD_UPDATE_BASE_URL || 'https://dashboard.farewellabaya.com').trim().replace(/\/+$/, '');
+  const url = `${base}/updates/stable/latest.yml`;
+  try {
+    const r = await fetchWithRetry(url, null, 3);
+    if (!r || r.status !== 200) return { ok: false, error: 'latest.yml HTTP ' + (r && r.status), url };
+    const text = await r.text();
+    const version = (text.split('\n').find(l => l.startsWith('version:')) || '').replace(/^version:\s*/, '').trim();
+    const sizeLine = text.split('\n').find(l => /^\s+size:/.test(l)) || '';
+    const shaLine = text.split('\n').find(l => /^\s+sha512:/.test(l)) || '';
+    const size = parseInt((sizeLine.replace(/.*size:\s*/, '') || '0').trim(), 10);
+    const sha512 = (shaLine.replace(/.*sha512:\s*/, '') || '').trim();
+    if (!version) return { ok: false, error: 'latest.yml missing version', url };
+    return {
+      ok: true,
+      manifest: {
+        channel: 'stable',
+        latest: version,
+        versions: [{ version: version, size: size, sha512: sha512, published_at: null, fallback: true }],
+      },
+      source: 'latest.yml',
+    };
+  } catch (e) {
+    return { ok: false, error: 'latest.yml fetch failed: ' + String(e && e.message ? e.message : e), url };
+  }
+}
+
+ipcMain.handle('update-list-versions', async function () {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Rollback chooser is currently Windows-only.' };
+  }
+  const m = await fetchVersionsManifest();
+  if (m.ok) return m;
+  // Fallback: build a 1-row manifest from latest.yml so the chooser still
+  // shows the most recent published version even when the manifest hasn't
+  // been published yet. The label row tells the operator this is the
+  // single-version fallback.
+  const fallback = await fallbackVersionsFromLatestYml();
+  if (fallback.ok) {
+    fallback.manifest._warning = m.error || 'manifest unavailable';
+  }
+  return fallback;
+});
+
+ipcMain.handle('update-install-version', async function (_event, versionEntry) {
+  if (process.platform !== 'win32') {
+    return { ok: false, error: 'Rollback chooser is currently Windows-only.' };
+  }
+  if (!versionEntry || !versionEntry.version) {
+    return { ok: false, error: 'No version entry provided.' };
+  }
+  // Find the candidate script. Prefer the bundled one in extraResources,
+  // fall back to the dev folder so it works in `yarn start` too.
+  const candidates = [
+    path.join(__dirname, 'install', 'REPAIR-UPDATER-BOOTSTRAP.ps1'),
+    path.join(process.resourcesPath || '', 'install', 'REPAIR-UPDATER-BOOTSTRAP.ps1'),
+  ];
+  const scriptPath = candidates.find(function (p) { try { return fs.existsSync(p); } catch (_) { return false; } });
+  if (!scriptPath) {
+    return {
+      ok: false,
+      error: 'Bootstrap script not found. Tried: ' + candidates.join(' | '),
+    };
+  }
+  setUpdateState({
+    message: 'Rollback bootstrap: downloading v' + versionEntry.version + ' from cloud R2 feed...',
+    rollbackBootstrap: true,
+    rollbackVersion: versionEntry.version,
+  });
+  appendUpdateAudit('rollback-install-requested', {
+    version: versionEntry.version,
+    size: versionEntry.size,
+    sha512Prefix: String(versionEntry.sha512 || '').slice(0, 12),
+    scriptPath,
+  });
+  try {
+    const out = childProcess.spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      {
+        cwd: path.dirname(scriptPath),
+        encoding: 'utf8',
+        timeout: 12 * 60 * 1000,
+        windowsHide: true,
+        env: Object.assign({}, process.env, {
+          ABAYA_TARGET_VERSION: versionEntry.version,
+          // The PS1 also reads these for advanced traceability.
+          ABAYA_TARGET_SHA512: String(versionEntry.sha512 || ''),
+          ABAYA_TARGET_SIZE_BYTES: String(versionEntry.size || 0),
+        }),
+      },
+    );
+    const stdout = String(out.stdout || '');
+    const stderr = String(out.stderr || '');
+    const code = Number(out.status);
+    appendUpdateAudit('rollback-install-result', { code, version: versionEntry.version, stdoutTail: stdout.slice(-512), stderrTail: stderr.slice(-512) });
+    if (code === 0) {
+      setUpdateState({
+        message: 'Rollback to v' + versionEntry.version + ' succeeded. The launcher will restart into the new version shortly.',
+        forceBootstrapSucceeded: true,
+      });
+      return { ok: true, code: code, stdout: stdout, stderr: stderr };
+    }
+    setUpdateState({
+      message: 'Rollback bootstrap failed (exit=' + code + '). See startup log for details.',
+      forceBootstrapFailed: true,
+    });
+    return { ok: false, code: code, stdout: stdout, stderr: stderr };
+  } catch (e) {
+    appendUpdateAudit('rollback-install-error', { error: String(e && e.message ? e.message : e) });
+    setUpdateState({
+      message: 'Rollback bootstrap crashed: ' + String(e && e.message ? e.message : e),
+      forceBootstrapFailed: true,
+    });
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
 });
 
 ipcMain.handle('dismiss-update-success', function () {

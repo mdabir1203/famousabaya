@@ -30,6 +30,23 @@ body{background:var(--bg);color:var(--tx);font-family:var(--fn);min-height:100vh
 .live-badge{display:flex;align-items:center;gap:5px;background:var(--rdb);color:var(--rd);padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2px}
 .live-dot{width:6px;height:6px;border-radius:50%;background:var(--rd);animation:blink 1s infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+/* v1.2.40 — Realtime SSE indicator. data-pill="live" mirrors the LAN
+   factory_seq watermark; warm means the stream is alive but the
+   watermark is 30-300 s old; stale means >= 5 min of silence. The
+   colors reuse the existing --rd/--am/--gn tokens so the pill fits
+   alongside the LIVE badge in the same header row. */
+#realtime-indicator[data-pill="live"]{background:rgba(34,197,94,0.18);color:var(--gn);border-color:rgba(34,197,94,0.4)}
+#realtime-indicator[data-pill="warm"]{background:rgba(251,191,36,0.18);color:var(--am);border-color:rgba(251,191,36,0.4)}
+#realtime-indicator[data-pill="stale"]{background:rgba(239,68,68,0.18);color:var(--rd);border-color:rgba(239,68,68,0.4)}
+#realtime-indicator[data-pill="idle"]{background:rgba(148,163,184,0.12);color:var(--tx3);border-color:rgba(148,163,184,0.2)}
+/* v1.2.40 — per-KPI-tile freshness label. Sits below .stat-sub.
+   "live" (green) means SSE pushed within 2 s; "−Xs" (warm) means polled
+   N seconds ago; "stale" (red) means > 5 min of silence. */
+.kpi-fresh{font-size:9px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-top:4px;font-family:var(--mono,ui-monospace,SFMono-Regular,Menlo,monospace);text-align:right;padding:1px 5px;border-radius:6px;display:inline-block;float:right;clear:both}
+.kpi-fresh[data-pill="fresh live"]{background:rgba(34,197,94,0.18);color:var(--gn)}
+.kpi-fresh[data-pill="fresh warm"]{background:rgba(251,191,36,0.18);color:var(--am)}
+.kpi-fresh[data-pill="fresh stale"]{background:rgba(239,68,68,0.18);color:var(--rd)}
+.kpi-fresh[data-pill="fresh ok"]{background:rgba(34,197,94,0.12);color:var(--gn);opacity:0.7}
 .dash{padding:16px;max-width:1100px;margin:0 auto}
 .dh{font-family:var(--fn-display);font-size:20px;font-weight:700;margin-bottom:2px}
 .ds{font-size:12px;color:var(--tx3);margin-bottom:18px}

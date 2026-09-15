@@ -9,6 +9,7 @@ import {
   factoryHourForUnix,
 } from '../working-hours.js';
 import { canonicalEmpProcess, dailyStatsColumnForProcess } from '../domain/process.js';
+import { broadcastRealtimeEvent } from './realtime-sse.js';
 
 /** POST /api/event — factory session ingest */
 export async function handleIngest(request, env) {
@@ -112,7 +113,24 @@ export async function handleIngest(request, env) {
       return errRes('Failed to persist session_start: ' + (insertErr && insertErr.message ? insertErr.message : String(insertErr)), 500);
     }
 
-    return jsonRes({ ok: true, event: 'session_start' });
+    // v1.2.40 — bump the factory_sync watermark. Failure here is logged
+    // but NOT fatal: the active_sessions row is the source of truth for
+    // the live board, and we'd rather show a stale seq than reject the
+    // event (which would queue it back on the LAN side and create a
+    // real sync gap). See migration 0021 for the table contract.
+    const seqStart = await updateFactorySeqWatermark(env, payload, 'session_start');
+    // Fan out to every open SSE listener so dashboards see the new active
+    // row within sub-second of the LAN POST. Module-scoped connections set;
+    // see realtime-sse.js for the lifecycle and reconnection guarantees.
+    broadcastRealtimeEvent({
+      kind: 'session_start',
+      seq: seqStart,
+      at: now,
+      emp_id: payload.emp_id,
+      abaya_id: payload.abaya_id || null,
+    });
+
+    return jsonRes({ ok: true, event: 'session_start', seq: seqStart });
   }
 
   const p = payload;
@@ -232,5 +250,66 @@ export async function handleIngest(request, env) {
     );
   }
 
-  return jsonRes({ ok: true, event: 'session_finish', session_id: sessionId });
+  // v1.2.40 — bump factory_sync watermark and fan out to any open SSE
+  // dashboard. Order matters: persist first (durable), then broadcast
+  // (transient). A listener that misses a broadcast because it
+  // disconnected / just subscribed will pick up the steady state on the
+  // next /api/state hydration. See migration 0021 + realtime-sse.js.
+  const seqFinish = await updateFactorySeqWatermark(env, p, 'session_finish');
+  broadcastRealtimeEvent({
+    kind: 'session_finish',
+    seq: seqFinish,
+    at: p.ended_at || now,
+    session_id: sessionId,
+    emp_id: p.emp_id,
+    abaya_id: p.abaya_id || null,
+    duration_sec: inWindowDuration,
+    process: storedProcess,
+  });
+
+  return jsonRes({ ok: true, event: 'session_finish', session_id: sessionId, seq: seqFinish });
+}
+
+/**
+ * v1.2.40 — Upsert the factory_sync watermark with the highest local_seq
+ * the cloud has seen. Idempotent (MAX of current + incoming) so a queue
+ * replay that delivers an older seq is a no-op while a newer seq (or
+ * restart-rebased lower seq) still records the actual high water mark.
+ *
+ * Returns the post-upsert seq_value, or null on D1 failure so the caller
+ * can log without rejecting the event itself.
+ */
+async function updateFactorySeqWatermark(env, payload, eventType) {
+  try {
+    const incoming = Number(payload && payload.local_seq);
+    if (!Number.isFinite(incoming) || incoming <= 0) {
+      // Legacy / non-stamped push — don't write a watermark row, but
+      // also don't reject. The cloud-side seq tracking is opt-in for
+      // v1.2.40; older factory servers continue to work unchanged.
+      return null;
+    }
+    const empId = payload && payload.emp_id ? String(payload.emp_id) : null;
+    await env.DB
+      .prepare(
+        `INSERT INTO factory_sync (seq_type, seq_value, last_event_type, last_emp_id, updated_at)
+         VALUES ('events_seq', ?, ?, ?, unixepoch())
+         ON CONFLICT(seq_type) DO UPDATE SET
+           seq_value = MAX(factory_sync.seq_value, excluded.seq_value),
+           last_event_type = excluded.last_event_type,
+           last_emp_id = excluded.last_emp_id,
+           updated_at = excluded.updated_at`
+      )
+      .bind(incoming, eventType, empId)
+      .run();
+    // Return the watermark we just committed so the broadcast / response
+    // surfaces the actual stored value, not the inbound value (which may
+    // be lower after a restart-and-replay).
+    const row = await env.DB
+      .prepare(`SELECT seq_value, updated_at FROM factory_sync WHERE seq_type='events_seq'`)
+      .first();
+    return row && Number(row.seq_value) ? Number(row.seq_value) : incoming;
+  } catch (e) {
+    console.warn('[ingest] factory_sync upsert failed (non-fatal):', e && e.message);
+    return null;
+  }
 }

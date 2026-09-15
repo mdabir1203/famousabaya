@@ -166,6 +166,52 @@ launcher has `verifyUpdateCodeSignature: false` (v1.2.37) so updates work, but
 NSIS SmartScreen is a separate Windows-level prompt. Operator clicks "More info"
 → "Run anyway" once per laptop.
 
+### "Autoupdater stuck on old release with cert error"
+**Symptom (v1.2.40 onward):** the launcher's updater footer reads
+```
+Feed: cloud | probe: ok | Channel: stable | Current: 1.2.X | Available: 1.2.Y
+LAST ERROR: New version <Y> is not signed by the application owner:
+publisherName: AbaYa Track Self Signed ...
+```
+This is the chicken-and-egg of the self-signed cert: the v1.2.X release predates
+the v1.2.37 fix (`build.win.verifyUpdateCodeSignature: false`), so electron-updater
+rejects every newer EXE. The launcher's in-app autoupdater cannot bootstrap
+itself out of this state because the very check that's blocking future updates
+would have to be relaxed by an update it can't accept.
+
+**Permanent fix** (shipped v1.2.40):
+1. On the factory PC, open PowerShell **as Administrator**.
+2. Run:
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File `
+     "C:\Program Files\AbaYa Track Launcher\install\REPAIR-UPDATER-BOOTSTRAP.ps1"
+   ```
+   (The script is shipped under `extraResources/` of every launcher EXE.)
+3. The script:
+   - fetches `https://dashboard.farewellabaya.com/updates/stable/latest.yml`
+   - downloads the matching EXE directly
+   - verifies the SHA-512 against the manifest
+   - runs the NSIS installer silently with `/S`
+   - polls the post-install `package.json` to confirm the version advanced
+4. After the script reports `SUCCESS`, restart the launcher. From this
+   point on, electron-updater handles future updates cleanly
+   (`verifyUpdateCodeSignature: false` is in the bundled package.json from
+   v1.2.37 onward).
+
+**In-app alternative (v1.2.40+):** the launcher's Control Center has a
+`Force install from cloud` button that triggers the same bootstrap path
+via the `update-force-install-from-cloud` IPC handler in `main.js`. This
+is the preferred path because the user doesn't need to find or run the
+script manually.
+
+**If the script itself can't reach the cloud:** fall back to the LAN mirror.
+Set `ABAYA_CLOUD_UPDATE_BASE_URL` to the factory's mirror base before
+running, e.g.
+```powershell
+$env:ABAYA_CLOUD_UPDATE_BASE_URL = 'http://192.168.0.101:3111'
+powershell -NoProfile -ExecutionPolicy Bypass -File REPAIR-UPDATER-BOOTSTRAP.ps1
+```
+
 ### "I edited server.js but the change didn't show up on the factory"
 You're probably looking at folder #1 (dev workspace) but the factory server
 runs folder #2. Either:

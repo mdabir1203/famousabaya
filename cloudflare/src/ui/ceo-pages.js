@@ -156,6 +156,7 @@ export function getCEODashboard(origin) {
   <div style="display:flex;align-items:center;gap:10px">
     <div style="font-size:11px;color:var(--tx3)" id="sync-status">Syncing...</div>
     <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+    <div id="realtime-indicator" data-pill="idle" style="font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,0.06);color:var(--tx3);border:1px solid rgba(255,255,255,0.1);letter-spacing:0.04em;cursor:help"></div>
   </div>
 </div>
 
@@ -242,11 +243,11 @@ export function getCEODashboard(origin) {
   </div>
 
   <div class="stat-row">
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">steps completed</div></div>
-    <div class="stat-card" title="Distinct abayas that touched the line in this window. Different from 'Completed Today' which counts every finished session: one abaya that went through Tailor (01) + Button + Hand Work + Tailor (02) = 1 abaya here, 4 in Completed Today."><div class="stat-lbl" data-kpi-label="abayas-delivered">Abayas Delivered</div><div class="stat-val" id="kpi-abayas-delivered" style="color:var(--pu)">—</div><div class="stat-sub">distinct garments</div></div>
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div></div>
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">Avg Session Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">median per finished step today</div></div>
-    <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="completed">Completed Today</div><div class="stat-val" id="kpi-completed" style="color:var(--gr)">—</div><div class="stat-sub">steps completed</div><div class="kpi-fresh" data-kpi-fresh="completed" data-kpi-source="polled">—</div></div>
+    <div class="stat-card" title="Distinct abayas that touched the line in this window. Different from 'Completed Today' which counts every finished session: one abaya that went through Tailor (01) + Button + Hand Work + Tailor (02) = 1 abaya here, 4 in Completed Today."><div class="stat-lbl" data-kpi-label="abayas-delivered">Abayas Delivered</div><div class="stat-val" id="kpi-abayas-delivered" style="color:var(--pu)">—</div><div class="stat-sub">distinct garments</div><div class="kpi-fresh" data-kpi-fresh="abayas-delivered" data-kpi-source="polled">—</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="active">Active Workers</div><div class="stat-val" id="kpi-active" style="color:var(--bl)">—</div><div class="stat-sub">on floor now</div><div class="kpi-fresh" data-kpi-fresh="active" data-kpi-source="sse">—</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="avg" title="Median of all finished sessions today. Closer to a real per-step cycle time than the mean, which is inflated by forgotten-Finish sessions (workers who tap Start and walk away).">Avg Session Time</div><div class="stat-val" id="kpi-avg" style="color:var(--am)">—</div><div class="stat-sub">median per finished step today</div><div class="kpi-fresh" data-kpi-fresh="avg" data-kpi-source="polled">—</div></div>
+    <div class="stat-card"><div class="stat-lbl" data-kpi-label="eff">Efficiency Score</div><div class="stat-val" id="kpi-eff">—</div><div class="stat-sub">vs 45-min target</div><div class="kpi-fresh" data-kpi-fresh="eff" data-kpi-source="polled">—</div></div>
   </div>
 
   <div class="dash-row">
@@ -998,6 +999,257 @@ function schedulePollLoop() {
       setTimeout(schedulePollLoop, nextPollDelayMs());
     });
 }
+
+// ─── v1.2.40 — Realtime SSE consumer ────────────────────────────────────────
+// Bridges the cloud's /api/realtime/sse lane into STATE so the dashboard
+// reflects factory-floor Start/Finish events within sub-second (vs the
+// 1 s /api/state poll ceiling). The /api/state poll remains the source of
+// truth — SSE only mutates STATE between polls. A diff that fails to apply
+// is silently dropped; the next poll fixes the visuals.
+let _realtimeEs = null;
+let _realtimeLastSeq = 0;
+let _realtimeStats = {
+  opened: false,
+  eventsApplied: 0,
+  reconnects: 0,
+  lastEventAt: 0,
+  lastSeq: 0,
+  connState: 'idle',
+};
+function openRealtimeSse() {
+  if (_realtimeEs) return _realtimeEs;
+  if (typeof EventSource === 'undefined') {
+    _realtimeStats.connState = 'no-eventsource';
+    updateRealtimeIndicator();
+    return null;
+  }
+  try {
+    _realtimeEs = new EventSource(BASE + '/api/realtime/sse');
+    _realtimeStats.opened = true;
+    _realtimeStats.connState = 'opening';
+    _realtimeEs.addEventListener('open', function () {
+      _realtimeStats.connState = 'open';
+      updateRealtimeIndicator();
+    });
+    _realtimeEs.addEventListener('message', function (e) {
+      try {
+        var ev = JSON.parse(e.data);
+        onRealtimeEvent(ev);
+        _realtimeStats.eventsApplied += 1;
+        _realtimeStats.lastEventAt = Date.now();
+        _realtimeStats.lastSeq = ev && ev.seq ? Number(ev.seq) : _realtimeStats.lastSeq;
+      } catch (err) {
+        // Bad payload — drop and continue. The /api/state poll will heal.
+      }
+    });
+    _realtimeEs.addEventListener('error', function () {
+      _realtimeStats.connState = 'reconnecting';
+      _realtimeStats.reconnects += 1;
+      updateRealtimeIndicator();
+      // EventSource auto-reconnects after the server's idle-drop. Force a
+      // immediate /api/state hydration so the operator sees fresh data
+      // instead of waiting the full 1-4.5s poll cycle.
+      try { poll(true); } catch (_) {}
+    });
+    updateRealtimeIndicator();
+    return _realtimeEs;
+  } catch (e) {
+    _realtimeStats.connState = 'failed: ' + (e && e.message ? String(e.message) : 'unknown');
+    updateRealtimeIndicator();
+    return null;
+  }
+}
+function onRealtimeEvent(ev) {
+  if (!ev || !ev.kind) return;
+  if (!STATE) STATE = {};
+  // Bump STATE.ts so the hash dedup gate in poll() doesn't think nothing
+  // changed. Also keep this as the "what's the highest seq we've heard
+  // about" stamp for the indicator pill.
+  if (typeof ev.seq === 'number' && ev.seq > _realtimeLastSeq) {
+    _realtimeLastSeq = ev.seq;
+  }
+  STATE.__realtimeSeq = _realtimeLastSeq;
+  STATE.__realtimeLastAt = ev.at || Date.now();
+  if (ev.kind === 'session_start') {
+    if (!STATE.active) STATE.active = {};
+    if (!ev.emp_id) return;
+    // Insert a thin placeholder. The next /api/state poll (≤1 s later,
+    // bounded by the LIVE active cadence) will overwrite with the full
+    // row from D1; the placeholder's only job is to bump the active count
+    // immediately so the live board visually reacts.
+    STATE.active[String(ev.emp_id)] = Object.assign(
+      {},
+      STATE.active[String(ev.emp_id)] || {},
+      {
+        emp_id: String(ev.emp_id),
+        abaya_id: ev.abaya_id || null,
+        started_at: ev.at || Math.floor(Date.now() / 1000),
+      }
+    );
+  } else if (ev.kind === 'session_finish') {
+    // Bump completed_today and (best-effort) the process split. The full
+    // reflow — including abaya lifetime, garment totals, perf —
+    // requires the /api/state poll. We only ship what we know cheaply.
+    if (ev.emp_id && STATE.active && STATE.active[String(ev.emp_id)]) {
+      delete STATE.active[String(ev.emp_id)];
+    }
+    if (typeof STATE.completed_today === 'number') {
+      STATE.completed_today = STATE.completed_today + 1;
+    } else if (STATE.completed_today == null) {
+      STATE.completed_today = 1;
+    }
+    if (ev.process && STATE.process_split_today && typeof STATE.process_split_today === 'object') {
+      STATE.process_split_today[ev.process] = (STATE.process_split_today[ev.process] || 0) + 1;
+    }
+  }
+  // Force the hash gate to admit the change. We poke __realtimeLastAt;
+  // stateHash() includes STATE.ts (which we bumped above) so the dedup
+  // check naturally sees a different value. Belt-and-suspenders: also
+  // tell __ceoPerf to forget its memo.
+  try {
+    if (window.__ceoPerf && typeof window.__ceoPerf.resetMemoForTest === 'function') {
+      window.__ceoPerf.resetMemoForTest();
+    }
+  } catch (_) {}
+  try { renderAll(); } catch (e) { console.error('[realtime] renderAll failed:', e); }
+  updateRealtimeIndicator();
+  // v1.2.40 — derived KPIs (ABAYAS DELIVERED, AVG SESSION, EFFICIENCY
+  // SCORE, GARMENT TOTALS, EMPLOYEE PERF) live on /api/state and don't
+  // refresh from SSE alone. Trigger an immediate /api/state?live=1 fetch
+  // so they catch up to the new watermark within ~100 ms instead of
+  // waiting the full 1s poll cadence. Debounce so a burst of 5 events in
+  // 200 ms becomes a single fetch (the in-flight guard in poll() makes
+  // the duplicates harmless anyway, but the debounce keeps D1 row_reads
+  // predictable).
+  schedulePostEventRefresh();
+}
+
+/** Debounce so the post-SSE /api/state refresh fires at most once per 250 ms. */
+let _postEventRefreshTimer = null;
+let _postEventRefreshInFlight = false;
+function schedulePostEventRefresh() {
+  if (_postEventRefreshTimer) return;
+  _postEventRefreshTimer = setTimeout(function () {
+    _postEventRefreshTimer = null;
+    if (_postEventRefreshInFlight) return;
+    _postEventRefreshInFlight = true;
+    Promise.resolve()
+      .then(function () { return poll(true); })
+      .catch(function () { /* poll() handles its own errors */ })
+      .finally(function () { _postEventRefreshInFlight = false; });
+  }, 250);
+}
+
+/**
+ * v1.2.40 — Per-tile freshness labels for the cloud CEO KPI row.
+ *
+ * Each KPI tile carries a [data-kpi-fresh] element. The label text is one of:
+ *   "live"    — pushed via SSE within the last 2 s, value reflects
+ *               the most recent factory floor state.
+ *   "-Xs"     — polled from /api/state N seconds ago. Operator knows
+ *               the value may lag behind the floor by up to 1 s.
+ *   "-Xm"     — polled >= 60 s ago. Yellow flag — likely autoupdater /
+ *               LAN connectivity issue.
+ *   "stale"   — more than 5 min of staleness. Red flag — investigate.
+ *   "..."     — no data yet (first paint before /api/state returns).
+ *
+ * The timing is computed from STATE.server_now_ms and
+ * STATE.fetched_at_sec (both added to state_meta in v1.2.40).
+ */
+let _kpiFreshnessTimer = null;
+function refreshKpiFreshnessLabels() {
+  if (typeof document === 'undefined') return;
+  var meta = (STATE && STATE.state_meta) || {};
+  var serverNow = Number(meta.server_now_ms) || Date.now();
+  var fetchedAt = Number(meta.fetched_at_sec);
+  var fetchedAtMs = Number.isFinite(fetchedAt) && fetchedAt > 0
+    ? fetchedAt * 1000
+    : 0;
+  var lastSseMs = Number((STATE && STATE.__realtimeLastAt) || 0) * 1000;
+  // The SSE-supplied __realtimeLastAt is unix SECONDS (per the LAN
+  // server's emit timestamp). Multiply for ms comparison.
+  if (lastSseMs > 0 && lastSseMs < 1e12) lastSseMs = lastSseMs * 1000;
+  var ageSecPolled = fetchedAtMs > 0
+    ? Math.max(0, Math.floor((serverNow - fetchedAtMs) / 1000))
+    : 9999;
+  var ageSecSse = lastSseMs > 0
+    ? Math.max(0, Math.floor((serverNow - lastSseMs) / 1000))
+    : 9999;
+  function pillText(ageSec, source) {
+    if (source === 'sse' && ageSec <= 2) return 'live';
+    if (source === 'sse') return '\u2212' + ageSec + 's';
+    if (ageSec >= 300) return 'stale';
+    if (ageSec >= 60) return '\u2212' + Math.floor(ageSec / 60) + 'm';
+    if (ageSec >= 9999) return '...';
+    if (ageSec >= 10) return '\u2212' + ageSec + 's';
+    return '\u2212' + ageSec + 's';
+  }
+  function pillClass(ageSec, source) {
+    if (source === 'sse' && ageSec <= 2) return 'fresh live';
+    if (source === 'sse' && ageSec <= 10) return 'fresh warm';
+    if (ageSec >= 300) return 'fresh stale';
+    if (ageSec >= 60) return 'fresh warm';
+    if (ageSec >= 5) return 'fresh warm';
+    return 'fresh ok';
+  }
+  var tiles = document.querySelectorAll('[data-kpi-fresh]');
+  for (var i = 0; i < tiles.length; i++) {
+    var el = tiles[i];
+    var src = el.getAttribute('data-kpi-source') || 'polled';
+    var age = src === 'sse' ? ageSecSse : ageSecPolled;
+    var txt = pillText(age, src);
+    var cls = pillClass(age, src);
+    if (el.textContent !== txt) el.textContent = txt;
+    if (el.getAttribute('data-pill') !== cls) {
+      el.setAttribute('data-pill', cls);
+    }
+  }
+}
+
+// Re-render the freshness labels every 1 s — they're cheap (no DOM
+// rebuild, just textContent + attribute writes) and the operator's
+// expectation is a per-second heartbeat anyway.
+if (_kpiFreshnessTimer) clearInterval(_kpiFreshnessTimer);
+_kpiFreshnessTimer = setInterval(refreshKpiFreshnessLabels, 1000);
+function updateRealtimeIndicator() {
+  var el = document.getElementById('realtime-indicator');
+  if (!el) return;
+  var cloudSeq = (STATE && STATE.state_meta && STATE.state_meta.factory_seq_max_received) || 0;
+  var lastAt = (STATE && STATE.state_meta && STATE.state_meta.factory_seq_last_received_at) || 0;
+  var sseSeq = _realtimeLastSeq;
+  var mode = _realtimeStats.connState;
+  // Map connection state + watermark freshness to a pill color.
+  var pill = 'idle';
+  var label = 'RT off';
+  if (mode === 'open') {
+    pill = 'live';
+    label = 'RT ' + (sseSeq || cloudSeq || '0');
+  } else if (mode === 'opening' || mode === 'reconnecting') {
+    pill = 'warm';
+    label = 'RT ' + mode;
+  } else if (mode === 'no-eventsource') {
+    pill = 'idle';
+    label = 'RT n/a';
+  } else if (mode && mode.indexOf('failed') === 0) {
+    pill = 'stale';
+    label = 'RT fail';
+  }
+  if (pill === 'live' && lastAt) {
+    var ageSec = Math.max(0, Math.floor(Date.now() / 1000) - Number(lastAt));
+    if (ageSec > 30 && ageSec < 300) {
+      pill = 'warm';
+      label = 'RT ' + ageSec + 's';
+    } else if (ageSec >= 300) {
+      pill = 'stale';
+      label = 'RT ' + Math.floor(ageSec / 60) + 'm';
+    }
+  }
+  el.setAttribute('data-pill', pill);
+  el.textContent = label;
+  el.title = 'Realtime lane: ' + mode + ' · cloud seq ' + (cloudSeq || '?') +
+    ' · SSE seq ' + (sseSeq || '?') + (lastAt ? ' · last commit ' + Math.max(0, Math.floor(Date.now() / 1000) - Number(lastAt)) + 's ago' : '');
+}
+setInterval(updateRealtimeIndicator, 5000);
 
 function fmtHMS(sec) {
   const n = Math.floor(Number(sec) || 0);
@@ -1770,6 +2022,14 @@ function renderAll() {
         kpiEff.style.color = '';
       }
     }
+    // v1.2.40 — per-tile freshness labels. Each KPI tile now has a
+    // [data-kpi-fresh="X"] slot. The label is
+    // "live" (sourced via SSE patch) or "-Xs" (polled N seconds ago)
+    // based on STATE.server_now_ms and STATE.fetched_at_sec. SSE-driven
+    // metrics (active / completed) flip to "live" immediately on a push
+    // event; polled metrics carry the seconds-since-last-/api/state
+    // countdown and the operator knows they're stale until the next poll.
+    refreshKpiFreshnessLabels();
   });
 
   safeRender('header', function () {
@@ -3596,6 +3856,9 @@ loadAbayaCatalog().then(function () {
 loadEmployeeDayOptions();
 wireTraceCombobox();
 schedulePollLoop();
+// v1.2.40 — Sub-second live lane. EventSource reconnects on its own;
+// on reconnect the next /api/state poll re-hydrates any missed events.
+openRealtimeSse();
 wireByEmpRowDelegation();
 // v1.2.32: 1Hz tick on the live cells so the "active today" and "this
 // build" counters advance every second even between poll-driven renders.
