@@ -1,0 +1,6 @@
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-01-trim.mp4'
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-02-trim.mp4'
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-03-trim.mp4'
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-04-trim.mp4'
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-05-trim.mp4'
+file 'C:/Users/mabba/Desktop/AbaYa-Track-v1.0.2/docs/launches/v1.2.30-keynote/clips/scene-06-trim.mp4'

@@ -865,6 +865,15 @@ function renderKPIs() {
   document.getElementById('kpi-completed').textContent = totalUnits;
   document.getElementById('kpi-active').textContent = actCount;
   document.getElementById('kpi-inprog').textContent = actCount;
+  // v1.2.39: write the distinct-abayas panel. Previously nothing wrote to
+  // #kpi-abayas-delivered so it was permanently stuck at 0 even when the cloud
+  // showed e.g. 13. agg.todayAbayas is a Set built in the same single-pass walk
+  // and uses the same emp_id LIKE 'e_bc_%' filter the cloud does, so the two
+  // dashboards agree.
+  const abayasEl = document.getElementById('kpi-abayas-delivered');
+  if (abayasEl) {
+    abayasEl.textContent = (agg.todayAbayas && agg.todayAbayas.size) || 0;
+  }
 
   if (totalUnits > 0) {
     document.getElementById('kpi-avg').textContent = fmtHMS(agg.todayAvgSec);
@@ -2029,6 +2038,7 @@ function aggregateRealtime(logs, tz, todayYmd) {
       todayCount: todayCache.value.todayCount,
       todaySec: todayCache.value.todaySec,
       todayAvgSec: todayCache.value.todayAvgSec,
+      todayAbayas: todayCache.value.todayAbayas,
       todayEmp: todayCache.value.todayEmp,
       todayProc: todayCache.value.todayProc,
       itemAgg: itemAggCache.value.itemAgg,
@@ -2043,6 +2053,7 @@ function aggregateRealtime(logs, tz, todayYmd) {
   const n = logs ? logs.length : 0;
   let todayCount = 0;
   let todaySec = 0;
+  const todayAbayas = new Set();   // v1.2.39: distinct abaya_ids today (mirrors cloud's abayas_delivered_today)
   const todayEmp = Object.create(null);
   const todayProc = Object.create(null);
   const itemAgg = Object.create(null);
@@ -2079,6 +2090,14 @@ function aggregateRealtime(logs, tz, todayYmd) {
       if (!pRow) { pRow = { units: 0, totalSec: 0 }; todayProc[proc] = pRow; }
       pRow.units++;
       pRow.totalSec += sec;
+      // v1.2.39: distinct abaya_ids today. Mirrors cloudflare/src/handlers/state.js#stmtAbayasDelivered:
+      //   SELECT COUNT(DISTINCT abaya_id) ... WHERE abaya_id IS NOT NULL AND abaya_id != '' AND emp_id LIKE 'e_bc_%'
+      // Filter e_bc_* so the LAN and cloud agree when terminals run on the demo roster (e1..e26);
+      // AGENTS.md rule #1 says synthetic ids are dropped at the cloud ingest boundary.
+      const abayaIdToday = l.abaya_id;
+      if (abayaIdToday != null && abayaIdToday !== '' && empId && /^e_bc_\d+$/.test(empId)) {
+        todayAbayas.add(String(abayaIdToday));
+      }
     }
 
     const abayaId = l.abaya_id;
@@ -2096,6 +2115,7 @@ function aggregateRealtime(logs, tz, todayYmd) {
     todayCount: todayCount,
     todaySec: todaySec,
     todayAvgSec: todayCount > 0 ? Math.round(todaySec / todayCount) : 0,
+    todayAbayas: todayAbayas,
     todayEmp: todayEmp,
     todayProc: todayProc,
     hourBuckets: hourBuckets,
@@ -2108,6 +2128,7 @@ function aggregateRealtime(logs, tz, todayYmd) {
     todayCount: todayCache.value.todayCount,
     todaySec: todayCache.value.todaySec,
     todayAvgSec: todayCache.value.todayAvgSec,
+    todayAbayas: todayCache.value.todayAbayas,
     todayEmp: todayCache.value.todayEmp,
     todayProc: todayCache.value.todayProc,
     itemAgg: itemAggCache.value.itemAgg,

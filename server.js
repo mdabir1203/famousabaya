@@ -394,6 +394,42 @@ const CEO_INGEST_RETRY_MS = Math.max(
 let ceoIngestPendingCount = 0;
 let ceoQueueFlushRunning = false;
 
+// v1.2.40 — Monotonic factory-local sequence stamp on every event the LAN
+// server pushes to the cloud. Lets the cloud's /api/state report a
+// "watermark" (highest seq received) so both dashboards can show whether
+// they're in sync, and let the cloud SSE lane fan diffs out without
+// re-reading D1. Counter is per-process-lifetime — not persisted to disk —
+// so a server restart resets it. The cloud's existing INSERT OR REPLACE /
+// INSERT OR IGNORE semantics make "seq went backwards after restart"
+// harmless; it just means the watermark floats until events catch up.
+let factoryLocalSeq = 0;
+let factoryLastPushedSeq = 0;     // highest local_seq the cloud has acked (2xx OR permanent 4xx both count as "seen")
+let factoryLastQueuedSeq = 0;     // highest local_seq parked in the NDJSON retry queue
+let factoryLastSeqPushedAt = 0;
+function nextFactorySeq() {
+  factoryLocalSeq = (factoryLocalSeq + 1) >>> 0;
+  return factoryLocalSeq;
+}
+function noteFactorySeqPushed(seq) {
+  if (seq > factoryLastPushedSeq) factoryLastPushedSeq = seq;
+  factoryLastSeqPushedAt = Date.now();
+}
+function noteFactorySeqQueued(seq) {
+  if (seq > factoryLastQueuedSeq) factoryLastQueuedSeq = seq;
+}
+function getFactorySyncWatermark() {
+  return {
+    localSeq: factoryLocalSeq,
+    lastPushedSeq: factoryLastPushedSeq,
+    lastQueuedSeq: factoryLastQueuedSeq,
+    lastSeqPushedAt: factoryLastSeqPushedAt,
+    // events the cloud hasn't acknowledged yet (events still in flight or queued)
+    inFlight: Math.max(0, factoryLocalSeq - factoryLastPushedSeq - ceoIngestPendingCount),
+    queued: ceoIngestPendingCount,
+    mode: getCeoSyncMode(),
+  };
+}
+
 const { EventEmitter } = require('events');
 const ingestEvents = new EventEmitter();
 const REJECTED_QUEUE_FILE = path.join(path.dirname(CEO_QUEUE_FILE), 'ceo-ingest-rejected.jsonl');
@@ -411,6 +447,12 @@ const ingestStats = {
   lastTransientError: null,
   queueDepthMaxSeen: 0,
   backlogSinceMs: null,
+  // v1.2.40 — sync watermark counters. Surfaced via /api/ceo-ingest-status
+  // and the LAN dashboard footer so the operator can see real-time drift
+  // between LAN and cloud.
+  lastSeqPushedOk: 0,
+  lastSeqQueued: 0,
+  factoryLocalSeqAtBoot: null,
 };
 
 function getIngestStats() {
@@ -563,12 +605,22 @@ async function tryPostCeoIngestOnce(type, payload) {
 
 async function pushToCloudflare(type, payload) {
   if (!CF_URL || !CF_SECRET) return;
+  // v1.2.40 — Stamp every outbound push with a monotonic factory-local
+  // sequence so the cloud can maintain a watermark and the SSE lane can
+  // identify each event uniquely. The seq is also carried into the
+  // NDJSON retry queue so replayed events keep the same id.
+  const seq = nextFactorySeq();
+  const enriched = payload && typeof payload === 'object'
+    ? Object.assign({}, payload, { local_seq: seq })
+    : { local_seq: seq };
   try {
-    const res = await tryPostCeoIngestOnce(type, payload);
+    const res = await tryPostCeoIngestOnce(type, enriched);
     if (res.ok) {
-      console.log('[CF] Pushed:', type, payload.emp_id || '');
+      console.log('[CF] Pushed:', type, enriched.emp_id || '', 'seq=', seq);
       ingestStats.pushOk += 1;
       ingestStats.lastSuccessAt = Date.now();
+      noteFactorySeqPushed(seq);
+      ingestStats.lastSeqPushedOk = factoryLastPushedSeq;
       void drainCeoIngestQueue();
       return;
     }
@@ -577,26 +629,37 @@ async function pushToCloudflare(type, payload) {
     if (res.status === 401 || res.status === 403) {
       ingestStats.pushAuthRejected += 1;
       ingestStats.lastAuthError = { ts: Date.now(), status: res.status, snippet: snip };
-      console.warn('[CF] Auth rejected (queued; fix CF_INGEST_SECRET):', type, res.status, snip);
-      appendCeoIngestFailed(type, payload, { reasonStatus: res.status, reason: 'auth' });
+      console.warn('[CF] Auth rejected (queued; fix CF_INGEST_SECRET):', type, res.status, snip, 'seq=', seq);
+      appendCeoIngestFailed(type, enriched, { reasonStatus: res.status, reason: 'auth' });
+      noteFactorySeqQueued(seq);
+      ingestStats.lastSeqQueued = factoryLastQueuedSeq;
       ingestEvents.emit('auth-error', ingestStats.lastAuthError);
       return;
     }
     if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
       ingestStats.pushPermanentRejected += 1;
       ingestStats.lastPermanentError = { ts: Date.now(), status: res.status, snippet: snip, type };
-      console.warn('[CF] Push permanently rejected (recorded):', type, res.status, snip);
-      appendCeoIngestRejected(type, payload, res.status, snip);
+      console.warn('[CF] Push permanently rejected (recorded):', type, res.status, snip, 'seq=', seq);
+      appendCeoIngestRejected(type, enriched, res.status, snip);
+      // The cloud still SAW the payload — its watermark should bump past
+      // this seq so the LAN knows the cloud at least received the event,
+      // even if it didn't persist. Without this the dashboard drift
+      // counter would falsely claim "N events still pending" forever.
+      noteFactorySeqPushed(seq);
       ingestEvents.emit('permanent-error', ingestStats.lastPermanentError);
       return;
     }
     ingestStats.lastTransientError = { ts: Date.now(), status: res.status, snippet: snip };
-    console.warn('[CF] Push failed (queued for retry):', type, res.status, snip);
-    appendCeoIngestFailed(type, payload, { reasonStatus: res.status, reason: 'transient' });
+    console.warn('[CF] Push failed (queued for retry):', type, res.status, snip, 'seq=', seq);
+    appendCeoIngestFailed(type, enriched, { reasonStatus: res.status, reason: 'transient' });
+    noteFactorySeqQueued(seq);
+    ingestStats.lastSeqQueued = factoryLastQueuedSeq;
   } catch (e) {
     ingestStats.lastTransientError = { ts: Date.now(), status: 0, snippet: e && e.message ? e.message : String(e) };
-    console.warn('[CF] Push error (queued for retry):', e.message);
-    appendCeoIngestFailed(type, payload, { reason: 'network', error: ingestStats.lastTransientError.snippet });
+    console.warn('[CF] Push error (queued for retry):', e.message, 'seq=', seq);
+    appendCeoIngestFailed(type, enriched, { reason: 'network', error: ingestStats.lastTransientError.snippet });
+    noteFactorySeqQueued(seq);
+    ingestStats.lastSeqQueued = factoryLastQueuedSeq;
   }
 }
 
@@ -780,12 +843,27 @@ async function drainCeoIngestQueue() {
             ingestStats.pushPermanentRejected += 1;
             ingestStats.lastPermanentError = { ts: Date.now(), status: st, type: rec.type, snippet: snip };
             appendCeoIngestRejected(rec.type, rec.payload, st, snip);
+            // Cloud saw the payload even though it rejected it; mark the
+            // seq watermark so the LAN knows the cloud at least received
+            // the event (per AGENTS.md principle: do not silently fudge
+            // drift numbers — operators have been bitten by inflated
+            // lag counters previously).
+            const replayedSeq = rec && rec.payload && Number(rec.payload.local_seq);
+            if (Number.isFinite(replayedSeq) && replayedSeq > 0) {
+              noteFactorySeqPushed(replayedSeq);
+            }
             ingestEvents.emit('permanent-error', ingestStats.lastPermanentError);
             continue;
           }
           failed.push(rec);
         } else {
           drained += 1;
+          // v1.2.40 — bump the watermark on every successful replay.
+          const replayedSeq = rec && rec.payload && Number(rec.payload.local_seq);
+          if (Number.isFinite(replayedSeq) && replayedSeq > 0) {
+            noteFactorySeqPushed(replayedSeq);
+            ingestStats.lastSeqPushedOk = factoryLastPushedSeq;
+          }
         }
       } catch {
         failed.push(rec);
@@ -4024,6 +4102,7 @@ app.get('/api/client-config', (req, res) => {
 app.get('/api/ceo-ingest-status', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const persistence = getPersistenceHealth();
+  const watermark = getFactorySyncWatermark();
   res.json({
     ok: true,
     enabled: !!(CF_URL && CF_SECRET),
@@ -4041,6 +4120,27 @@ app.get('/api/ceo-ingest-status', (req, res) => {
     rejectedQueue: getRejectedQueueStats(),
     alerts: getAlertHealth(),
     cloudToday: getCloudRefreshHealth(),
+    // v1.2.40 — Realtime sync watermark. `localSeq` is the highest event
+    // id this server has emitted *this session*. `lastPushedSeq` is the
+    // highest event id the cloud has acknowledged (2xx OR permanent 4xx).
+    // `inFlight` is events emitted but neither acked nor queued (e.g. a
+    // retry in-flight). Operators watching the LAN + cloud dashboards
+    // can read `lastPushedSeq` and compare to `/api/state`'s
+    // `factory_seq_max_received` to confirm the same number on both.
+    sync: {
+      localSeq: watermark.localSeq,
+      lastPushedSeq: watermark.lastPushedSeq,
+      lastQueuedSeq: watermark.lastQueuedSeq,
+      lastSeqPushedAt: watermark.lastSeqPushedAt,
+      inFlight: watermark.inFlight,
+      queued: watermark.queued,
+      mode: watermark.mode,
+      lagSeq: Math.max(0, watermark.localSeq - watermark.lastPushedSeq),
+      eventsEmittedThisSession:
+        ingestStats.factoryLocalSeqAtBoot == null
+          ? null
+          : Math.max(0, watermark.localSeq - (ingestStats.factoryLocalSeqAtBoot || 0)),
+    },
     // v1.2.31: surface the local CF_INGEST_SECRET fingerprint so the
     // operator can compare it to the cloud's INGEST_SECRET (via
     // `wrangler secret list`) without revealing the full secret. The

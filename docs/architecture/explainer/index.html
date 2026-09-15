@@ -1,0 +1,1968 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AbaYa-Track — A factory in three dimensions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400;1,9..144,500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #08090c;
+    --bg-2:      #0d1014;
+    --bg-3:      #14181f;
+    --bg-4:      #1b212a;
+    --line:      #1d242e;
+    --line-2:    #2a323e;
+    --line-3:    #3a4350;
+    --ink:       #e7eaef;
+    --ink-2:     #a9b3bf;
+    --ink-3:     #6e7884;
+    --ink-4:     #4a525d;
+
+    --p:         #b39bff;   /* factory tier */
+    --p-2:       #7a6cd1;
+    --c:         #5eead4;   /* cloud tier */
+    --c-2:       #14b8a6;
+    --a:         #f5b95b;   /* disk */
+    --r:         #f87171;   /* queue */
+    --g:         #4ade80;   /* secure */
+    --b:         #7cb1ff;   /* dispatch */
+
+    --sans:  "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --serif: "Fraunces", "Iowan Old Style", "Charter", ui-serif, Georgia, serif;
+    --mono:  "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--ink); }
+  body {
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01";
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(179, 155, 255, 0.4); color: #fff; }
+
+  /* ─── 3D canvas (fixed) ──────────────────────────────────────────── */
+  #scene {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, #14181f 0%, #08090c 70%);
+  }
+  /* grain overlay */
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 3px 3px;
+    mix-blend-mode: overlay;
+    opacity: 0.5;
+  }
+  /* vignette */
+  .vignette {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 30%, rgba(8,9,12,0.5) 90%);
+  }
+  /* content layer */
+  main { position: relative; z-index: 2; }
+
+  /* ─── nav ─────────────────────────────────────────────────────────── */
+  nav.glass {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
+    background: rgba(20, 24, 31, 0.7);
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 6px 24px rgba(0,0,0,0.4);
+  }
+  nav.glass a {
+    color: var(--ink-3);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    transition: color .15s ease, background .15s ease;
+  }
+  nav.glass a .n { color: var(--p); margin-right: 6px; }
+  nav.glass a:hover, nav.glass a.is-active {
+    color: var(--ink);
+    background: rgba(255,255,255,0.04);
+  }
+  nav.glass .mark {
+    color: var(--ink);
+    padding: 8px 14px;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 14px;
+    border-right: 1px solid var(--line-2);
+    margin-right: 2px;
+  }
+
+  /* ─── hero ────────────────────────────────────────────────────────── */
+  .hero {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 8vw 14vh;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .hero .eyebrow {
+    color: var(--p-2);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    margin-bottom: 28px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .hero .eyebrow::before { content: ''; display: block; width: 28px; height: 1px; background: var(--p-2); }
+  .hero h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(44px, 7.5vw, 112px);
+    line-height: 0.98;
+    margin: 0 0 32px;
+    letter-spacing: -0.028em;
+    color: #f4f6f9;
+    max-width: 14ch;
+  }
+  .hero h1 em { color: var(--p); font-style: italic; }
+  .hero h1 .quiet { color: var(--ink-3); }
+  .hero .lede {
+    color: var(--ink-2);
+    font-size: 18px;
+    line-height: 1.55;
+    max-width: 56ch;
+    margin: 0 0 56px;
+    font-family: var(--serif);
+    font-weight: 400;
+  }
+  .hero .lede em { color: var(--p); font-style: italic; }
+  .hero .meta-row {
+    display: flex; flex-wrap: wrap; gap: 0;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .hero .meta-row > div {
+    padding: 16px 28px 16px 0;
+    margin-right: 28px;
+    border-right: 1px solid var(--line);
+  }
+  .hero .meta-row > div:last-child { border-right: 0; }
+  .hero .meta-row .k {
+    color: var(--ink-4);
+    text-transform: uppercase;
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    margin-bottom: 4px;
+  }
+  .hero .meta-row .v { color: var(--ink); }
+  .hero .meta-row code { color: var(--c); }
+  .hero .scroll-cue {
+    position: absolute;
+    bottom: 40px;
+    right: 8vw;
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .hero .scroll-cue::after {
+    content: '';
+    display: block;
+    width: 60px; height: 1px;
+    background: var(--ink-3);
+  }
+  .hero .scroll-cue::before {
+    content: '';
+    display: block;
+    width: 8px; height: 8px;
+    background: var(--p);
+    border-radius: 999px;
+    box-shadow: 0 0 0 4px rgba(179,155,255,0.18);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(179,155,255,0.18); }
+    50% { box-shadow: 0 0 0 10px rgba(179,155,255,0); }
+  }
+
+  /* ─── chapter sections ────────────────────────────────────────────── */
+  .chapter {
+    min-height: 100dvh;
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    gap: 64px;
+    align-items: center;
+    padding: 16vh 8vw;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .chapter.flip { grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); }
+  .chapter.flip .text { order: 2; }
+  .chapter.flip .diagram { order: 1; }
+
+  .text .ord {
+    font-family: var(--mono);
+    color: var(--p);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 18px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .text .ord::before { content: ''; display: block; width: 22px; height: 1px; background: var(--p); }
+  .text .kind {
+    font-family: var(--mono);
+    color: var(--ink-3);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  .text h2 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(36px, 4.4vw, 60px);
+    line-height: 1.04;
+    letter-spacing: -0.022em;
+    color: #f3f5f8;
+    margin: 8px 0 28px;
+    max-width: 18ch;
+  }
+  .text h2 em { color: var(--p); font-style: italic; }
+  .text .feynman {
+    font-family: var(--serif);
+    font-size: 22px;
+    line-height: 1.4;
+    color: var(--ink);
+    font-style: italic;
+    margin: 0 0 32px;
+    max-width: 36ch;
+    padding-left: 18px;
+    border-left: 2px solid var(--p);
+  }
+  .text .explain {
+    color: var(--ink-2);
+    font-size: 16.5px;
+    line-height: 1.62;
+    max-width: 56ch;
+    margin: 0 0 32px;
+    font-family: var(--serif);
+    font-weight: 400;
+  }
+  .text .notes {
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+  }
+  .text .notes .label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--p-2);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    margin-bottom: 14px;
+  }
+  .text .notes ul {
+    margin: 0; padding: 0; list-style: none;
+  }
+  .text .notes li {
+    margin: 12px 0;
+    color: var(--ink-2);
+    font-size: 14.5px;
+    line-height: 1.55;
+    padding-left: 20px;
+    position: relative;
+    font-family: var(--serif);
+  }
+  .text .notes li::before {
+    content: '→';
+    position: absolute; left: 0; top: 0;
+    color: var(--p);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .text .notes li strong { color: var(--ink); font-weight: 500; }
+  .text .notes li code {
+    font-family: var(--mono);
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--c);
+    font-size: 12.5px;
+  }
+
+  .diagram {
+    background: rgba(13, 16, 20, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 32px 22px;
+    position: relative;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 24px 64px rgba(0,0,0,0.4);
+    overflow: hidden;
+  }
+  .diagram::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(255,255,255,0.014) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255,255,255,0.014) 1px, transparent 1px);
+    background-size: 28px 28px;
+    pointer-events: none;
+    border-radius: 14px;
+  }
+  .diagram .tag {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    background: var(--bg-3);
+    border: 1px solid var(--line);
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .diagram svg { display: block; width: 100%; height: auto; position: relative; }
+
+  /* SVG style — same as diagrams/index.html */
+  .lbl       { font-family: var(--mono); font-size: 11.5px; fill: var(--ink); }
+  .lbl-sm    { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-2); }
+  .lbl-xs    { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-3); letter-spacing: 0.04em; }
+  .lbl-head  { font-family: var(--mono); font-size: 12px; fill: var(--ink); font-weight: 600; }
+  .grp-label { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-3); letter-spacing: 0.22em; text-transform: uppercase; font-weight: 500; }
+  .annot     { font-family: var(--mono); font-size: 9.5px; fill: var(--ink-3); font-style: italic; }
+  .box         { fill: var(--bg-3); stroke: var(--line-2); stroke-width: 1; }
+  .box-factory { fill: rgba(179, 155, 255, 0.10); stroke: var(--p); stroke-width: 1.2; }
+  .box-cloud   { fill: rgba(94, 234, 212, 0.07); stroke: var(--c); stroke-width: 1.2; }
+  .box-disk    { fill: rgba(245, 185, 91, 0.09); stroke: var(--a); stroke-width: 1.2; }
+  .box-queue   { fill: rgba(248, 113, 113, 0.10); stroke: var(--r); stroke-width: 1.2; }
+  .box-secure  { fill: rgba(74, 222, 128, 0.10); stroke: var(--g); stroke-width: 1.2; }
+  .box-dispatch{ fill: rgba(124, 177, 255, 0.10); stroke: var(--b); stroke-width: 1.2; }
+  .box-hot     { fill: rgba(179, 155, 255, 0.18); stroke: var(--p); stroke-width: 1.5; }
+  .box-soft    { fill: var(--bg-2); stroke: var(--line-2); stroke-width: 1; }
+  .arrow        { stroke: var(--ink-3); stroke-width: 1.2; fill: none; }
+  .arrow-d      { fill: var(--ink-3); }
+  .arrow-hot    { stroke: var(--p); stroke-width: 1.6; fill: none; }
+  .arrow-hot-d  { fill: var(--p); }
+  .arrow-retry  { stroke: var(--r); stroke-width: 1.4; fill: none; stroke-dasharray: 5 3; }
+  .arrow-retry-d{ fill: var(--r); }
+  .arrow-cloud  { stroke: var(--c); stroke-width: 1.4; fill: none; }
+  .arrow-cloud-d{ fill: var(--c); }
+  .arrow-secure { stroke: var(--g); stroke-width: 1.4; fill: none; }
+  .arrow-secure-d{fill: var(--g); }
+  .arrow-dispatch{ stroke: var(--b); stroke-width: 1.4; fill: none; }
+  .arrow-dispatch-d{ fill: var(--b); }
+  .line         { stroke: var(--line-2); stroke-width: 1; }
+  .danger       { stroke: var(--r); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+
+  /* ─── CTA / footer ───────────────────────────────────────────────── */
+  .cta {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 8vw;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .cta .eyebrow {
+    color: var(--c);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .cta .eyebrow::before { content: ''; display: block; width: 28px; height: 1px; background: var(--c); }
+  .cta h2 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(40px, 5.5vw, 80px);
+    line-height: 1.04;
+    letter-spacing: -0.024em;
+    color: #f4f6f9;
+    margin: 0 0 36px;
+    max-width: 18ch;
+  }
+  .cta h2 em { color: var(--c); font-style: italic; }
+  .cta .lede {
+    color: var(--ink-2);
+    font-size: 17px;
+    line-height: 1.55;
+    max-width: 56ch;
+    margin: 0 0 40px;
+    font-family: var(--serif);
+  }
+  .cta .actions {
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 16px 24px;
+    border-radius: 10px;
+    font-family: var(--sans);
+    font-size: 14.5px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: transform .15s ease;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  .btn-primary:hover { transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--ink);
+    border-color: var(--line-2);
+  }
+  .btn-secondary:hover { border-color: var(--ink-3); transform: translateY(-1px); }
+  .btn .arr { font-family: var(--mono); }
+
+  footer.foot {
+    padding: 48px 8vw 80px;
+    max-width: 1400px;
+    margin: 0 auto;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-family: var(--mono);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 18px;
+  }
+  footer.foot a { color: var(--c); text-decoration: none; border-bottom: 1px dotted var(--c-2); }
+  footer.foot code { color: var(--ink-2); }
+
+  /* responsive */
+  @media (max-width: 980px) {
+    .chapter, .chapter.flip { grid-template-columns: 1fr; gap: 40px; padding: 12vh 22px; }
+    .chapter.flip .text { order: 1; }
+    .chapter.flip .diagram { order: 2; }
+    .hero { padding: 0 22px 12vh; }
+    .cta { padding: 0 22px; }
+    nav.glass { max-width: calc(100vw - 32px); overflow-x: auto; }
+    nav.glass .mark { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div class="grain"></div>
+<div class="vignette"></div>
+
+<nav class="glass" id="nav">
+  <div class="mark">abaya</div>
+  <a href="#d1"><span class="n">01</span>Physical</a>
+  <a href="#d2"><span class="n">02</span>Boot</a>
+  <a href="#d3"><span class="n">03</span>Runtime</a>
+  <a href="#d4"><span class="n">04</span>Write</a>
+  <a href="#d5"><span class="n">05</span>Resilience</a>
+  <a href="#d6"><span class="n">06</span>Auth</a>
+  <a href="#d7"><span class="n">07</span>Catalog</a>
+</nav>
+
+<main>
+
+<!-- ═══ HERO ═══ -->
+<section class="hero">
+  <div class="eyebrow">AbaYa-Track · a factory in three dimensions</div>
+  <h1>Three boxes. <em>One source of truth.</em> <span class="quiet">And a CEO who never sees a gap.</span></h1>
+  <p class="lede">
+    A factory laptop in Dubai writes Start/Finish events to memory, durably saves them to disk, retries pushing them to a Cloudflare Worker, and reconciles any lost ones. The result is a live line you can read from any browser in the world, even if the WAN died.
+  </p>
+  <div class="meta-row">
+    <div><div class="k">factory</div><div class="v"><code>server.js</code> · 4 338 LOC</div></div>
+    <div><div class="k">cloud</div><div class="v"><code>cloudflare/src/index.js</code></div></div>
+    <div><div class="k">timezone</div><div class="v"><code>FACTORY_TZ=Asia/Dubai</code></div></div>
+    <div><div class="k">live since</div><div class="v">2026 · line 1.2.x</div></div>
+  </div>
+  <div class="scroll-cue">Scroll to enter</div>
+</section>
+
+<!-- ═══ CHAPTER 01 — PHYSICAL ═══ -->
+<section class="chapter" id="d1">
+  <div class="text">
+    <div class="ord">01 · <span class="kind">physical</span></div>
+    <h2>Three boxes. <em>One source of truth.</em></h2>
+    <p class="feynman">The factory laptop holds everything. The cloud holds a copy. The CEO is a window.</p>
+    <p class="explain">Think of it like a kitchen. The factory is the kitchen where the food is actually cooked. The cloud is the recipe notebook that lives somewhere else, in case the kitchen burns down. The CEO is the person who walks up to the window and asks what's cooking. The kitchen doesn't trust the notebook. The notebook just tries to keep up.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li><strong>Purple arrows</strong> are the realtime socket path (kiosk to <code>server.js</code>).</li>
+        <li><strong>Cyan arrows</strong> are HTTPS to the Cloudflare Worker (factory to cloud, tablet to cloud).</li>
+        <li><strong>Red dashed</strong> is the durable retry path through the NDJSON queue. It lives on disk, never in the runtime.</li>
+        <li><strong>Green arrows</strong> are authenticated or TLS-secured channels (CEO cookies, HMAC, bridge secret).</li>
+        <li><strong>Blue</strong> is the dispatch service bridge, which is independent of the factory push path.</li>
+        <li>The factory talks to the cloud over <strong>two separate bridges</strong>: its own client and the dispatch service's bridge. A WhatsApp outage does not stall the line.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d1-diagram">
+    <span class="tag">01 / 07</span>
+    <svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="ah1"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+        <marker id="ahc1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-cloud-d"/></marker>
+        <marker id="ahh1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-hot-d"/></marker>
+        <marker id="ahr1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-retry-d"/></marker>
+        <marker id="ahs1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-secure-d"/></marker>
+        <marker id="ahb1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-dispatch-d"/></marker>
+      </defs>
+      <text class="grp-label" x="20"   y="22">CLIENTS</text>
+      <text class="grp-label" x="380"  y="22">FACTORY LAPTOP</text>
+      <text class="grp-label" x="700"  y="22">CLOUDFLARE</text>
+      <text class="grp-label" x="1020" y="22">PERSISTENCE</text>
+      <line x1="20" y1="34" x2="350"  y2="34" class="line"/>
+      <line x1="380" y1="34" x2="670" y2="34" class="line"/>
+      <line x1="700" y1="34" x2="990" y2="34" class="line"/>
+      <line x1="1020" y1="34" x2="1220" y2="34" class="line"/>
+
+      <!-- clients -->
+      <rect class="box" x="20" y="50" width="240" height="58" rx="6"/>
+      <text class="lbl-head" x="34" y="72">Tablet kiosk</text>
+      <text class="lbl-sm"  x="34" y="90">public/kiosk.html · kiosk.js</text>
+      <text class="lbl-xs"  x="34" y="102">fingerprint + barcode</text>
+
+      <rect class="box" x="20" y="120" width="240" height="58" rx="6"/>
+      <text class="lbl-head" x="34" y="142">Asset-upload PWA</text>
+      <text class="lbl-sm"  x="34" y="160">public/asset-upload.html</text>
+      <text class="lbl-xs"  x="34" y="172">operator laptop</text>
+
+      <rect class="box-dispatch" x="20" y="190" width="240" height="58" rx="6"/>
+      <text class="lbl-head" x="34" y="212">Operator tablet</text>
+      <text class="lbl-sm"  x="34" y="230">dispatch leaderboard</text>
+      <text class="lbl-xs"  x="34" y="242">delivery status · SSE</text>
+
+      <rect class="box-secure" x="20" y="260" width="240" height="58" rx="6"/>
+      <text class="lbl-head" x="34" y="282">CEO browser</text>
+      <text class="lbl-sm"  x="34" y="300">anywhere · HTTPS</text>
+      <text class="lbl-xs"  x="34" y="312">dashboard.farewellabaya.com</text>
+
+      <rect class="box" x="20" y="330" width="240" height="58" rx="6"/>
+      <text class="lbl-head" x="34" y="352">Desktop launcher</text>
+      <text class="lbl-sm"  x="34" y="370">tools/desktop-launcher</text>
+      <text class="lbl-xs"  x="34" y="382">electron-updater · auto</text>
+
+      <!-- factory -->
+      <rect class="box-factory" x="380" y="50" width="290" height="338" rx="8"/>
+      <text class="lbl-head" x="396" y="72">server.js</text>
+      <text class="lbl-xs"  x="396" y="86">Express 5 · Socket.IO 4.8 · Node 18+</text>
+
+      <rect class="box-soft" x="396" y="100" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="406" y="118">dashboard.html · kiosk.html · asset-upload</text>
+
+      <rect class="box-soft" x="396" y="138" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="406" y="156">/updates/&lt;ch&gt;/*  ·  LAN mirror</text>
+
+      <rect class="box-disk" x="396" y="176" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="406" y="194">DATA_DIR · .env · xlsx · json</text>
+
+      <rect class="box-queue" x="396" y="214" width="258" height="34" rx="4"/>
+      <text class="lbl-head" x="406" y="232">ceo-ingest-queue</text>
+      <text class="lbl-xs"  x="406" y="244">NDJSON · drained every 30 s</text>
+
+      <rect class="box-soft" x="396" y="258" width="258" height="44" rx="4"/>
+      <text class="lbl-head" x="406" y="276">reconcile loop · 5 min</text>
+      <text class="lbl-xs"  x="406" y="288">re-pushes missing WL- ids · 50/cycle</text>
+      <text class="lbl-xs"  x="406" y="298">INSERT OR IGNORE → safe replay</text>
+
+      <rect class="box-disk" x="396" y="312" width="258" height="62" rx="4"/>
+      <text class="lbl-head" x="406" y="330">local durable store</text>
+      <text class="lbl-xs"  x="406" y="342">dashboard-offline-latest.json</text>
+      <text class="lbl-xs"  x="406" y="354">snapshot.db (sql.js) · *.xlsx</text>
+      <text class="lbl-xs"  x="406" y="366">ceo-ingest-rejected.jsonl</text>
+
+      <!-- cloud -->
+      <rect class="box-cloud" x="700" y="50" width="290" height="338" rx="8"/>
+      <text class="lbl-head" x="716" y="72">Worker · fetch()</text>
+      <text class="lbl-xs"  x="716" y="86">match-and-route · linear order</text>
+
+      <rect class="box-soft" x="716" y="100" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="118">/api/event · handlers/ingest.js</text>
+
+      <rect class="box-soft" x="716" y="138" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="156">/api/state · state.js  ·  10-stmt D1.batch</text>
+
+      <rect class="box-soft" x="716" y="176" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="194">/api/report · report.js  ·  8-stmt D1.batch</text>
+
+      <rect class="box-soft" x="716" y="214" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="232">/api/assets · assets.js  ·  R2 put/list/proxy</text>
+
+      <rect class="box-dispatch" x="716" y="252" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="270">/dispatch/* · dispatch.js · bridge</text>
+
+      <rect class="box-soft" x="716" y="290" width="258" height="28" rx="4"/>
+      <text class="lbl-sm"  x="726" y="308">/updates/&lt;ch&gt;/*  ·  R2 passthrough</text>
+
+      <rect class="box-secure" x="716" y="328" width="258" height="48" rx="4"/>
+      <text class="lbl-sm"  x="726" y="346">/api/ceo/session  ·  JWT pair</text>
+      <text class="lbl-xs"  x="726" y="358">access 30 m + refresh 7 d · HttpOnly</text>
+      <text class="lbl-xs"  x="726" y="370">dashboard 221 KB · inlined HTML+JS</text>
+
+      <!-- persistence -->
+      <rect class="box-cloud" x="1020" y="50" width="200" height="138" rx="8"/>
+      <text class="lbl-head" x="1034" y="70">D1 · abaya-db</text>
+      <text class="lbl-xs"  x="1034" y="86">5d61fb15-2ead-491b-80e2-…</text>
+      <text class="lbl-sm"  x="1034" y="106">sessions · active_sessions</text>
+      <text class="lbl-sm"  x="1034" y="122">daily_stats · abaya_time_map</text>
+      <text class="lbl-sm"  x="1034" y="138">employees · abaya_catalog</text>
+      <text class="lbl-sm"  x="1034" y="154">dispatch_invoices · tunnel_probes</text>
+      <text class="lbl-xs"  x="1034" y="172">11 tables</text>
+
+      <rect class="box-cloud" x="1020" y="200" width="200" height="78" rx="8"/>
+      <text class="lbl-head" x="1034" y="220">R2 · abaya-updates</text>
+      <text class="lbl-sm"  x="1034" y="240">stable/ · beta/</text>
+      <text class="lbl-sm"  x="1034" y="256">latest.yml · *.exe · *.blockmap</text>
+      <text class="lbl-xs"  x="1034" y="270">.yml=60s · binary=1y immutable</text>
+
+      <rect class="box-cloud" x="1020" y="290" width="200" height="98" rx="8"/>
+      <text class="lbl-head" x="1034" y="310">CF Workers Builds</text>
+      <text class="lbl-xs"  x="1034" y="326">github integration</text>
+      <text class="lbl-sm"  x="1034" y="346">account_id cac65f11aecab…</text>
+      <text class="lbl-sm"  x="1034" y="362">routes: dashboard.farewell…</text>
+      <text class="lbl-sm"  x="1034" y="378">crons: 0 14 * * *  +  * * * *</text>
+
+      <!-- arrows -->
+      <line x1="260" y1="78"  x2="380" y2="83"  class="arrow-hot"   marker-end="url(#ahh1)"/>
+      <text class="lbl-xs" x="262" y="68">Socket.IO</text>
+      <line x1="260" y1="148" x2="380" y2="124" class="arrow-hot"   marker-end="url(#ahh1)"/>
+      <text class="lbl-xs" x="262" y="138">multer POST</text>
+      <line x1="260" y1="218" x2="700" y2="238" class="arrow-dispatch" marker-end="url(#ahb1)"/>
+      <text class="lbl-xs" x="262" y="208">HTTPS · bridge</text>
+      <line x1="260" y1="288" x2="700" y2="316" class="arrow-secure"  marker-end="url(#ahs1)"/>
+      <text class="lbl-xs" x="262" y="278">HTTPS · cookie</text>
+      <line x1="260" y1="358" x2="700" y2="276" class="arrow-cloud"   marker-end="url(#ahc1)"/>
+      <text class="lbl-xs" x="262" y="348">/updates/&lt;ch&gt;</text>
+
+      <line x1="670" y1="83"  x2="700" y2="83"  class="arrow-cloud" marker-end="url(#ahc1)"/>
+      <text class="lbl-xs" x="672" y="74">POST event</text>
+      <line x1="670" y1="241" x2="700" y2="316" class="arrow-retry"  marker-end="url(#ahr1)"/>
+      <text class="lbl-xs" x="672" y="232">queue 5xx</text>
+      <line x1="670" y1="300" x2="700" y2="300" class="arrow-cloud" marker-end="url(#ahc1)"/>
+      <text class="lbl-xs" x="672" y="292">GET state</text>
+
+      <line x1="990" y1="83"  x2="1020" y2="83"  class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="124" x2="1020" y2="110" class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="162" x2="1020" y2="110" class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="204" x2="1020" y2="236" class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="276" x2="1020" y2="236" class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="316" x2="1020" y2="110" class="line" marker-end="url(#ah1)"/>
+      <line x1="990" y1="362" x2="1020" y2="342" class="line" marker-end="url(#ah1)"/>
+
+      <!-- second row -->
+      <line x1="20" y1="430" x2="1220" y2="430" class="line" stroke-dasharray="2 4"/>
+      <text class="annot" x="20" y="448">— the rest of the world —</text>
+
+      <text class="grp-label" x="20"   y="470">DISPATCH</text>
+      <text class="grp-label" x="380"  y="470">TUNNEL</text>
+      <text class="grp-label" x="700"  y="470">META</text>
+      <text class="grp-label" x="1020" y="470">FACTORY BACKDOOR</text>
+
+      <rect class="box-dispatch" x="20" y="486" width="240" height="86" rx="8"/>
+      <text class="lbl-head" x="34" y="508">dispatch-server</text>
+      <text class="lbl-xs"  x="34" y="522">services/dispatch-server/server.js</text>
+      <text class="lbl-sm"  x="34" y="542">:3111 · SSE leaderboard</text>
+      <text class="lbl-sm"  x="34" y="558">X-Bridge-Secret to Worker</text>
+
+      <rect class="box-soft" x="380" y="486" width="290" height="86" rx="8"/>
+      <text class="lbl-head" x="396" y="508">cloudflared tunnel</text>
+      <text class="lbl-xs"  x="396" y="522">FACTORY_TUNNEL_URL</text>
+      <text class="lbl-sm"  x="396" y="542">probed every 60 s by Worker</text>
+      <text class="lbl-sm"  x="396" y="558">7-day tunnel_probes retention</text>
+
+      <rect class="box-secure" x="700" y="486" width="290" height="86" rx="8"/>
+      <text class="lbl-head" x="716" y="508">Meta WhatsApp Cloud</text>
+      <text class="lbl-xs"  x="716" y="522">graph.facebook.com · v19.0</text>
+      <text class="lbl-sm"  x="716" y="542">HMAC X-Hub-Signature-256</text>
+      <text class="lbl-sm"  x="716" y="558">webhook → /dispatch/webhook/whatsapp</text>
+
+      <rect class="box-soft" x="1020" y="486" width="200" height="86" rx="8"/>
+      <text class="lbl-head" x="1034" y="508">factory backdoor</text>
+      <text class="lbl-xs"  x="1034" y="522">X-Ingest-Secret</text>
+      <text class="lbl-sm"  x="1034" y="542">GET /api/state</text>
+      <text class="lbl-sm"  x="1034" y="558">GET /api/state/history</text>
+
+      <line x1="260" y1="528" x2="700" y2="528" class="arrow-dispatch" marker-end="url(#ahb1)"/>
+      <text class="lbl-xs" x="262" y="520">PATCH /dispatch/invoices/:id/status</text>
+      <line x1="700" y1="528" x2="700" y2="458" class="arrow-dispatch" marker-end="url(#ahb1)"/>
+      <text class="lbl-xs" x="706" y="502">bridge</text>
+      <line x1="670" y1="528" x2="700" y2="528" class="arrow-secure" marker-end="url(#ahs1)"/>
+      <text class="lbl-xs" x="672" y="520">/health</text>
+      <line x1="20" y1="528" x2="260" y2="528" class="arrow-secure" marker-end="url(#ahs1)"/>
+      <text class="lbl-xs" x="86"  y="520">HMAC verify</text>
+      <line x1="990" y1="528" x2="1020" y2="528" class="arrow-secure" marker-end="url(#ahs1)"/>
+      <text class="lbl-xs" x="992" y="520">reads</text>
+      <line x1="670" y1="608" x2="1020" y2="528" class="arrow-secure" marker-end="url(#ahs1)"/>
+      <text class="lbl-xs" x="700" y="598">probe</text>
+
+      <line x1="20" y1="640" x2="1220" y2="640" class="line"/>
+      <text class="lbl-xs" x="20"   y="660">account_id</text>
+      <text class="lbl-head" x="86"   y="660">cac65f11aecab7f7dc4446390d49f4f2</text>
+      <text class="lbl-xs" x="500"  y="660">D1</text>
+      <text class="lbl-head" x="528"  y="660">5d61fb15-2ead-491b-80e2-fe2b2fd46d23</text>
+      <text class="lbl-xs" x="900"  y="660">R2</text>
+      <text class="lbl-head" x="924"  y="660">abaya-updates</text>
+      <text class="lbl-xs" x="20"   y="684">FACTORY_TZ</text>
+      <text class="lbl-head" x="100"  y="684">Asia/Dubai</text>
+      <text class="lbl-xs" x="280"  y="684">custom domain</text>
+      <text class="lbl-head" x="380"  y="684">dashboard.farewellabaya.com</text>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 02 — BOOT ═══ -->
+<section class="chapter flip" id="d2">
+  <div class="text">
+    <div class="ord">02 · <span class="kind">boot</span></div>
+    <h2><em>Eighteen loops.</em> None of them kill the others.</h2>
+    <p class="feynman">When the laptop starts, it sets up eighteen timers. Every one of them is wrapped in a safety net so a network failure cannot crash the system.</p>
+    <p class="explain">Imagine a restaurant opening at 7am. The head chef turns on the stove, the dishwasher starts, the cashier boots the register, the delivery driver checks the schedule. Each of those is a separate loop. If the internet is down, the cashier still opens the till with yesterday's numbers. The head chef doesn't wait for the delivery driver to come online. That's this server. The factory can boot with no WAN, no D1, no LAN share. The kiosk still works.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>Steps 1 to 4 happen <strong>before listen</strong>, in module top-level: middleware, push layer, asset sync. They never block boot.</li>
+        <li>Steps 5 to 18 happen <strong>inside the listen callback</strong>, in the order shown. Each is a one-liner that schedules a setInterval.</li>
+        <li>The four fire-and-forget chains (3, 4, 6, 7) run concurrently; the rest are synchronous schedule calls.</li>
+        <li>Every interval is a defensive default. <code>OFFLINE_REPORT_DIR</code>, <code>SQLITE_SNAPSHOT_INTERVAL_MS</code>, <code>ROSTER_PULL_INTERVAL_MS</code> can all be overridden via env.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d2-diagram">
+    <span class="tag">02 / 07</span>
+    <svg viewBox="0 0 1240 980" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="bha2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+      </defs>
+      <g>
+        <rect class="box-hot" x="490" y="20" width="260" height="46" rx="8"/>
+        <text class="lbl-head" x="506" y="44">node server.js (PM2)</text>
+        <text class="lbl-xs" x="506" y="58">env: ABAYA_DATA_DIR · CF_WORKER_URL · CF_INGEST_SECRET</text>
+      </g>
+      <line x1="620" y1="66" x2="620" y2="100" class="arrow" marker-end="url(#bha2)"/>
+      <g>
+        <text class="grp-label" x="20" y="100">TRIGGER</text>
+        <text class="lbl-head" x="20" y="120">server.listen</text>
+        <text class="annot" x="20" y="136">callback</text>
+      </g>
+      <g>
+        <text class="grp-label" x="1220" y="100">GUARANTEE</text>
+        <text class="lbl-head" x="1220" y="120">non-fatal</text>
+        <text class="annot" x="1220" y="136">on any error</text>
+      </g>
+      <line x1="320" y1="100" x2="320" y2="876" class="line"/>
+      <line x1="920" y1="100" x2="920" y2="876" class="line"/>
+      <line x1="320" y1="488" x2="920" y2="488" class="line" stroke-dasharray="4 4"/>
+      <text class="annot" x="80" y="160">odd steps</text>
+      <text class="annot" x="660" y="160">even steps</text>
+
+      <g transform="translate(40,170)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">01 · read .env, resolve DATA_DIR</text>
+        <text class="lbl-sm" x="10" y="40">STABLE_UPLOADS_PUBLIC = data/public/uploads</text>
+        <text class="lbl-sm" x="10" y="56">port 3000 · bind 0.0.0.0 · SERVER_BOOT_ID</text>
+      </g>
+      <g transform="translate(40,254)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">03 · CF push layer init</text>
+        <text class="lbl-sm" x="10" y="40">pushToCloudflare · drainCeoIngestQueue</text>
+        <text class="lbl-sm" x="10" y="56">recoverCeoIngestQueue merges .draining</text>
+      </g>
+      <g transform="translate(40,338)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">05 · attach employee + item images</text>
+        <text class="lbl-sm" x="10" y="40">search &lt;data&gt;/public/uploads first,</text>
+        <text class="lbl-sm" x="10" y="56">then repo dir as fallback</text>
+      </g>
+      <g transform="translate(40,422)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">07 · startCloudD1Hydration</text>
+        <text class="lbl-sm" x="10" y="40">GET /api/state/history?days=90</text>
+        <text class="lbl-sm" x="10" y="56">skipped if COMPLETED_LOGS non-empty</text>
+      </g>
+      <g transform="translate(40,506)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">09 · roster pull loop (60s)</text>
+        <text class="lbl-sm" x="10" y="40">refreshEmployeesFromCloud</text>
+        <text class="lbl-sm" x="10" y="56">refreshWorkTypesFromCloud · version-gated</text>
+      </g>
+      <g transform="translate(40,590)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">11 · offline snapshot interval (60s)</text>
+        <text class="lbl-sm" x="10" y="40">persistOfflineDashboardReport → JSON</text>
+        <text class="lbl-sm" x="10" y="56">setImmediate on boot for fast first paint</text>
+      </g>
+      <g transform="translate(40,674)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">13 · refreshWorkingHoursFromCloud (5m)</text>
+        <text class="lbl-sm" x="10" y="40">worker_settings.working_hours_v1</text>
+        <text class="lbl-sm" x="10" y="56">fallback to defaultWorkingHoursConfigLocal</text>
+      </g>
+      <g transform="translate(40,758)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">15 · reconcile loop (5m, 50/cycle)</text>
+        <text class="lbl-sm" x="10" y="40">reconcileCloudflare.startReconcileLoop</text>
+        <text class="lbl-sm" x="10" y="56">re-pushes missing WL- ids · INSERT OR IGNORE</text>
+      </g>
+      <g transform="translate(40,842)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">17 · Excel file watchers</text>
+        <text class="lbl-sm" x="10" y="40">chokidar awaitWriteFinish 800 ms</text>
+        <text class="lbl-sm" x="10" y="56">1.5 s debounced reload</text>
+      </g>
+
+      <g transform="translate(640,170)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">02 · middleware stack</text>
+        <text class="lbl-sm" x="10" y="40">cors · static · json · trailingSlash</text>
+        <text class="lbl-sm" x="10" y="56">Socket.IO @ pingInterval 25 s, timeout 60 s</text>
+      </g>
+      <g transform="translate(640,254)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">04 · syncAssetsFromRemote</text>
+        <text class="lbl-sm" x="10" y="40">pull from LAN share then R2</text>
+        <text class="lbl-sm" x="10" y="56">fills employee / item photo gaps</text>
+      </g>
+      <g transform="translate(640,338)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">06 · seedRosterFromCloudIfLocalMissing</text>
+        <text class="lbl-sm" x="10" y="40">only when no xlsx AND no manual JSON</text>
+        <text class="lbl-sm" x="10" y="56">honest warn if running on demo data</text>
+      </g>
+      <g transform="translate(640,422)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">08 · catalog pull loop (60s)</text>
+        <text class="lbl-sm" x="10" y="40">refreshAbayaCatalogFromCloud</text>
+        <text class="lbl-sm" x="10" y="56">emits catalog_update to clients</text>
+      </g>
+      <g transform="translate(640,506)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">10 · roster push loop (5m)</text>
+        <text class="lbl-sm" x="10" y="40">pushEmployeesToCloud</text>
+        <text class="lbl-sm" x="10" y="56">pushWorkTypesToCloud</text>
+      </g>
+      <g transform="translate(640,590)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">12 · sqlite snapshot (5m, coalesced)</text>
+        <text class="lbl-sm" x="10" y="40">shared/sqlite-snapshot.cjs</text>
+        <text class="lbl-sm" x="10" y="56">mirrors D1 schema · retention 7d default</text>
+      </g>
+      <g transform="translate(640,674)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">14 · cloud-today mirror (30s, force@8s)</text>
+        <text class="lbl-sm" x="10" y="40">refreshCloudToday merges logs + active</text>
+        <text class="lbl-sm" x="10" y="56">e_bc_&lt;barcode&gt; translated to local eN</text>
+      </g>
+      <g transform="translate(640,758)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">16 · alerts manager (Resend)</text>
+        <text class="lbl-sm" x="10" y="40">shared/alerting/resend-alerts.cjs</text>
+        <text class="lbl-sm" x="10" y="56">wires ingestEvents + 5m health poll</text>
+      </g>
+      <g transform="translate(640,842)">
+        <rect class="box" x="0" y="0" width="260" height="68" rx="6"/>
+        <text class="lbl-head" x="10" y="20">18 · SIGTERM / SIGINT handlers</text>
+        <text class="lbl-sm" x="10" y="40">gracefulShutdown flushes snapshots</text>
+        <text class="lbl-sm" x="10" y="56">stops reconcile + alerts · 3s race</text>
+      </g>
+
+      <g>
+        <rect class="box-disk" x="40" y="930" width="1160" height="40" rx="6"/>
+        <text class="lbl-sm" x="56" y="950">Failure policy — every fire-and-forget uses .catch(_=&gt;{}) and never throws out of the listen callback.</text>
+        <text class="lbl-sm" x="56" y="966">The factory can boot with no WAN, no D1, no LAN share — the server still serves the kiosk + dashboard.</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 03 — RUNTIME ═══ -->
+<section class="chapter" id="d3">
+  <div class="text">
+    <div class="ord">03 · <span class="kind">runtime</span></div>
+    <h2>Tap Start. <em>One row.</em> The dashboard blinks.</h2>
+    <p class="feynman">A worker scans a barcode. The system writes one row to memory, durably saves it to disk, and tries to push it to the cloud. The dashboard updates in milliseconds.</p>
+    <p class="explain">When a tailor sits down at a sewing machine, they scan a card. That single tap kicks off maybe thirty things, but only one of them has to finish before the tailor can start sewing. The rest happen after, in the background, and if any of them fail, the system quietly retries. The tailor never waits. The CEO never sees a gap.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>The <strong>callback path</strong> (the solid horizontal arrows) is what the kiosk sees. Synchronous in-memory work plus the response.</li>
+        <li>The <strong>shadow paths</strong> (dashed) are <code>setImmediate</code>. Durable writes that do not block the user.</li>
+        <li>The <strong>cloud push</strong> is the only outbound call that can return 4xx/5xx, and when it does, the row is queued, not lost.</li>
+        <li>The <strong>rejected queue</strong> exists for client errors that will not recover (bad shape, schema mismatch). It is a forensic record, not a retry buffer.</li>
+        <li>The <strong>drain path</strong> runs independently every 30 s. It picks up queued rows and replays them oldest-first.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d3-diagram">
+    <span class="tag">03 / 07</span>
+    <svg viewBox="0 0 1240 880" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="rha3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+        <marker id="rhh3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-hot-d"/></marker>
+        <marker id="rhr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-retry-d"/></marker>
+      </defs>
+      <g>
+        <text class="grp-label" x="20"  y="22">KIOSK</text>
+        <text class="annot"    x="20"  y="36">public/kiosk.js</text>
+        <text class="grp-label" x="260" y="22">FACTORY SERVER</text>
+        <text class="annot"    x="260" y="36">server.js</text>
+        <text class="grp-label" x="500" y="22">DISK QUEUES</text>
+        <text class="annot"    x="500" y="36">NDJSON + snapshot</text>
+        <text class="grp-label" x="740" y="22">CLOUDFLARE</text>
+        <text class="annot"    x="740" y="36">Worker · D1</text>
+        <text class="grp-label" x="980" y="22">DASHBOARDS</text>
+        <text class="annot"    x="980" y="36">N connected sockets</text>
+      </g>
+      <line x1="240"  y1="56" x2="240"  y2="860" class="line"/>
+      <line x1="480"  y1="56" x2="480"  y2="860" class="line"/>
+      <line x1="720"  y1="56" x2="720"  y2="860" class="line"/>
+      <line x1="960"  y1="56" x2="960"  y2="860" class="line"/>
+
+      <g>
+        <text class="lbl-head" x="20" y="80">START</text>
+        <text class="lbl-xs"  x="20" y="94">work session</text>
+      </g>
+      <g>
+        <rect class="box-hot" x="20" y="110" width="200" height="34" rx="5"/>
+        <text class="lbl-head" x="36" y="132">req_startWork</text>
+        <text class="lbl-xs" x="36" y="142">emp_id · abaya_id · process</text>
+        <line x1="220" y1="127" x2="260" y2="127" class="arrow-hot" marker-end="url(#rhh3)"/>
+      </g>
+      <g>
+        <rect class="box-soft" x="260" y="92"  width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="106">guarded: not already active</text>
+        <rect class="box-soft" x="260" y="116" width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="130">isInWorkingWindow(now)</text>
+        <rect class="box-soft" x="260" y="140" width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="154">isProcessAllowedOnFactory()</text>
+      </g>
+      <g>
+        <rect class="box-factory" x="260" y="166" width="220" height="40" rx="4"/>
+        <text class="lbl-head" x="270" y="184">ACTIVE_SESSIONS[emp_id]</text>
+        <text class="lbl-xs"  x="270" y="198">{ emp_id, abaya_id, log_id, started_at, process }</text>
+      </g>
+      <line x1="480" y1="180" x2="980" y2="180" class="arrow" marker-end="url(#rha3)"/>
+      <text class="lbl-xs" x="600" y="172">broadcastState()</text>
+      <g>
+        <rect class="box-soft" x="980" y="164" width="220" height="34" rx="4"/>
+        <text class="lbl-head" x="990" y="182">io.emit(state_update)</text>
+        <text class="lbl-xs"  x="990" y="194">getRealtimeStateBundle()</text>
+      </g>
+      <line x1="480" y1="220" x2="500" y2="220" class="arrow" stroke-dasharray="3 3" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-queue" x="500" y="200" width="220" height="38" rx="4"/>
+        <text class="lbl-head" x="510" y="216">offline snapshot</text>
+        <text class="lbl-xs"  x="510" y="228">setImmediate persistOfflineDashboardReport</text>
+        <text class="lbl-xs"  x="510" y="236">atomic .tmp + rename</text>
+      </g>
+      <line x1="480" y1="252" x2="720" y2="252" class="arrow-retry" marker-end="url(#rhr3)"/>
+      <text class="lbl-xs" x="540" y="246">non-blocking</text>
+      <g>
+        <rect class="box-cloud" x="720" y="236" width="240" height="36" rx="5"/>
+        <text class="lbl-head" x="730" y="252">pushToCloudflare</text>
+        <text class="lbl-xs"  x="730" y="264">type: session_start · 8s AbortSignal</text>
+      </g>
+      <line x1="960" y1="252" x2="980" y2="252" class="arrow" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-soft" x="980" y="236" width="220" height="36" rx="5"/>
+        <text class="lbl-head" x="990" y="252">callback({ok, log_id})</text>
+        <text class="lbl-xs"  x="990" y="264">back to kiosk · ~1 RTT</text>
+      </g>
+
+      <g>
+        <text class="lbl-head" x="20" y="316">FINISH</text>
+        <text class="lbl-xs"  x="20" y="330">work session</text>
+      </g>
+      <g>
+        <rect class="box-hot" x="20" y="350" width="200" height="34" rx="5"/>
+        <text class="lbl-head" x="36" y="372">req_finishWork</text>
+        <text class="lbl-xs"  x="36" y="382">emp_id + process-specific fields</text>
+        <line x1="220" y1="367" x2="260" y2="367" class="arrow-hot" marker-end="url(#rhh3)"/>
+      </g>
+      <g>
+        <rect class="box-soft" x="260" y="332" width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="346">if Invoice maker → parseInvoiceNumberList</text>
+        <rect class="box-soft" x="260" y="356" width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="370">if Checker → parseCheckerBarcodeList</text>
+        <rect class="box-soft" x="260" y="380" width="220" height="20" rx="4"/>
+        <text class="lbl-xs" x="270" y="394">duration = overlapSecWithWindows()</text>
+      </g>
+      <g>
+        <rect class="box-factory" x="260" y="406" width="220" height="36" rx="4"/>
+        <text class="lbl-head" x="270" y="424">COMPLETED_LOGS.push</text>
+        <text class="lbl-xs"  x="270" y="434">EMP_PERF.units += 1 · act += min</text>
+      </g>
+      <g>
+        <rect class="box-factory" x="260" y="448" width="220" height="22" rx="4"/>
+        <text class="lbl-xs" x="270" y="462">delete ACTIVE_SESSIONS[emp_id]</text>
+      </g>
+      <line x1="480" y1="422" x2="500" y2="422" class="arrow" marker-end="url(#rha3)"/>
+      <line x1="480" y1="458" x2="500" y2="458" class="arrow" stroke-dasharray="3 3" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-queue" x="500" y="404" width="220" height="36" rx="4"/>
+        <text class="lbl-head" x="510" y="420">offline snapshot</text>
+        <text class="lbl-xs"  x="510" y="432">setImmediate</text>
+        <rect class="box-queue" x="500" y="446" width="220" height="36" rx="4"/>
+        <text class="lbl-head" x="510" y="462">sqlite snapshot</text>
+        <text class="lbl-xs"  x="510" y="474">coalesced · shared/sqlite-snapshot.cjs</text>
+      </g>
+      <line x1="480" y1="486" x2="980" y2="486" class="arrow" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-soft" x="980" y="470" width="220" height="32" rx="4"/>
+        <text class="lbl-head" x="990" y="488">broadcastState()</text>
+        <text class="lbl-xs"  x="990" y="498">N dashboards re-render</text>
+      </g>
+      <line x1="480" y1="520" x2="720" y2="520" class="arrow-retry" marker-end="url(#rhr3)"/>
+      <g>
+        <rect class="box-cloud" x="720" y="504" width="240" height="36" rx="5"/>
+        <text class="lbl-head" x="730" y="520">pushToCloudflare</text>
+        <text class="lbl-xs"  x="730" y="532">type: session_finish</text>
+      </g>
+      <line x1="960" y1="520" x2="980" y2="520" class="arrow" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-soft" x="980" y="504" width="220" height="36" rx="5"/>
+        <text class="lbl-head" x="990" y="520">callback({ok, dur, code})</text>
+        <text class="lbl-xs"  x="990" y="532">back to kiosk</text>
+      </g>
+
+      <text class="lbl-head" x="20" y="580">ON FAILURE</text>
+      <text class="lbl-xs"  x="20" y="594">cloud push can 5xx, 408, 429, or net-err</text>
+      <g>
+        <rect class="box-queue" x="500" y="572" width="220" height="46" rx="4"/>
+        <text class="lbl-head" x="510" y="588">ceo-ingest-queue.jsonl</text>
+        <text class="lbl-xs"  x="510" y="600">append on 5xx / 408 / 429 / net-err</text>
+        <text class="lbl-xs"  x="510" y="610">drained every 30s (CEO_INGEST_RETRY_MS)</text>
+      </g>
+      <line x1="720" y1="548" x2="730" y2="592" class="arrow-retry" marker-end="url(#rhr3)"/>
+      <text class="lbl-xs" x="730" y="576">failed</text>
+      <g>
+        <rect class="box-soft" x="500" y="632" width="220" height="44" rx="4"/>
+        <text class="lbl-head" x="510" y="648">rejected.jsonl</text>
+        <text class="lbl-xs"  x="510" y="660">on 4xx ∉ {401, 403, 408, 429}</text>
+        <text class="lbl-xs"  x="510" y="670">forensic · no retry · ever</text>
+      </g>
+      <line x1="720" y1="556" x2="730" y2="650" class="danger" marker-end="url(#rha3)"/>
+      <text class="lbl-xs" x="736" y="606">bad row</text>
+      <line x1="610" y1="618" x2="610" y2="632" class="arrow" marker-end="url(#rha3)"/>
+      <g>
+        <rect class="box-secure" x="720" y="632" width="240" height="44" rx="4"/>
+        <text class="lbl-head" x="730" y="648">drainCeoIngestQueue</text>
+        <text class="lbl-xs"  x="730" y="660">oldest-first · 8s AbortSignal</text>
+        <text class="lbl-xs"  x="730" y="670">rename + replay · atomic</text>
+      </g>
+      <line x1="720" y1="600" x2="720" y2="632" class="arrow" marker-end="url(#rha3)"/>
+
+      <g>
+        <rect class="box-secure" x="20" y="720" width="1200" height="44" rx="6"/>
+        <text class="lbl-head" x="36" y="740">Latency contract</text>
+        <text class="lbl-sm"  x="36" y="754">kiosk callback returns within 1 RTT + ~5 ms in-memory work. Cloud push is fire-and-forget — it never blocks the user.</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 04 — CLOUD WRITE ═══ -->
+<section class="chapter flip" id="d4">
+  <div class="text">
+    <div class="ord">04 · <span class="kind">cloud write</span></div>
+    <h2>One network call. <em>Four rows.</em> Atomic.</h2>
+    <p class="feynman">When the cloud receives an event, it does one round trip to the database. Four rows get written. Either all four land or none of them do. There is no in-between.</p>
+    <p class="explain">Picture a bank transfer. You don't want to subtract from one account and then fail to add to the other. Either the money moved or it didn't. The cloud here does the same trick, four times over, every time. The four writes, log the session, clear the active row, bump the daily counter, update the abaya timeline, all commit together. If any one of them fails, the whole batch rolls back. The factory pushes the same event again, the database ignores the duplicate, and the system stays consistent.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>The <strong>batch is atomic</strong>. D1 either commits all four statements or rolls them all back. There is no partial state.</li>
+        <li><strong>sessions.id is deterministic</strong>: <code>WL-{emp_id}-{ended_at}</code>. <code>INSERT OR IGNORE</code> makes every replay safe.</li>
+        <li><strong>daily_stats is the only non-idempotent table</strong> by design. It is the per-day cumulative counter, not a row log. <code>UPSERT</code> on <code>stat_date</code> means the same Finish can be replayed forever and the count only ticks once per real session.</li>
+        <li><strong>abaya_time_map</strong> is conditional. It only writes if the Finish carried an <code>abaya_id</code>.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d4-diagram">
+    <span class="tag">04 / 07</span>
+    <svg viewBox="0 0 1240 720" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="iha4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+      </defs>
+      <g>
+        <rect class="box-cloud" x="40" y="40" width="320" height="600" rx="10"/>
+        <text class="lbl-head" x="56" y="62">Worker · handleIngest</text>
+        <text class="lbl-xs"  x="56" y="78">cloudflare/src/handlers/ingest.js</text>
+
+        <rect class="box-soft" x="60" y="98" width="280" height="40" rx="5"/>
+        <text class="lbl-head" x="72" y="116">rateLimitOr429</text>
+        <text class="lbl-xs"  x="72" y="130">INGEST_RATE_LIMIT 3000/60s</text>
+
+        <rect class="box-soft" x="60" y="148" width="280" height="40" rx="5"/>
+        <text class="lbl-head" x="72" y="166">X-Ingest-Secret check</text>
+        <text class="lbl-xs"  x="72" y="180">env.INGEST_SECRET · 401 on mismatch</text>
+
+        <rect class="box-soft" x="60" y="198" width="280" height="40" rx="5"/>
+        <text class="lbl-head" x="72" y="216">parse body</text>
+        <text class="lbl-xs"  x="72" y="230">type ∈ {session_start, session_finish}</text>
+
+        <rect class="box-soft" x="60" y="248" width="280" height="60" rx="5"/>
+        <text class="lbl-head" x="72" y="266">canonicalize</text>
+        <text class="lbl-xs"  x="72" y="280">canonicalEmpProcess</text>
+        <text class="lbl-xs"  x="72" y="292">dailyStatsColumnForProcess</text>
+        <text class="lbl-xs"  x="72" y="304">windowed = overlapSecWithWindows</text>
+
+        <rect class="box-hot" x="60" y="318" width="280" height="60" rx="5"/>
+        <text class="lbl-head" x="72" y="336">session_start</text>
+        <text class="lbl-xs"  x="72" y="350">isInWorkingWindow check (422)</text>
+        <text class="lbl-xs"  x="72" y="362">INSERT OR REPLACE active_sessions</text>
+        <text class="lbl-xs"  x="72" y="374">pre-bakes windowed_elapsed_sec</text>
+
+        <rect class="box-hot" x="60" y="388" width="280" height="90" rx="5"/>
+        <text class="lbl-head" x="72" y="406">session_finish</text>
+        <text class="lbl-xs"  x="72" y="420">parseInvoiceNumberList (Invoice maker)</text>
+        <text class="lbl-xs"  x="72" y="432">factoryDateStringForUnix</text>
+        <text class="lbl-xs"  x="72" y="444">factoryHourForUnix</text>
+        <text class="lbl-xs"  x="72" y="456">row UUID · meta · rejects 4xx</text>
+        <text class="lbl-xs"  x="72" y="468">→ D1.batch with 4 stmts</text>
+
+        <rect class="box-secure" x="60" y="488" width="280" height="60" rx="5"/>
+        <text class="lbl-head" x="72" y="506">return</text>
+        <text class="lbl-xs"  x="72" y="520">2xx: {ok: true, event: ..., session_id}</text>
+        <text class="lbl-xs"  x="72" y="532">4xx: error message (queued for retry or rejected)</text>
+        <text class="lbl-xs"  x="72" y="544">5xx: error message (queued for retry)</text>
+      </g>
+
+      <line x1="360" y1="446" x2="420" y2="446" class="arrow-hot" marker-end="url(#iha4)"/>
+
+      <g>
+        <rect class="box-cloud" x="420" y="200" width="380" height="380" rx="10"/>
+        <text class="lbl-head" x="436" y="220">D1.batch</text>
+        <text class="lbl-xs"  x="436" y="236">one atomic round trip</text>
+
+        <rect class="box-soft" x="436" y="252" width="348" height="60" rx="5"/>
+        <text class="lbl-sm"  x="446" y="270">[0] INSERT OR IGNORE INTO sessions</text>
+        <text class="lbl-xs"  x="446" y="282">id = WL- + emp_id + ended_at</text>
+        <text class="lbl-xs"  x="446" y="294">duration_sec = windowed · invoice fields</text>
+        <text class="lbl-xs"  x="446" y="306">emp_process · emp_color · emp_initials</text>
+
+        <rect class="box-soft" x="436" y="322" width="348" height="44" rx="5"/>
+        <text class="lbl-sm"  x="446" y="340">[1] DELETE FROM active_sessions</text>
+        <text class="lbl-xs"  x="446" y="352">WHERE emp_id = ?</text>
+
+        <rect class="box-soft" x="436" y="376" width="348" height="56" rx="5"/>
+        <text class="lbl-sm"  x="446" y="394">[2] UPSERT daily_stats</text>
+        <text class="lbl-xs"  x="446" y="406">+1 unit · +duration_sec · &lt;procCol&gt; + 1</text>
+        <text class="lbl-xs"  x="446" y="418">ON CONFLICT(stat_date) DO UPDATE</text>
+        <text class="lbl-xs"  x="446" y="430">cumulative · non-idempotent by design</text>
+
+        <rect class="box-soft" x="436" y="442" width="348" height="58" rx="5"/>
+        <text class="lbl-sm"  x="446" y="460">[3..N] UPSERT abaya_time_map</text>
+        <text class="lbl-xs"  x="446" y="472">only if abaya_id is present</text>
+        <text class="lbl-xs"  x="446" y="484">cumulative_in_window_sec += inWindow</text>
+        <text class="lbl-xs"  x="446" y="496">first_started_at MIN · last_ended_at MAX</text>
+      </g>
+
+      <g>
+        <rect class="box-disk" x="420" y="600" width="380" height="40" rx="6"/>
+        <text class="lbl-sm" x="436" y="620">atomic: all 4 succeed or all fail</text>
+        <text class="lbl-xs" x="436" y="634">batchRes is an array — order matches input stmts</text>
+      </g>
+
+      <g>
+        <text class="grp-label" x="840" y="22">D1 TABLES</text>
+
+        <rect class="box-cloud" x="840" y="40" width="380" height="120" rx="8"/>
+        <text class="lbl-head" x="856" y="60">sessions</text>
+        <text class="lbl-sm"  x="856" y="80">id PK · emp_id · emp_name · emp_code</text>
+        <text class="lbl-sm"  x="856" y="96">emp_process · emp_color · emp_initials</text>
+        <text class="lbl-sm"  x="856" y="112">abaya_id · abaya_code · station</text>
+        <text class="lbl-sm"  x="856" y="128">started_at · ended_at · duration_sec</text>
+        <text class="lbl-sm"  x="856" y="144">hour_of_day · day_date · invoice_*</text>
+
+        <rect class="box-cloud" x="840" y="170" width="380" height="86" rx="8"/>
+        <text class="lbl-head" x="856" y="190">active_sessions</text>
+        <text class="lbl-sm"  x="856" y="208">emp_id PK · emp_name · emp_code</text>
+        <text class="lbl-sm"  x="856" y="222">emp_process · emp_color · emp_initials</text>
+        <text class="lbl-sm"  x="856" y="236">abaya_id · abaya_code · station</text>
+        <text class="lbl-sm"  x="856" y="252">started_at · effective_started_at · …</text>
+
+        <rect class="box-cloud" x="840" y="266" width="380" height="120" rx="8"/>
+        <text class="lbl-head" x="856" y="286">daily_stats</text>
+        <text class="lbl-sm"  x="856" y="306">stat_date · total_units · total_sec</text>
+        <text class="lbl-sm"  x="856" y="322">tailor_01_units · tailor_02_units</text>
+        <text class="lbl-sm"  x="856" y="338">hand_work_units · stone_work_units</text>
+        <text class="lbl-sm"  x="856" y="354">button_units · embroidery_units</text>
+        <text class="lbl-sm"  x="856" y="370">ari_work_units · hand_designing_units</text>
+
+        <rect class="box-cloud" x="840" y="396" width="380" height="100" rx="8"/>
+        <text class="lbl-head" x="856" y="416">abaya_time_map</text>
+        <text class="lbl-sm"  x="856" y="436">abaya_id PK · abaya_code</text>
+        <text class="lbl-sm"  x="856" y="452">cumulative_in_window_sec</text>
+        <text class="lbl-sm"  x="856" y="468">first_started_at</text>
+        <text class="lbl-sm"  x="856" y="484">last_ended_at · updated_at</text>
+      </g>
+
+      <line x1="800" y1="282" x2="840" y2="100" class="line" marker-end="url(#iha4)"/>
+      <line x1="800" y1="344" x2="840" y2="212" class="line" marker-end="url(#iha4)"/>
+      <line x1="800" y1="404" x2="840" y2="324" class="line" marker-end="url(#iha4)"/>
+      <line x1="800" y1="470" x2="840" y2="448" class="line" marker-end="url(#iha4)"/>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 05 — RESILIENCE ═══ -->
+<section class="chapter" id="d5">
+  <div class="text">
+    <div class="ord">05 · <span class="kind">resilience</span></div>
+    <h2>Three independent timers. <em>None of them trust the others.</em></h2>
+    <p class="feynman">If the cloud missed something, three other timers will eventually catch it. They run on different schedules, write to different files, and never coordinate.</p>
+    <p class="explain">A 5G tower in Dubai can drop for a second and the line doesn't stop. The factory laptop doesn't trust the cloud. The cloud doesn't trust the factory laptop. Each one has its own notion of what happened, and they meet up on a schedule. If the line keeps moving for six hours with no internet, the laptop is still fine. When the WAN comes back, the cloud catches up within five minutes. If a row was lost in the queue, the periodic reconcile will find it by diffing the local state against the cloud.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>The three tiers are <strong>independent</strong>. They run on different timers, write to different files, and never coordinate.</li>
+        <li>If a row is lost on the <strong>push path</strong>, the reconcile tier will eventually find it on the <strong>diff path</strong>.</li>
+        <li>If the factory goes offline, the cloud-today mirror <strong>still serves the CEO dashboard</strong> from whatever rows made it through.</li>
+        <li>The auth-error exception is the only case where the queue is preserved on disk rather than retried. The secret has to be fixed first.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d5-diagram">
+    <span class="tag">05 / 07</span>
+    <svg viewBox="0 0 1240 720" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="mha5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+      </defs>
+      <g>
+        <line x1="40" y1="46" x2="1220" y2="46" class="line"/>
+        <text class="grp-label" x="40"  y="36">SPEED OF DETECTION</text>
+        <text class="lbl-xs" x="40"  y="64">sub-second</text>
+        <text class="lbl-xs" x="600" y="64">30 s</text>
+        <text class="lbl-xs" x="1220" y="64">5 min</text>
+        <circle cx="40"    cy="46" r="4" fill="rgba(248,113,113,0.4)" stroke="var(--r)"/>
+        <circle cx="600"   cy="46" r="4" fill="rgba(94,234,212,0.4)"  stroke="var(--c)"/>
+        <circle cx="1220"  cy="46" r="4" fill="rgba(74,222,128,0.4)"  stroke="var(--g)"/>
+      </g>
+      <g>
+        <rect class="box-queue" x="40" y="86" width="340" height="240" rx="10"/>
+        <text class="lbl-head" x="56" y="108">1 · Push queue</text>
+        <text class="lbl-xs"  x="56" y="124">per-event · pushToCloudflare + drainCeoIngestQueue</text>
+        <rect class="box-soft" x="60" y="140" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="70" y="158">ceo-ingest-queue.jsonl</text>
+        <text class="lbl-xs"  x="70" y="172">durable NDJSON · atomic rename</text>
+        <text class="lbl-xs"  x="70" y="182">append on 5xx / 408 / 429 / net-err</text>
+        <rect class="box-soft" x="60" y="196" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="70" y="214">drainCeoIngestQueue</text>
+        <text class="lbl-xs"  x="70" y="228">oldest-first · 8 s AbortSignal</text>
+        <text class="lbl-xs"  x="70" y="238">CEO_INGEST_RETRY_MS = 30s default</text>
+        <rect class="box-soft" x="60" y="252" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="70" y="270">rejected.jsonl</text>
+        <text class="lbl-xs"  x="70" y="284">on 4xx ∉ retry set</text>
+        <text class="lbl-xs"  x="70" y="294">forensic · no retry · ever</text>
+      </g>
+      <g>
+        <rect class="box-cloud" x="450" y="86" width="340" height="240" rx="10"/>
+        <text class="lbl-head" x="466" y="108">2 · Cloud-today mirror</text>
+        <text class="lbl-xs"  x="466" y="124">30 s · refreshCloudToday · server.js:2020</text>
+        <rect class="box-soft" x="470" y="140" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="480" y="158">GET /api/state?days=1&amp;limit=500</text>
+        <text class="lbl-xs"  x="480" y="172">throttle 10s · ?force=true bypasses</text>
+        <text class="lbl-xs"  x="480" y="182">bypasses terminal-to-LAN outages</text>
+        <rect class="box-soft" x="470" y="196" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="480" y="214">merge by id (logs) · emp_id (active)</text>
+        <text class="lbl-xs"  x="480" y="228">e_bc_&lt;barcode&gt; → local eN translation</text>
+        <text class="lbl-xs"  x="480" y="238">updates mutable display fields only</text>
+        <rect class="box-soft" x="470" y="252" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="480" y="270">recomputeEmpPerfFromLogs + broadcast</text>
+        <text class="lbl-xs"  x="480" y="284">LAN dashboard sees merge in &lt; 1 tick</text>
+        <text class="lbl-xs"  x="480" y="294">local is canonical for current operations</text>
+      </g>
+      <g>
+        <rect class="box-secure" x="860" y="86" width="340" height="240" rx="10"/>
+        <text class="lbl-head" x="876" y="108">3 · Periodic reconcile</text>
+        <text class="lbl-xs"  x="876" y="124">5 min · shared/reconcile-cloudflare.cjs</text>
+        <rect class="box-soft" x="880" y="140" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="890" y="158">diff local state vs cloud snapshot</text>
+        <text class="lbl-xs"  x="890" y="172">RECONCILE_MAX_REPUSH_PER_CYCLE = 50</text>
+        <text class="lbl-xs"  x="890" y="182">bounded to avoid thundering herd</text>
+        <rect class="box-soft" x="880" y="196" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="890" y="214">re-push missing WL- ids</text>
+        <text class="lbl-xs"  x="890" y="228">INSERT OR IGNORE → safe replay</text>
+        <text class="lbl-xs"  x="890" y="238">manual trigger: POST /api/reconcile-now</text>
+        <rect class="box-soft" x="880" y="252" width="300" height="48" rx="5"/>
+        <text class="lbl-head" x="890" y="270">cloud-only rows are recorded, never mutated</text>
+        <text class="lbl-xs"  x="890" y="284">local stays canonical for dashboards</text>
+        <text class="lbl-xs"  x="890" y="294">field diffs counted as conflicts_resolved_local</text>
+      </g>
+      <line x1="210" y1="326" x2="210" y2="366" class="arrow" marker-end="url(#mha5)"/>
+      <line x1="620" y1="326" x2="620" y2="366" class="arrow" marker-end="url(#mha5)"/>
+      <line x1="1030" y1="326" x2="1030" y2="366" class="arrow" marker-end="url(#mha5)"/>
+      <g>
+        <rect class="box-factory" x="40" y="376" width="1160" height="310" rx="10"/>
+        <text class="lbl-head" x="56" y="400">What each tier catches</text>
+        <text class="lbl-sm" x="56" y="424">Tier 1 — handles per-event failures. Every transient (408 / 429 / 5xx / network) is queued and retried within 30 s. Permanent client errors are quarantined in rejected.jsonl.</text>
+        <text class="lbl-sm" x="56" y="446">Tier 2 — handles the bypass case: tablets that can only reach the Worker (no LAN). The server pulls their state and merges it into the LAN dashboard so the operator still sees live data.</text>
+        <text class="lbl-sm" x="56" y="468">Tier 3 — handles a queued event that was lost (server crash, killed drain, etc.). Walks the local state and re-pushes anything missing on the cloud.</text>
+        <rect class="box-disk" x="56" y="494" width="1128" height="86" rx="6"/>
+        <text class="lbl-head" x="70" y="514">Drift budget</text>
+        <text class="lbl-sm"  x="70" y="534">Cloud may lag factory by ≤ 5 min in the worst case (longest reconcile interval). Day-over-day history is bullet-proof because every cloud row is INSERT OR IGNORE.</text>
+        <text class="lbl-sm"  x="70" y="550">A duplicate push never overwrites a real value, and the per-process counter only increments by 1 per Finish (UPSERT on day_date).</text>
+        <text class="lbl-sm"  x="70" y="566">Auth errors (401/403) are an exception: the entire queue is preserved until the secret is fixed — never silently dropped.</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 06 — CEO AUTH ═══ -->
+<section class="chapter flip" id="d6">
+  <div class="text">
+    <div class="ord">06 · <span class="kind">ceo</span></div>
+    <h2>A password becomes <em>two cookies.</em> The page checks them every time.</h2>
+    <p class="feynman">Login → JWT pair → HttpOnly cookies. The dashboard is server-rendered HTML+JS, inlined, 221 KB. No CDN. No external scripts.</p>
+    <p class="explain">When the CEO opens the URL, the Worker checks two cookies. If they're good, the Worker builds the entire HTML page on the server and ships it down. The page then polls every 3 seconds for a fresh batch of KPIs. The cookies have a 30-minute life and a 7-day refresh token. The CEO doesn't think about this. They just see the dashboard.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>There are <strong>three independent secrets</strong> on this Worker: <code>INGEST_SECRET</code>, <code>CEO_JWT_SECRET</code>, and <code>X-Bridge-Secret</code>. Compromise of one does not affect the others.</li>
+        <li>The CEO dashboard is <strong>server-rendered</strong> (221 KB inlined HTML/JS). It does not depend on any external CDN, so it renders even when third-party trackers are down.</li>
+        <li>The browser's <strong>long-poll (3 s) + 10-stmt batch</strong> means the CEO sees a consistent snapshot every 3 seconds, not a stream of partial updates.</li>
+        <li>Cookies are <code>HttpOnly · SameSite=Lax</code>. The JWT never reaches JavaScript, so an XSS in a future dashboard widget cannot exfiltrate the token.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d6-diagram">
+    <span class="tag">06 / 07</span>
+    <svg viewBox="0 0 1240 880" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="cha6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+        <marker id="chs6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-secure-d"/></marker>
+      </defs>
+      <g>
+        <text class="grp-label" x="20"  y="22">CEO BROWSER</text>
+        <text class="annot"    x="20"  y="36">anywhere · TLS · HttpOnly cookies</text>
+        <text class="grp-label" x="320" y="22">WORKER · AUTH &amp; ROUTING</text>
+        <text class="annot"    x="320" y="36">cloudflare/src/index.js</text>
+        <text class="grp-label" x="820" y="22">D1 · abaya-db</text>
+        <text class="annot"    x="820" y="36">10-stmt &amp; 8-stmt batches</text>
+      </g>
+      <line x1="300" y1="56" x2="300" y2="820" class="line"/>
+      <line x1="800" y1="56" x2="800" y2="820" class="line"/>
+      <g>
+        <rect class="box-soft" x="20" y="60" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="78">GET /?token=…</text>
+        <text class="lbl-xs"  x="32" y="90">bootstrap from URL param · 302 → same URL</text>
+        <rect class="box-soft" x="20" y="106" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="124">GET /</text>
+        <text class="lbl-xs"  x="32" y="136">no token → returns login page (HTML)</text>
+        <rect class="box-secure" x="20" y="152" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="170">POST /api/ceo/session</text>
+        <text class="lbl-xs"  x="32" y="182">password → mints access + refresh JWT pair</text>
+        <rect class="box-soft" x="20" y="198" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="216">POST /api/ceo/session/refresh</text>
+        <text class="lbl-xs"  x="32" y="228">refresh cookie → new pair (no password needed)</text>
+        <rect class="box-soft" x="20" y="244" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="262">POST /api/ceo/logout</text>
+        <text class="lbl-xs"  x="32" y="274">Max-Age=0 · clears both cookies</text>
+        <rect class="box-secure" x="20" y="290" width="260" height="44" rx="5"/>
+        <text class="lbl-head" x="32" y="308">dashboard.html</text>
+        <text class="lbl-xs"  x="32" y="322">inlined HTML/JS · 221 KB</text>
+        <text class="lbl-xs"  x="32" y="332">no external CDN</text>
+        <rect class="box-soft" x="20" y="344" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="362">GET /api/state?days=400</text>
+        <text class="lbl-xs"  x="32" y="374">+ 3 s fallback poll</text>
+        <rect class="box-soft" x="20" y="390" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="408">GET /api/report?type=…</text>
+        <text class="lbl-xs"  x="32" y="420">daily · weekly · monthly · yearly · custom</text>
+        <rect class="box-soft" x="20" y="436" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="454">GET /api/check-delivery-report</text>
+        <text class="lbl-xs"  x="32" y="466">proxies leaderboard + aggregates</text>
+        <rect class="box-soft" x="20" y="482" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="500">GET /api/analytics</text>
+        <text class="lbl-xs"  x="32" y="512">KPI subset for executive summary</text>
+        <rect class="box-soft" x="20" y="528" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="546">GET /api/trace?abaya_id=…</text>
+        <text class="lbl-xs"  x="32" y="558">full session history for one garment</text>
+      </g>
+      <line x1="280" y1="78"  x2="320" y2="80"  class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="124" x2="320" y2="148" class="arrow"        marker-end="url(#cha6)"/>
+      <line x1="280" y1="170" x2="320" y2="180" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="216" x2="320" y2="216" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="262" x2="320" y2="252" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="312" x2="320" y2="312" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="362" x2="320" y2="376" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="408" x2="320" y2="436" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="454" x2="320" y2="496" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="500" x2="320" y2="532" class="arrow-secure" marker-end="url(#chs6)"/>
+      <line x1="280" y1="546" x2="320" y2="568" class="arrow-secure" marker-end="url(#chs6)"/>
+      <g>
+        <rect class="box-cloud" x="320" y="60" width="480" height="580" rx="10"/>
+        <text class="lbl-head" x="336" y="80">fetch(request, env, ctx)</text>
+        <text class="lbl-xs"  x="336" y="94">match-and-route · linear order</text>
+        <rect class="box-soft" x="340" y="110" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="130">OPTIONS preflight → CORS</text>
+        <rect class="box-soft" x="340" y="148" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="168">/api/health (open) · /updates/&lt;ch&gt;/* → R2</text>
+        <rect class="box-secure" x="340" y="186" width="440" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="204">isCEORoute ?</text>
+        <text class="lbl-xs"  x="350" y="216">extractCeoToken → isCeoAuthenticated</text>
+        <rect class="box-soft" x="340" y="228" width="440" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="246">factory backdoor</text>
+        <text class="lbl-xs"  x="350" y="258">X-Ingest-Secret + GET + /api/state only</text>
+        <rect class="box-soft" x="340" y="270" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="290">rateLimitOr429 · CEO_READ 800/60s</text>
+        <rect class="box-hot" x="340" y="308" width="440" height="44" rx="4"/>
+        <text class="lbl-head" x="350" y="326">mintCeoSessionPair</text>
+        <text class="lbl-xs"  x="350" y="338">access (30 m) + refresh (7 d)</text>
+        <text class="lbl-xs"  x="350" y="348">CEO_JWT_SECRET required</text>
+        <rect class="box-soft" x="340" y="358" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="378">appendCeoSessionCookies · HttpOnly · SameSite=Lax</text>
+        <rect class="box-secure" x="340" y="396" width="440" height="40" rx="4"/>
+        <text class="lbl-head" x="350" y="414">getCEODashboard(url.origin)</text>
+        <text class="lbl-xs"  x="350" y="426">inlined HTML+JS · 221 KB</text>
+        <rect class="box-soft" x="340" y="442" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="462">handleState · env.DB.batch × 10</text>
+        <rect class="box-soft" x="340" y="480" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="500">handleReport · env.DB.batch × 8</text>
+        <rect class="box-soft" x="340" y="518" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="538">handleCheckDeliveryReport · leaderboard proxy</text>
+        <rect class="box-soft" x="340" y="556" width="440" height="32" rx="4"/>
+        <text class="lbl-sm" x="350" y="576">handleAnalytics · handleGarmentTrace</text>
+      </g>
+      <line x1="800" y1="458" x2="820" y2="130" class="line" marker-end="url(#cha6)"/>
+      <line x1="800" y1="496" x2="820" y2="220" class="line" marker-end="url(#cha6)"/>
+      <line x1="800" y1="534" x2="820" y2="320" class="line" marker-end="url(#cha6)"/>
+      <g>
+        <rect class="box-cloud" x="820" y="60" width="400" height="700" rx="10"/>
+        <text class="lbl-head" x="836" y="80">D1 abaya-db</text>
+        <text class="lbl-xs"  x="836" y="94">5d61fb15-2ead-491b-80e2-fe2b2fd46d23</text>
+        <rect class="box-soft" x="840" y="108" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="126">10-stmt batch · /api/state</text>
+        <rect class="box-soft" x="840" y="142" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="160">8-stmt batch · /api/report</text>
+        <rect class="box-soft" x="840" y="176" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="194">active_sessions · session_start</text>
+        <rect class="box-soft" x="840" y="210" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="228">sessions INSERT OR IGNORE</text>
+        <rect class="box-soft" x="840" y="244" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="262">daily_stats UPSERT</text>
+        <rect class="box-soft" x="840" y="278" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="296">abaya_time_map UPSERT</text>
+        <rect class="box-soft" x="840" y="312" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="330">employees · abaya_catalog</text>
+        <rect class="box-soft" x="840" y="346" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="364">catalog_meta · worker_settings</text>
+        <rect class="box-soft" x="840" y="380" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="398">dispatch_invoices · tunnel_probes</text>
+        <rect class="box-soft" x="840" y="414" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="432">per-employee perf aggregate</text>
+        <rect class="box-soft" x="840" y="448" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="466">process split · hourly · garment</text>
+        <rect class="box-soft" x="840" y="482" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="500">abaya time map · all-time cumulative</text>
+        <rect class="box-soft" x="840" y="516" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="534">leaderboard proxy · check-delivery</text>
+        <rect class="box-soft" x="840" y="550" width="360" height="28" rx="4"/>
+        <text class="lbl-sm" x="850" y="568">cancellations · cancelled_at index</text>
+      </g>
+      <g>
+        <rect class="box-secure" x="20" y="780" width="1200" height="40" rx="6"/>
+        <text class="lbl-head" x="36" y="800">Contract</text>
+        <text class="lbl-sm"  x="110" y="800">every CEO route 401s without a valid cookie · a leaked INGEST_SECRET only enables GET on /api/state and /api/state/history · dispatch endpoints use an independent bridge secret</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CHAPTER 07 — CATALOG ═══ -->
+<section class="chapter" id="d7">
+  <div class="text">
+    <div class="ord">07 · <span class="kind">catalog</span></div>
+    <h2>Edit on one laptop. <em>Every other laptop</em> sees it within a minute.</h2>
+    <p class="feynman">The factory is canonical. The cloud is downstream. A new laptop with no local data seeds itself from the cloud instead of falling back to demo data.</p>
+    <p class="explain">If the operator renames a process or adds a new abaya on laptop A, the change goes to the cloud in one PUT. Laptop B, C, and D poll the cloud every 60 seconds. The first one to notice the version bump pulls the new list and applies it. A new laptop — one that has never seen the catalog — boots up empty and asks the cloud for the full thing. The bundled demo data is the fallback, not the source.</p>
+    <div class="notes">
+      <div class="label">Read this as</div>
+      <ul>
+        <li>The catalog <code>PUT</code> is <strong>all-or-nothing</strong>. The Worker runs <code>DELETE + INSERTs</code> in a single D1.batch, so a partial write can never leave a laptop with a half-edited catalog.</li>
+        <li>The <strong>version counter</strong> (<code>catalog_meta.v</code>) is the cache buster. Peers only re-apply if the version they see is newer than the version they have.</li>
+        <li>The <strong>fresh-install seed path</strong> is what lets a new factory laptop boot from cloud data instead of the bundled demo catalog. The same path also pulls the employee roster.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="diagram" id="d7-diagram">
+    <span class="tag">07 / 07</span>
+    <svg viewBox="0 0 1240 560" xmlns="http://www.w3.org/2000/svg" >
+      <defs>
+        <marker id="wha7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-d"/></marker>
+        <marker id="whc7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-cloud-d"/></marker>
+      </defs>
+      <g>
+        <text class="grp-label" x="20"  y="22">FACTORY · laptop A</text>
+        <text class="annot"    x="20"  y="36">mutates the canonical row</text>
+        <text class="grp-label" x="320" y="22">CLOUDFLARE WORKER</text>
+        <text class="annot"    x="320" y="36">cloudflare/src/modules/catalog.js</text>
+        <text class="grp-label" x="700" y="22">FACTORY · laptops B, C, …</text>
+        <text class="annot"    x="700" y="36">polled every 60 s</text>
+      </g>
+      <line x1="300" y1="56" x2="300" y2="520" class="line"/>
+      <line x1="680" y1="56" x2="680" y2="520" class="line"/>
+      <g>
+        <rect class="box-soft" x="20" y="60" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="78">operator edit</text>
+        <text class="lbl-xs"  x="32" y="90">dashboard · asset-upload · xlsx reload</text>
+        <rect class="box-hot" x="20" y="106" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="124">mutate in memory</text>
+        <text class="lbl-xs"  x="32" y="136">abayaCatalog / EMPLOYEES</text>
+        <rect class="box-disk" x="20" y="152" width="260" height="44" rx="5"/>
+        <text class="lbl-head" x="32" y="170">persist to disk</text>
+        <text class="lbl-xs"  x="32" y="182">xlsx with backup · or manual JSON</text>
+        <text class="lbl-xs"  x="32" y="192">atomic write (.tmp + rename)</text>
+        <rect class="box-cloud" x="20" y="206" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="224">PUT /api/catalog/abayas</text>
+        <text class="lbl-xs"  x="32" y="236">X-Ingest-Secret · 120/60s limit</text>
+        <rect class="box-soft" x="20" y="252" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="270">io.emit(catalog_update)</text>
+        <text class="lbl-xs"  x="32" y="282">local sockets on laptop A</text>
+        <rect class="box-soft" x="20" y="298" width="260" height="36" rx="5"/>
+        <text class="lbl-head" x="32" y="316">broadcast</text>
+        <text class="lbl-xs"  x="32" y="328">to LAN clients on laptop A</text>
+      </g>
+      <line x1="280" y1="224" x2="320" y2="226" class="arrow-cloud" marker-end="url(#whc7)"/>
+      <g>
+        <rect class="box-cloud" x="320" y="60" width="360" height="420" rx="10"/>
+        <text class="lbl-head" x="336" y="80">handleCatalogAbayasPut</text>
+        <text class="lbl-xs"  x="336" y="94">secret check + rate limit</text>
+        <rect class="box-soft" x="340" y="110" width="320" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="128">normalize each row</text>
+        <text class="lbl-xs"  x="350" y="140">trim · dedupe by id+barcode · default process</text>
+        <rect class="box-soft" x="340" y="152" width="320" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="170">reject empty list</text>
+        <text class="lbl-xs"  x="350" y="182">refuses to wipe the catalog</text>
+        <rect class="box-hot" x="340" y="194" width="320" height="44" rx="4"/>
+        <text class="lbl-head" x="350" y="212">D1.batch</text>
+        <text class="lbl-xs"  x="350" y="224">DELETE + INSERTs in one round trip</text>
+        <text class="lbl-xs"  x="350" y="234">all-or-nothing · transient-safe</text>
+        <rect class="box-cloud" x="340" y="244" width="320" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="262">catalog_meta.v</text>
+        <text class="lbl-xs"  x="350" y="274">monotonic counter · cache buster</text>
+        <rect class="box-soft" x="340" y="286" width="320" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="304">return {ok, version}</text>
+        <text class="lbl-xs"  x="350" y="316">back to laptop A</text>
+        <rect class="box-secure" x="340" y="328" width="320" height="36" rx="4"/>
+        <text class="lbl-head" x="350" y="346">fresh-install seed</text>
+        <text class="lbl-xs"  x="350" y="358">on first boot with no xlsx → GET pulls full</text>
+        <rect class="box-soft" x="340" y="370" width="320" height="36" rx="4"/>
+        <text class="lbl-sm"  x="350" y="388">GET /api/catalog/abayas · cache 10s swr 120s</text>
+      </g>
+      <line x1="680" y1="262" x2="700" y2="262" class="arrow" marker-end="url(#wha7)"/>
+      <g>
+        <rect class="box-soft" x="700" y="60" width="520" height="36" rx="5"/>
+        <text class="lbl-head" x="712" y="78">GET /api/catalog/abayas</text>
+        <text class="lbl-xs"  x="712" y="90">cache: max-age=10, swr=120</text>
+        <rect class="box-soft" x="700" y="106" width="520" height="36" rx="5"/>
+        <text class="lbl-head" x="712" y="124">version compare</text>
+        <text class="lbl-xs"  x="712" y="136">if cloud_version == last → no-op</text>
+        <rect class="box-soft" x="700" y="152" width="520" height="36" rx="5"/>
+        <text class="lbl-head" x="712" y="170">apply to abayaCatalog</text>
+        <text class="lbl-xs"  x="712" y="182">re-attach images from disk · emit catalog_update</text>
+        <rect class="box-secure" x="700" y="198" width="520" height="78" rx="5"/>
+        <text class="lbl-head" x="712" y="216">fresh-install seed</text>
+        <text class="lbl-xs"  x="712" y="228">on first boot with no xlsx</text>
+        <text class="lbl-xs"  x="712" y="240">a new laptop gets the full</text>
+        <text class="lbl-xs"  x="712" y="252">catalog + roster from cloud</text>
+        <text class="lbl-xs"  x="712" y="264">instead of falling back to demo data</text>
+      </g>
+      <g>
+        <rect class="box-disk" x="20" y="500" width="1200" height="40" rx="6"/>
+        <text class="lbl-head" x="36" y="522">Drift budget</text>
+        <text class="lbl-sm"  x="150" y="522">60 s worst case for any factory laptop to see a peer edit. Catalog xlsx is the long-form master; cloud + manual JSON are caches.</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══ CTA ═══ -->
+<section class="cta" id="cta">
+  <div class="eyebrow">Next</div>
+  <h2>Read the <em>line-cited prose</em> that pairs with every diagram.</h2>
+  <p class="lede">The diagrams show you where the bytes go. The flow map shows you why, with file paths, line numbers, and the security model behind every endpoint.</p>
+  <div class="actions">
+    <a class="btn btn-primary" href="../CODEBASE-FLOW-MAP.md">Read the flow map <span class="arr">→</span></a>
+    <a class="btn btn-secondary" href="../diagrams/index.html">Open the diagrams <span class="arr">→</span></a>
+  </div>
+</section>
+
+<footer class="foot">
+  <div>
+    AbaYa-Track · v1.2.x · 2026 · Dubai factory
+  </div>
+  <div>
+    <a href="https://github.com/mdabir1203/famousabaya" target="_blank" rel="noopener">github.com/mdabir1203/famousabaya</a>
+  </div>
+</footer>
+
+</main>
+
+<!-- Three.js + GSAP from CDN (classic scripts, work in file://) -->
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://unpkg.com/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+
+<script>
+(function() {
+const THREE = window.THREE;
+const gsap = window.gsap;
+if (window.ScrollTrigger) gsap.registerPlugin(window.ScrollTrigger);
+
+// ═══════════════════════════════════════════════════════════════════
+// 3D SCENE — factory floor, cloud nodes, line workers
+// ═══════════════════════════════════════════════════════════════════
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x08090c, 1);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x08090c, 18, 60);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, 2, 18);
+camera.lookAt(0, 0, 0);
+
+// lighting
+const ambient = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(ambient);
+const key = new THREE.DirectionalLight(0xb39bff, 1.2);
+key.position.set(8, 12, 6);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x5eead4, 0.8);
+rim.position.set(-8, 4, -6);
+scene.add(rim);
+const fill = new THREE.DirectionalLight(0xf5b95b, 0.4);
+fill.position.set(0, -2, 8);
+scene.add(fill);
+
+// factory floor — a wireframe disc
+const floorGeo = new THREE.CircleGeometry(12, 64);
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x14181f,
+  roughness: 0.9,
+  metalness: 0.1,
+  transparent: true,
+  opacity: 0.5
+});
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -2;
+scene.add(floor);
+
+// floor grid
+const grid = new THREE.GridHelper(30, 30, 0x1d242e, 0x14181f);
+grid.position.y = -1.99;
+scene.add(grid);
+
+// rotating outer ring
+const ringGeo = new THREE.TorusGeometry(11, 0.04, 8, 96);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0xb39bff, transparent: true, opacity: 0.5 });
+const ring = new THREE.Mesh(ringGeo, ringMat);
+ring.rotation.x = Math.PI / 2;
+ring.position.y = -1.95;
+scene.add(ring);
+
+// central hub — the factory laptop
+const hubGroup = new THREE.Group();
+const hubGeo = new THREE.BoxGeometry(1.6, 0.18, 1.0);
+const hubMat = new THREE.MeshStandardMaterial({ color: 0xb39bff, roughness: 0.4, metalness: 0.6, emissive: 0x2a1f5a, emissiveIntensity: 0.4 });
+const hub = new THREE.Mesh(hubGeo, hubMat);
+hubGroup.add(hub);
+// screen above
+const screenGeo = new THREE.PlaneGeometry(1.4, 0.85);
+const screenMat = new THREE.MeshBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.7 });
+const screen = new THREE.Mesh(screenGeo, screenMat);
+screen.position.y = 0.5;
+screen.position.z = -0.45;
+screen.rotation.x = -0.3;
+hubGroup.add(screen);
+hubGroup.position.y = -1.4;
+scene.add(hubGroup);
+
+// worker nodes around the hub — small floating boxes
+const workers = [];
+const workerColors = [0xf87171, 0xfde68a, 0x4ade80, 0x60a5fa, 0xb39bff, 0x5eead4];
+for (let i = 0; i < 6; i++) {
+  const angle = (i / 6) * Math.PI * 2;
+  const radius = 6.5;
+  const w = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.9, 0.6),
+    new THREE.MeshStandardMaterial({ color: workerColors[i], roughness: 0.5, metalness: 0.3, emissive: workerColors[i], emissiveIntensity: 0.15 })
+  );
+  body.position.y = 0.45;
+  w.add(body);
+  // head
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 12, 12),
+    new THREE.MeshStandardMaterial({ color: 0xe7eaef, roughness: 0.5 })
+  );
+  head.position.y = 1.15;
+  w.add(head);
+  w.position.set(Math.cos(angle) * radius, -1.4, Math.sin(angle) * radius);
+  scene.add(w);
+  workers.push({ group: w, angle, radius, baseY: -1.4 });
+}
+
+// cloud node — a wireframe icosahedron above
+const cloudGeo = new THREE.IcosahedronGeometry(2.2, 1);
+const cloudMat = new THREE.MeshStandardMaterial({
+  color: 0x5eead4,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.55,
+  emissive: 0x0d3d35,
+  emissiveIntensity: 0.5
+});
+const cloud = new THREE.Mesh(cloudGeo, cloudMat);
+cloud.position.set(0, 6, -4);
+scene.add(cloud);
+
+// inner solid cloud
+const cloudInnerMat = new THREE.MeshStandardMaterial({
+  color: 0x5eead4,
+  transparent: true,
+  opacity: 0.12,
+  emissive: 0x5eead4,
+  emissiveIntensity: 0.3
+});
+const cloudInner = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4, 0), cloudInnerMat);
+cloudInner.position.copy(cloud.position);
+scene.add(cloudInner);
+
+// data packets — small bright cubes flying between hub and cloud
+const packets = [];
+const packetMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
+for (let i = 0; i < 12; i++) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), packetMat);
+  scene.add(m);
+  packets.push({
+    mesh: m,
+    t: Math.random(),
+    speed: 0.0015 + Math.random() * 0.0025,
+    direction: i % 2 === 0 ? 1 : -1
+  });
+}
+
+// connection lines hub → workers
+const lineMat = new THREE.LineBasicMaterial({ color: 0x3a4350, transparent: true, opacity: 0.4 });
+workers.forEach(w => {
+  const points = [new THREE.Vector3(0, -1.4, 0), new THREE.Vector3(w.group.position.x, w.group.position.y, w.group.position.z)];
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const line = new THREE.Line(geo, lineMat);
+  scene.add(line);
+});
+
+// connection line hub → cloud
+const cloudLineMat = new THREE.LineBasicMaterial({ color: 0x5eead4, transparent: true, opacity: 0.5 });
+const cloudLineGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(0, -1.4, 0),
+  new THREE.Vector3(cloud.position.x, cloud.position.y, cloud.position.z)
+]);
+const cloudLine = new THREE.Line(cloudLineGeo, cloudLineMat);
+scene.add(cloudLine);
+
+// resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// GSAP SCROLL — pin each chapter and scrub the camera + scene
+// ═══════════════════════════════════════════════════════════════════
+const state = {
+  // camera waypoints per chapter (0-1 progress through chapter)
+  waypoints: [
+    { cam: { x: 0,   y: 2,  z: 18 }, look: { x: 0, y: 0, z: 0 } },   // d1: overview
+    { cam: { x: 6,   y: 3,  z: 14 }, look: { x: 0, y: 0, z: 0 } },   // d2: orbit
+    { cam: { x: -3,  y: 1,  z: 8  }, look: { x: 0, y: 0, z: 0 } },   // d3: closer
+    { cam: { x: 0,   y: 1,  z: 22 }, look: { x: 0, y: 6, z: -4 } },  // d4: pull back, look at cloud
+    { cam: { x: 0,   y: 4,  z: 16 }, look: { x: 0, y: 6, z: -4 } },  // d5: rise up
+    { cam: { x: 4,   y: 1,  z: 8  }, look: { x: 0, y: 0, z: 0 } },   // d6: orbit
+    { cam: { x: -4,  y: 1,  z: 8  }, look: { x: 0, y: 0, z: 0 } },   // d7: orbit
+  ]
+};
+
+gsap.registerPlugin();
+
+function updateCamera(p) {
+  // p is 0..1, lerp between current and waypoint based on scroll
+  // simpler: tween camera per scrollTrigger
+}
+
+// pin each chapter
+const chapters = gsap.utils.toArray('.chapter');
+chapters.forEach((chap, i) => {
+  // text reveal on enter
+  gsap.from(chap.querySelector('.text > *'), {
+    y: 28,
+    opacity: 0,
+    duration: 0.9,
+    ease: 'power3.out',
+    stagger: 0.06,
+    scrollTrigger: {
+      trigger: chap,
+      start: 'top 75%',
+      toggleActions: 'play none none reverse'
+    }
+  });
+  // diagram slide in
+  gsap.from(chap.querySelector('.diagram'), {
+    y: 60,
+    opacity: 0,
+    duration: 1.1,
+    ease: 'power3.out',
+    scrollTrigger: {
+      trigger: chap,
+      start: 'top 80%',
+      toggleActions: 'play none none reverse'
+    }
+  });
+  // camera move through this chapter
+  ScrollTrigger.create({
+    trigger: chap,
+    start: 'top bottom',
+    end: 'bottom top',
+    onUpdate: (self) => {
+      const wp = state.waypoints[i];
+      const p = self.progress;
+      // interpolate between previous waypoint and this one
+      const prev = i === 0 ? { cam: { x: 0, y: 2, z: 18 }, look: { x: 0, y: 0, z: 0 } } : state.waypoints[i - 1];
+      // but for simplicity, just move toward waypoint as we enter
+      const t = gsap.utils.mapRange(0, 0.5, 0, 1, p);
+      camera.position.x = gsap.utils.interpolate(prev.cam.x, wp.cam.x, t);
+      camera.position.y = gsap.utils.interpolate(prev.cam.y, wp.cam.y, t);
+      camera.position.z = gsap.utils.interpolate(prev.cam.z, wp.cam.z, t);
+      camera.lookAt(wp.look.x, wp.look.y, wp.look.z);
+    }
+  });
+});
+
+// hero pulse
+gsap.to(ring.scale, { x: 1.04, y: 1.04, z: 1.04, duration: 3, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+
+// nav active state
+const navLinks = document.querySelectorAll('nav.glass a');
+const sections = gsap.utils.toArray('.chapter');
+navLinks.forEach((link, i) => {
+  ScrollTrigger.create({
+    trigger: sections[i],
+    start: 'top 60%',
+    end: 'bottom 40%',
+    onToggle: (self) => {
+      if (self.isActive) {
+        navLinks.forEach(l => l.classList.remove('is-active'));
+        link.classList.add('is-active');
+      }
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════
+const clock = new THREE.Clock();
+
+function animate() {
+  const dt = clock.getDelta();
+  const t = clock.elapsedTime;
+
+  // ring rotation
+  ring.rotation.z += dt * 0.05;
+  floor.rotation.z -= dt * 0.02;
+
+  // hub gentle bob
+  hubGroup.position.y = -1.4 + Math.sin(t * 0.8) * 0.08;
+  hubGroup.rotation.y = Math.sin(t * 0.3) * 0.15;
+
+  // workers slow orbit
+  workers.forEach((w, i) => {
+    const a = w.angle + t * 0.06 + i * 0.01;
+    w.group.position.x = Math.cos(a) * w.radius;
+    w.group.position.z = Math.sin(a) * w.radius;
+    w.group.position.y = w.baseY + Math.sin(t * 1.2 + i) * 0.18;
+    w.group.rotation.y = -a + Math.PI;
+  });
+
+  // cloud slow spin
+  cloud.rotation.x += dt * 0.08;
+  cloud.rotation.y += dt * 0.12;
+  cloudInner.rotation.y -= dt * 0.05;
+  cloud.position.y = 6 + Math.sin(t * 0.5) * 0.4;
+  cloudInner.position.y = cloud.position.y;
+
+  // data packets — fly along hub→cloud or cloud→hub
+  packets.forEach((p) => {
+    p.t += p.speed * p.direction;
+    if (p.t > 1) p.t = 0;
+    if (p.t < 0) p.t = 1;
+    // arc from hub to cloud
+    const a = p.t;
+    const x = 0;
+    const y = -1.4 + (cloud.position.y - (-1.4)) * a + Math.sin(a * Math.PI) * 1.2;
+    const z = 0 + (cloud.position.z - 0) * a;
+    p.mesh.position.set(x, y, z);
+    p.mesh.material.opacity = p.direction > 0 ? (a < 0.9 ? 1 : (1 - a) * 10) : (a > 0.1 ? 1 : a * 10);
+  });
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+// register ScrollTrigger — already loaded as classic script
+gsap.registerPlugin(ScrollTrigger);
+ScrollTrigger.refresh();
+})();
+</script>
+
+</body>
+</html>

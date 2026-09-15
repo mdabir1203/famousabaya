@@ -69,6 +69,26 @@ contextBridge.exposeInMainWorld('abayaLauncher', {
   updateInstallNow() {
     return ipcRenderer.invoke('update-install-now');
   },
+  // v1.2.40 — bypass the electron-updater code-signature check by downloading
+  // latest.yml + the EXE directly from the configured cloud R2 feed, verifying
+  // SHA-512 against the manifest, then running NSIS silently. The bootstrap
+  // script `install/REPAIR-UPDATER-BOOTSTRAP.ps1` ships in the artifacts;
+  // this IPC just shells out to it. Exists so a stuck self-signed autoupdater
+  // never strands a factory laptop permanently. See docs/releases/v1.2.40.md.
+  updateForceInstallFromCloud() {
+    return ipcRenderer.invoke('update-force-install-from-cloud');
+  },
+  // v1.2.42 — Rollback chooser. List every published version available on
+  // the feed (sourced from versions-manifest.json with a latest.yml fallback)
+  // and direct-bootstrap-install any picked version. Both modes are safe to
+  // use even when available > current (then it acts as a regular "install
+  // latest" button).
+  updateListVersions() {
+    return ipcRenderer.invoke('update-list-versions');
+  },
+  updateInstallVersion(versionEntry) {
+    return ipcRenderer.invoke('update-install-version', versionEntry);
+  },
   dismissUpdateSuccess() {
     return ipcRenderer.invoke('dismiss-update-success');
   },

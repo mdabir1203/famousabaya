@@ -316,6 +316,23 @@ CREATE INDEX IF NOT EXISTS idx_ticket_events_ticket  ON ticket_events(ticket_id,
 CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_ticket_messages_dedup  ON ticket_messages(wa_message_id) WHERE wa_message_id IS NOT NULL;
 
+-- ─── FACTORY SYNC WATERMARK (v1.2.40+) — mirrors cloudflare/migrations/0021 ───
+-- AGENTS.md rule #3: schema-mirroring. The cloud stores the highest
+-- monotonic local_seq it has received from the factory server in a single
+-- row keyed by seq_type. The local mirror exists so a future snapshot-driven
+-- dashboard can show the same watermark and so /api/state has parity between
+-- the LAN view (which always knew its own local_seq) and the cloud view.
+-- The local server increments its own factoryLocalSeq counter independently;
+-- this row stays in sync only when the snapshot is hydrated from cloud D1
+-- (see reconcile loop in shared/reconcile-cloudflare.cjs).
+CREATE TABLE IF NOT EXISTS factory_sync (
+  seq_type        TEXT    PRIMARY KEY,
+  seq_value       INTEGER NOT NULL DEFAULT 0,
+  last_event_type TEXT,
+  last_emp_id     TEXT,
+  updated_at      INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 CREATE TABLE IF NOT EXISTS employees (
   id        TEXT PRIMARY KEY,
   name      TEXT NOT NULL,

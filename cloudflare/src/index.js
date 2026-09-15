@@ -18,6 +18,7 @@ import { ceoPasswordOk } from './auth/ceo-login.js';
 import { mintCeoSessionPair, verifyRefreshToken } from './auth/ceo-jwt.js';
 import { getWorkingHoursConfig, saveWorkingHoursConfig } from './working-hours.js';
 import { handleIngest } from './handlers/ingest.js';
+import { handleRealtimeSse, getRealtimeSseStats } from './handlers/realtime-sse.js';
 import { handleState } from './handlers/state.js';
 import { handleHistory } from './handlers/history.js';
 import { handleReport } from './handlers/report.js';
@@ -292,7 +293,11 @@ export default {
         // and the CEO dashboard's "data is stale" banner both want to
         // poll this without a CEO cookie. The endpoint only does a tiny
         // `SELECT 1` so it can't leak any sensitive data.
-        path !== '/api/d1-health');
+        path !== '/api/d1-health' &&
+        // v1.2.40 — Sub-second live lane. Same CEO-cookie auth as
+        // /api/state, no X-Ingest-Secret back door (the factory server
+        // does NOT need to consume this lane; it's dashboard -> Worker).
+        path !== '/api/realtime/sse');
 
     if (isCEORoute) {
       const token = extractCeoToken(request, url);
@@ -360,6 +365,19 @@ export default {
 
       if (path === '/api/state' && request.method === 'GET') {
         return handleState(env, url);
+      }
+
+      // v1.2.40 — sub-second live lane. CEO dashboards open this once
+      // on load; ingest.js broadcasts to it on every successful D1
+      // write. Falls back to the 1 s /api/state poll if the connection
+      // drops (browser EventSource auto-reconnects). See
+      // handlers/realtime-sse.js for the connection lifecycle.
+      if (path === '/api/realtime/sse' && request.method === 'GET') {
+        return handleRealtimeSse(request);
+      }
+      // Ops visibility — purely numeric stats, no per-connection info.
+      if (path === '/api/realtime/sse/stats' && request.method === 'GET') {
+        return jsonRes({ ok: true, ...getRealtimeSseStats() }, 200, CEO_JSON_NO_STORE);
       }
       if (path === '/api/state/history' && request.method === 'GET') {
         return await handleHistory(env, url);
