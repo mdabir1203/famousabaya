@@ -838,13 +838,19 @@ function setupAutoUpdates() {
   getAutoUpdater().autoDownload = true;
   getAutoUpdater().autoInstallOnAppQuit = true;
   getAutoUpdater().allowPrerelease = updaterMapping.allowPrerelease;
-  getAutoUpdater().allowDowngrade = false;
-  // Unconditional: the channel getter is null on unpackaged apps without
-  // app-update.yml, and a guarded assignment used to silently strand beta
-  // devices on the default 'latest' channel.
+  // IMPORTANT: assign `channel` BEFORE `allowDowngrade`. electron-updater's
+  // AppUpdater.js:44 silently sets `allowDowngrade = true` as a side effect
+  // of `set channel(value)` — see node_modules/electron-updater/out/AppUpdater.js
+  // for the exact line. If we set `allowDowngrade = false` first, the
+  // channel setter immediately flips it back to true and our intent
+  // (no downgrades on stable) is silently lost.
+  // Unconditional assignment: the channel getter is null on unpackaged
+  // apps without app-update.yml, and a guarded assignment used to silently
+  // strand beta devices on the default 'latest' channel.
   try {
     getAutoUpdater().channel = updaterMapping.channel;
   } catch (_) {}
+  getAutoUpdater().allowDowngrade = false;
   setUpdateState({ channel: ring, updaterChannel: updaterMapping.channel });
 
   // Event handlers and the powerMonitor hook are registered exactly once.
