@@ -101,6 +101,14 @@ install/builder-debug.yml
 install/latest.yml
 install/win-unpacked/
 install/*.zip
+# Staged-extract / tmp-build blobs from prior electron-builder runs. These are
+# snapshots of past packaging output that, if force-committed, get inherited
+# by every subsequent extraResources resolution and silently pollute the .exe
+# with stale server.js / wrong package.json. See AGENTS.md §1 contract and
+# tools/desktop-launcher/package.json#build.extraResources for why this matters.
+install/_extracted-*/
+install/_tmp-build-*/
+install/dist/
 
 # Build output staging directories (electron-builder --prepackaged or alternate output)
 tools/desktop-launcher/build-out*/
