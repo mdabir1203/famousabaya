@@ -349,6 +349,23 @@ export async function handleState(env, url) {
   // abaya on the floor for weeks; without the pill, an operator reading
   // "this build 373h" without context might think it's a bug.
   let isCustomById = {};
+
+  // v1.2.40 — pull the factory_sync watermark so the dashboard can see
+  // "the cloud is currently at event seq=N, M seconds ago" and surface
+  // drift to the operator. See migration 0021 + realtime-sse.js.
+  let factoryWatermark = null;
+  try {
+    factoryWatermark = await env.DB
+      .prepare(
+        `SELECT seq_type, seq_value, last_event_type, last_emp_id, updated_at
+         FROM factory_sync WHERE seq_type = 'events_seq'`
+      )
+      .first();
+  } catch (_) {
+    // Table may not exist yet (pre-migration). Don't crash the dashboard.
+    factoryWatermark = null;
+  }
+
   if (liveAbayaIds.length > 0) {
     const placeholders = liveAbayaIds.map(() => '?').join(',');
     abayaBuildRowsRes = await env.DB
@@ -757,6 +774,24 @@ export async function handleState(env, url) {
       logs_to_ymd: logsToYmd,
       kpi_anchor_ymd: anchorYmd,
       kpi_to_ymd: toYmd,
+      // v1.2.40 — Realtime sync watermark. `factory_seq_max_received` is
+      // the highest local_seq the cloud has committed; `lag_sec` is the
+      // wall-clock since that commit. The companion "seq_max" lives on
+      // the LAN server's /api/ceo-ingest-status.sync.localSeq. The
+      // dashboard renders this pair as a small "FACTORY SYNC" indicator
+      // so an operator can see at a glance whether both views agree.
+      factory_seq_max_received: factoryWatermark ? Number(factoryWatermark.seq_value) || 0 : null,
+      factory_seq_last_received_at: factoryWatermark ? Number(factoryWatermark.updated_at) || null : null,
+      factory_seq_last_event_type: factoryWatermark ? (factoryWatermark.last_event_type || null) : null,
+      factory_seq_last_emp_id: factoryWatermark ? (factoryWatermark.last_emp_id || null) : null,
+      // v1.2.40 — Wall-clock freshness marker for THIS response. The
+      // dashboard uses this to compute per-tile "−Xs" labels:
+      //   lag_sec = (server_now - fetched_at_sec) + (network one-way)
+      // We don't know the one-way network latency, so we expose both
+      // timestamps and let the operator see the absolute age.
+      fetched_at_sec: serverNowTs,
+      server_now_sec: serverNowTs,
+      server_now_ms: Date.now(),
     },
     factory_today: factoryToday,
     completed_today: completedToday,
