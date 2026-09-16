@@ -594,7 +594,7 @@ jobs:
           echo '=========================================='
           echo ''
           echo 'The factory Node server (192.168.0.x) serves /updates/stable/ from'
-          echo 'data/lan-update-mirror/stable/. The launcher's PRIMARY feed is this'
+          echo 'data/lan-update-mirror/stable/. The launcher'\''s PRIMARY feed is this'
           echo 'LAN mirror (faster than R2). After this CI run completes, the'
           echo 'operator MUST run the publish on the factory Node server --'
           echo ''
