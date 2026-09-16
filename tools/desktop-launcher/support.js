@@ -58,21 +58,18 @@
   }
 
   // ── IPC bridge — talks to the main process which proxies to the local
-  // server (which forwards to the cloud Worker). The launcher can also
-  // call the cloud Worker directly via shell.openExternal, but we keep
-  // all ticket CRUD here so the local server can log + audit it.
+  // server (which forwards to the cloud Worker). ──
   async function api(path, opts) {
     const bridge = window.abayaLauncher;
     if (!bridge || typeof bridge.apiFetch !== 'function') {
       return { ok: false, error: 'launcher bridge not available' };
     }
-    // Normalize: stringify body if it's an object, pass through if string.
     const o = Object.assign({}, opts || {});
     if (o.body && typeof o.body === 'object') o.body = JSON.stringify(o.body);
     const r = await bridge.apiFetch(path, o);
     if (!r) return { ok: false, error: 'no response' };
-    if (r.body) return r.body;          // new IPC format: {status, body}
-    return r;                             // legacy: direct return
+    if (r.body) return r.body;
+    return r;
   }
 
   async function openExternal(url) {
@@ -89,7 +86,8 @@
     operatorName: localStorage.getItem(LS_OP_NAME) || '',
     tickets: [],
     activeId: null,
-    detail: null,           // { ticket, events, messages }
+    detail: null,
+    lastDetailSig: null,
     pollTimer: null,
     config: { primary: '', fallback: [] },
     submitting: false,
@@ -167,7 +165,7 @@
                 <h3 id="supportDetailSubject"></h3>
                 <div class="support-detail-meta" id="supportDetailMeta"></div>
               </div>
-              <button type="button" class="ghost" id="supportCloseDetail" title="Close">×</button>
+              <button type="button" class="ghost" id="supportCloseDetail" title="Close (Esc)">×</button>
             </header>
             <div class="support-thread" id="supportThread"></div>
             <div class="support-detail-foot">
@@ -179,7 +177,6 @@
       </div>
     `;
 
-    // Wire up the freshly-rendered DOM
     $('#supportSaveOp').addEventListener('click', saveOperator);
     $('#supportForm').addEventListener('submit', onSubmit);
     $('#supportCloseDetail').addEventListener('click', closeDetail);
@@ -188,8 +185,6 @@
       btn.addEventListener('click', () => {
         $all('.support-list-filters button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        // Re-fetch on every filter click so the preview mock (and any
-        // future server-side filter) can change what shows. Cheap call.
         refreshList();
       });
     });
@@ -257,7 +252,12 @@
     if (!el) return;
     el.textContent = msg;
     el.className = 'support-form-hint' + (kind ? ' ' + kind : '');
-    if (kind === 'ok') setTimeout(() => { if (el.textContent === msg) { el.textContent = ''; el.className = 'support-form-hint'; } }, 4000);
+    if (kind === 'ok') setTimeout(() => {
+      if (el.textContent === msg) {
+        el.textContent = '';
+        el.className = 'support-form-hint';
+      }
+    }, 4000);
   }
 
   // ── Create ticket ──
@@ -292,10 +292,7 @@
         flashHint('supportFormHint', 'Failed: ' + (r && r.error ? r.error : 'unknown'), 'err');
         return;
       }
-      // Open the wa.me link in the user's default browser via Electron.
-      if (r.wa_url) {
-        await openExternal(r.wa_url);
-      }
+      if (r.wa_url) await openExternal(r.wa_url);
       localStorage.setItem(LS_LAST_TICKET, r.ticket.id);
       $('#supportSubject').value = '';
       $('#supportDescription').value = '';
@@ -314,10 +311,30 @@
   async function refreshList(openId) {
     try {
       const r = await api('/api/tickets?limit=100', { method: 'GET' });
-      if (r && r.ok) state.tickets = r.tickets || [];
-    } catch (e) { state.tickets = []; }
-    renderTickets();
-    if (openId) openDetail(openId);
+      if (r && r.ok) {
+        state.tickets = r.tickets || [];
+        renderTickets();
+        if (openId) openDetail(openId);
+      } else {
+        renderTicketsError(r && r.error ? String(r.error) : 'Unknown error');
+      }
+    } catch (e) {
+      renderTicketsError(e && e.message ? e.message : 'Network error');
+    }
+  }
+
+  function renderTicketsError(message) {
+    const root = $('#supportTickets');
+    if (!root) return;
+    root.innerHTML = `
+      <div class="support-error" role="alert">
+        <div>Could not load tickets</div>
+        <div class="support-error-detail">${esc(message)}</div>
+        <button type="button" class="ghost" id="supportRetryList">Retry</button>
+      </div>
+    `;
+    const retry = $('#supportRetryList');
+    if (retry) retry.addEventListener('click', () => refreshList(state.activeId));
   }
 
   function renderTickets() {
@@ -331,12 +348,22 @@
       root.innerHTML = `<div class="support-empty">No ${currentFilter === 'all' ? '' : currentFilter} tickets yet.</div>`;
       return;
     }
-    root.innerHTML = list.map(t => `
-      <article class="support-ticket ${t.status === 'resolved' ? 'is-resolved' : ''}" data-id="${esc(t.id)}">
+    // Use a DocumentFragment to batch DOM writes — one reflow per refresh
+    // instead of N (one per innerHTML write).
+    const frag = document.createDocumentFragment();
+    list.forEach(t => {
+      const article = document.createElement('article');
+      article.className = 'support-ticket' + (t.status === 'resolved' ? ' is-resolved' : '');
+      article.dataset.id = t.id;
+      const ts = Number(t.last_message_at || t.created_at || 0);
+      const prio = String(t.priority || 'normal');
+      const status = String(t.status || 'open');
+      const statusLabel = STATUS_LABELS[status] || status;
+      article.innerHTML = `
         <div class="support-ticket-row1">
           <span class="support-ticket-id">${esc(t.id)}</span>
-          <span class="support-ticket-prio support-prio-${esc(t.priority)}">${esc(t.priority)}</span>
-          <span class="support-ticket-status support-status-${esc(t.status)}">${esc(STATUS_LABELS[t.status] || t.status)}</span>
+          <span class="support-ticket-prio support-prio-${esc(prio)}">${esc(prio)}</span>
+          <span class="support-ticket-status support-status-${esc(status)}">${esc(statusLabel)}</span>
         </div>
         <div class="support-ticket-subject">${esc(t.subject)}</div>
         <div class="support-ticket-meta">
@@ -344,36 +371,83 @@
           <span>·</span>
           <span>${esc(t.created_by_name || t.created_by)}</span>
           <span>·</span>
-          <span title="${esc(fmtTime(t.last_message_at || t.created_at))}">${esc(relTime(t.last_message_at || t.created_at))}</span>
+          <span title="${esc(fmtTime(ts))}">${esc(relTime(ts))}</span>
         </div>
-      </article>
-    `).join('');
-    $all('.support-ticket', root).forEach(el => {
-      el.addEventListener('click', () => openDetail(el.dataset.id));
+      `;
+      article.addEventListener('click', () => openDetail(t.id));
+      frag.appendChild(article);
     });
+    root.innerHTML = '';
+    root.appendChild(frag);
   }
 
   // ── Detail view ──
   async function openDetail(id) {
     state.activeId = id;
-    const r = await api('/api/tickets/' + encodeURIComponent(id), { method: 'GET' });
-    if (!r || !r.ok) {
-      flashHint('supportFormHint', 'Could not open ticket: ' + (r && r.error ? r.error : 'unknown'), 'err');
-      return;
+    try {
+      const r = await api('/api/tickets/' + encodeURIComponent(id), { method: 'GET' });
+      if (!r || !r.ok) {
+        flashHint('supportFormHint', 'Could not open ticket: ' + (r && r.error ? r.error : 'unknown'), 'err');
+        renderDetailError(r && r.error ? String(r.error) : 'Unknown error');
+        return;
+      }
+      state.detail = r;
+      state.lastDetailSig = null;       // force one fresh render
+      renderDetail();
+      if (state.pollTimer) clearInterval(state.pollTimer);
+      let failures = 0;
+      const pollOnce = async () => {
+        if (!state.activeId) return;
+        try {
+          const r2 = await api('/api/tickets/' + encodeURIComponent(state.activeId), { method: 'GET' });
+          if (r2 && r2.ok) {
+            failures = 0;
+            // Only repaint if the timeline grew. Avoids a full innerHTML
+            // rewrite every 5 s when nothing changed.
+            const sig = (r2.messages || []).length + '|' +
+              (r2.events || []).length + '|' +
+              (((r2.messages || []).slice(-1)[0] || {}).sent_at || 0) + '|' +
+              (r2.ticket && r2.ticket.resolved_at ? r2.ticket.resolved_at : 0);
+            if (sig !== state.lastDetailSig) {
+              state.lastDetailSig = sig;
+              state.detail = r2;
+              renderDetail();
+            }
+          } else {
+            failures += 1;
+            if (failures === 3) renderDetailError(r2 && r2.error ? String(r2.error) : 'Lost connection to local server');
+          }
+        } catch (_) {
+          failures += 1;
+          if (failures === 3) renderDetailError('Network error');
+        }
+      };
+      state.pollTimer = setInterval(pollOnce, 5000);
+    } catch (e) {
+      renderDetailError(e && e.message ? e.message : 'Network error');
     }
-    state.detail = r;
-    renderDetail();
-    if (state.pollTimer) clearInterval(state.pollTimer);
-    state.pollTimer = setInterval(async () => {
-      if (!state.activeId) return;
-      const r2 = await api('/api/tickets/' + encodeURIComponent(state.activeId), { method: 'GET' });
-      if (r2 && r2.ok) { state.detail = r2; renderDetail(); }
-    }, 5000);
+  }
+
+  function renderDetailError(message) {
+    const threadEl = $('#supportThread');
+    if (!threadEl) return;
+    threadEl.innerHTML = `
+      <div class="support-error" role="alert">
+        <div>Could not load this ticket</div>
+        <div class="support-error-detail">${esc(message)}</div>
+        <button type="button" class="ghost" id="supportRetryDetail">Retry</button>
+      </div>
+    `;
+    const retry = $('#supportRetryDetail');
+    if (retry && state.activeId) {
+      retry.addEventListener('click', () => openDetail(state.activeId));
+    }
   }
 
   function closeDetail() {
     state.activeId = null;
     state.detail = null;
+    state.lastDetailSig = null;
     if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
     $('#supportDetail').hidden = true;
   }
@@ -394,37 +468,60 @@
     `;
     const messages = d.messages || [];
     const events = d.events || [];
-    // Merge events + messages into a single chronological timeline.
     const timeline = []
       .concat(events.map(e => ({ kind: 'event', at: e.at, event: e.event, actor: e.actor, note: e.note })))
       .concat(messages.map(m => ({ kind: 'message', at: m.sent_at, direction: m.direction, sender: m.sender, text: m.text, via: m.via })))
       .sort((a, b) => a.at - b.at);
-    const html = timeline.map(item => {
-      if (item.kind === 'event') {
-        return `<div class="support-event">
-          <span class="support-event-dot"></span>
-          <span class="support-event-time">${esc(fmtTime(item.at))}</span>
-          <span class="support-event-label">${esc(item.event)}</span>
-          <span class="support-event-actor">${esc(item.actor)}</span>
-          ${item.note ? `<span class="support-event-note">— ${esc(item.note)}</span>` : ''}
-        </div>`;
-      }
-      const isOut = item.direction === 'out';
-      return `<div class="support-msg ${isOut ? 'is-out' : 'is-in'}">
-        <div class="support-msg-bubble">${esc(item.text)}</div>
-        <div class="support-msg-meta">
-          <span>${esc(item.sender)}</span>
-          <span>·</span>
-          <span>${esc(item.via)}</span>
-          <span>·</span>
-          <span>${esc(fmtTime(item.at))}</span>
-        </div>
-      </div>`;
-    }).join('');
-    $('#supportThread').innerHTML = html || '<div class="support-empty">No activity yet.</div>';
-    // Scroll to bottom
     const threadEl = $('#supportThread');
-    if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+    if (!threadEl) return;
+    const frag = document.createDocumentFragment();
+    if (!timeline.length) {
+      const empty = document.createElement('div');
+      empty.className = 'support-empty';
+      empty.textContent = 'No activity yet.';
+      frag.appendChild(empty);
+    } else {
+      timeline.forEach(item => {
+        if (item.kind === 'event') {
+          const ev = document.createElement('div');
+          ev.className = 'support-event';
+          ev.innerHTML = `
+            <span class="support-event-dot"></span>
+            <span class="support-event-time">${esc(fmtTime(item.at))}</span>
+            <span class="support-event-label">${esc(item.event)}</span>
+            <span class="support-event-actor">${esc(item.actor)}</span>
+            ${item.note ? `<span class="support-event-note">— ${esc(item.note)}</span>` : ''}
+          `;
+          frag.appendChild(ev);
+        } else {
+          const isOut = item.direction === 'out';
+          const msg = document.createElement('div');
+          msg.className = 'support-msg ' + (isOut ? 'is-out' : 'is-in');
+          msg.innerHTML = `
+            <div class="support-msg-bubble">${esc(item.text)}</div>
+            <div class="support-msg-meta">
+              <span>${esc(item.sender)}</span>
+              <span>·</span>
+              <span>${esc(item.via)}</span>
+              <span>·</span>
+              <span>${esc(fmtTime(item.at))}</span>
+            </div>
+          `;
+          frag.appendChild(msg);
+        }
+      });
+    }
+    threadEl.innerHTML = '';
+    threadEl.appendChild(frag);
+    // Only auto-scroll-to-bottom when the user is already near the bottom.
+    // If they've scrolled up to read history, don't yank them away.
+    const wasAtBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 48;
+    if (wasAtBottom) {
+      // requestAnimationFrame so the browser commits the innerHTML write
+      // before we measure scrollHeight — otherwise the scroll snaps to a
+      // stale value and the new messages stay off-screen.
+      requestAnimationFrame(() => { threadEl.scrollTop = threadEl.scrollHeight; });
+    }
     // Disable resolve if already resolved
     const btn = $('#supportResolve');
     if (btn) {
@@ -442,7 +539,6 @@
     });
     if (r && r.ok) {
       state.detail = { ticket: r.ticket, events: state.detail.events, messages: state.detail.messages };
-      // Append a synthetic resolved event for the timeline
       state.detail.events = (state.detail.events || []).concat([{ at: Math.floor(Date.now()/1000), event: 'resolved', actor: empId || 'office' }]);
       renderDetail();
       refreshList();
@@ -458,6 +554,35 @@
     render();
   }
 
-  // Refresh list when the tab becomes visible (in case the operator navigates away).
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshList(state.activeId); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshList(state.activeId);
+  });
+
+  // v1.2.42 — when the launcher toggles the Support panel off, stop the
+  // detail-poll timer. Without this, polling fires every 5s even when the
+  // user can't see the result, wasting IPC + D1 reads. renderer.js toggles
+  // the [hidden] attribute on #supportMount; we observe that.
+  const supportMount = document.getElementById('supportMount');
+  if (supportMount && typeof MutationObserver !== 'undefined') {
+    const mo = new MutationObserver(() => {
+      const visible = !supportMount.hasAttribute('hidden');
+      if (!visible && state.pollTimer) {
+        clearInterval(state.pollTimer);
+        state.pollTimer = null;
+        state.activeId = null;
+        state.detail = null;
+      }
+    });
+    mo.observe(supportMount, { attributes: true, attributeFilter: ['hidden'] });
+  }
+
+  // Escape closes the open detail so the operator can dismiss with one
+  // keystroke. Doesn't trigger when typing in a form field.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!state.activeId) return;
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    closeDetail();
+  });
 })();

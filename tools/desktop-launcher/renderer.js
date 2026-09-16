@@ -1,4 +1,5 @@
 'use strict';
+console.log('[dev] renderer.js loaded; hash=' + window.location.hash);
 
 const srvEl = document.getElementById('serverLog');
 const watchEl = document.getElementById('watcherLog');
@@ -697,6 +698,308 @@ function showCloseConfirm() {
       btnUpdateInstall.disabled = false;
     };
   }
+
+  // v1.2.42 — Support panel is mounted but hidden by default; the
+  // toolbar's "Support" button toggles it. We don't render the inner
+  // support UI lazily because support.js's IIFE runs on DOMContentLoaded
+  // and writes into #supportMount unconditionally — once that's true,
+  // we just flip the [hidden] attribute and let the already-rendered
+  // content show.
+  const btnToggleSupport = document.getElementById('btnToggleSupport');
+  const supportMount = document.getElementById('supportMount');
+  function setSupportOpen(open) {
+    if (!supportMount) return;
+    if (open) {
+      supportMount.removeAttribute('hidden');
+    } else {
+      supportMount.setAttribute('hidden', '');
+    }
+    if (btnToggleSupport) {
+      btnToggleSupport.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btnToggleSupport.classList.toggle('active', open);
+      btnToggleSupport.textContent = open ? 'Hide Support' : 'Support';
+    }
+  }
+  if (btnToggleSupport) {
+    btnToggleSupport.addEventListener('click', () => {
+      const open = supportMount && !supportMount.hasAttribute('hidden');
+      setSupportOpen(!open);
+    });
+    // v1.2.42 — tiny dev/test hook: appending #support to the URL
+    // (e.g. via CmdLineArg or auto-launch) auto-opens the panel. Used by
+    // verification-evidence screenshots. Production launches don't pass the
+    // hash so this branch is dead code in normal use.
+    console.log('[dev-renderer] hash check #support: supportMount=' + !!supportMount + ' hash=' + (window.location && window.location.hash));
+    if (window.location && window.location.hash === '#support') {
+      console.log('[dev] auto-open support (hash=#support)');
+      setSupportOpen(true);
+    }
+  }
+
+  // v1.2.42 — Rollback toggle. Click opens the rollback chooser; the
+  // chooser also auto-opens itself when the available feed version is
+  // older than the installed one AND the manifest has at least one
+  // candidate (see the rollback watcher below).
+  const btnToggleRollback = document.getElementById('btnToggleRollback');
+  function setRollbackOpen(open) {
+    if (!rollbackMount) return;
+    if (open) {
+      rollbackMount.removeAttribute('hidden');
+      loadRollbackManifest(false);
+    } else {
+      rollbackMount.setAttribute('hidden', '');
+    }
+    if (btnToggleRollback) {
+      btnToggleRollback.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btnToggleRollback.classList.toggle('active', open);
+      btnToggleRollback.textContent = open ? 'Hide rollback' : 'Show rollback';
+    }
+    if (open) renderRollback();
+  }
+  if (btnToggleRollback) {
+    btnToggleRollback.addEventListener('click', () => {
+      const open = rollbackMount && !rollbackMount.hasAttribute('hidden');
+      setRollbackOpen(!open);
+    });
+    // v1.2.42 — same dev/test hook as btnToggleSupport. #rollback opens
+    // the chooser on launch.
+    if (window.location && window.location.hash === '#rollback') {
+      setRollbackOpen(true);
+    }
+  }
+  // Initial fetch so manifest is fresh when the user clicks.
+  loadRollbackManifest(false);
+
+  // v1.2.42 — Rollback chooser. Hidden by default. Renders when:
+  //   * the user clicks the toolbar's "Show rollback" button (added below)
+  //   * OR when applyUpdateStatus() detects that the available feed version
+  //     is *older* than the installed one (latest.yml still points at
+  //     v1.2.38 while the launcher is on v1.2.41 from the bootstrap).
+  // The renderer fetches a manifest of every published version via the
+  // 'update-list-available-versions' IPC and shows each row with an
+  // Install button that calls 'update-install-version' (which downloads
+  // the EXE directly and runs NSIS silently).
+  const rollbackMount = document.getElementById('rollbackMount');
+  let rollbackManifest = null;
+  let rollbackLoading = false;
+  let rollbackInstallInFlight = false;
+
+  function compareSemver(a, b) {
+    const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+    const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const da = pa[i] || 0;
+      const db = pb[i] || 0;
+      if (da !== db) return da - db;
+    }
+    return 0;
+  }
+  function humanBytes(n) {
+    if (!n || n < 1024) return (n || 0) + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function fmtUtcShort(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function renderRollback() {
+    if (!rollbackMount) return;
+    rollbackMount.innerHTML = '';
+    const shell = document.createElement('div');
+    shell.className = 'rollback-shell';
+    rollbackMount.appendChild(shell);
+
+    const installed = String((lastUpdatePayload && lastUpdatePayload.current) || '').trim();
+    const available  = String((lastUpdatePayload && lastUpdatePayload.available)  || '').trim();
+
+    const head = document.createElement('div');
+    head.className = 'rollback-head';
+    const title = document.createElement('div');
+    title.className = 'rollback-head__title';
+    const eyebrow = document.createElement('div');
+    eyebrow.className = 'rollback-head__eyebrow';
+    const hasManifest = rollbackManifest && Array.isArray(rollbackManifest.versions) && rollbackManifest.versions.length > 0;
+    const hasOlder = hasManifest && installed && rollbackManifest.versions.some(v => compareSemver(v.version, installed) < 0);
+    if (available && installed && compareSemver(available, installed) < 0) {
+      eyebrow.textContent = 'Rollback available';
+      shell.classList.add('is-warning');
+    } else {
+      eyebrow.textContent = 'Install another version';
+    }
+    title.appendChild(eyebrow);
+    const hook = document.createElement('p');
+    hook.className = 'rollback-head__hook';
+    hook.textContent = hasManifest
+      ? (hasOlder
+        ? 'v' + installed + ' is newer than the feed. Pick any older version below to roll back — SHA-512 verified before install.'
+        : 'Pick any version below to install — SHA-512 verified before install.')
+      : 'Loading version manifest…';
+    title.appendChild(hook);
+    if (available && installed) {
+      const out = document.createElement('p');
+      out.className = 'rollback-head__outcome';
+      out.textContent = 'Installed v' + installed + ' · feed latest v' + available + ' · channel ' + String((lastUpdatePayload && lastUpdatePayload.channel) || 'stable');
+      title.appendChild(out);
+    }
+    head.appendChild(title);
+    const actions = document.createElement('div');
+    actions.className = 'rollback-head__actions';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'ghost';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => rollbackMount.setAttribute('hidden', ''));
+    actions.appendChild(closeBtn);
+    head.appendChild(actions);
+    shell.appendChild(head);
+
+    if (!hasManifest) {
+      // Either still loading or the manifest endpoint is unavailable. Either
+      // way we render a minimal "single" row from latest.yml so the
+      // operator still has the rollback action.
+      const empty = document.createElement('div');
+      empty.className = 'rollback-error';
+      const title2 = document.createElement('div');
+      title2.textContent = rollbackLoading ? 'Loading published versions…' : 'Versions manifest not published on this feed.';
+      const det = document.createElement('div');
+      det.className = 'rollback-error__detail';
+      det.textContent = 'Run the R2 publish with --write-manifest, or roll back via the bootstrap script.';
+      empty.appendChild(title2);
+      empty.appendChild(det);
+      shell.appendChild(empty);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'rollback-list';
+    const sorted = rollbackManifest.versions.slice().sort((a, b) => compareSemver(b.version, a.version));
+    sorted.forEach((v, i) => {
+      const cmpInst = compareSemver(v.version, installed);
+      const cmpFeed = compareSemver(v.version, available);
+      const row = document.createElement('div');
+      row.className = 'rollback-row';
+      let chip = null;
+      if (cmpInst === 0) {
+        row.classList.add('is-current');
+        chip = ['current', 'this is what you have'];
+      } else if (i === 0) {
+        row.classList.add('is-latest');
+        chip = ['latest', 'newest published'];
+      } else if (cmpInst > 0) {
+        row.classList.add('is-older');
+        chip = ['older', v.published_at ? 'published ' + fmtUtcShort(v.published_at) : 'rollback candidate'];
+      } else {
+        row.classList.add('is-broken');
+        chip = ['newer', 'newer than installed (would downgrade)'];
+      }
+      const ver = document.createElement('div');
+      ver.className = 'rollback-row__ver';
+      ver.textContent = 'v' + v.version;
+      row.appendChild(ver);
+      const meta = document.createElement('div');
+      meta.className = 'rollback-row__meta';
+      const c = document.createElement('span');
+      c.className = 'rollback-row__chip ' + (chip ? 'chip-' + chip[0] : '');
+      c.textContent = chip ? chip[0] : '';
+      meta.appendChild(c);
+      if (chip && chip[1]) {
+        const ttl = document.createElement('span');
+        ttl.textContent = chip[1];
+        meta.appendChild(ttl);
+      }
+      const size = document.createElement('span');
+      size.textContent = humanBytes(v.size);
+      meta.appendChild(size);
+      const sha = document.createElement('span');
+      sha.style.fontFamily = 'var(--mono)';
+      sha.textContent = 'sha512 ' + String(v.sha512 || '').slice(0, 12) + '…';
+      meta.appendChild(sha);
+      row.appendChild(meta);
+      const spacer = document.createElement('div'); // grid filler
+      row.appendChild(spacer);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = cmpInst === 0 ? 'ghost' : 'primary';
+      btn.disabled = rollbackInstallInFlight || cmpInst === 0;
+      btn.textContent = cmpInst === 0 ? 'Installed' : 'Install v' + v.version;
+      btn.addEventListener('click', () => installVersion(v));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    shell.appendChild(list);
+  }
+
+  async function installVersion(v) {
+    if (!v || !v.version) return;
+    if (rollbackInstallInFlight) return;
+    if (!window.abayaLauncher || typeof window.abayaLauncher.updateInstallVersion !== 'function') {
+      append('server', '\n[rollback] updateInstallVersion IPC not available — launcher too old.\n');
+      return;
+    }
+    const ok = (window.confirm && window.confirm('Install v' + v.version + ' now? The launcher will close and re-open with the new version.')) || false;
+    if (!ok) return;
+    rollbackInstallInFlight = true;
+    renderRollback();
+    try {
+      const r = await window.abayaLauncher.updateInstallVersion(v);
+      if (r && r.ok) {
+        append('server', '\n[rollback] v' + v.version + ' install succeeded — restarting.\n');
+      } else {
+        append('server', '\n[rollback] install failed: ' + (r && r.error ? r.error : 'unknown') + '\n');
+        rollbackInstallInFlight = false;
+        renderRollback();
+      }
+    } catch (err) {
+      append('server', '\n[rollback] error: ' + (err && err.message ? err.message : err) + '\n');
+      rollbackInstallInFlight = false;
+      renderRollback();
+    }
+  }
+
+  async function loadRollbackManifest(force) {
+    if (!window.abayaLauncher || typeof window.abayaLauncher.updateListVersions !== 'function') return;
+    rollbackLoading = true;
+    renderRollback();
+    try {
+      const r = await window.abayaLauncher.updateListVersions();
+      if (r && r.ok && r.manifest) {
+        rollbackManifest = r.manifest;
+      } else {
+        rollbackManifest = null;
+      }
+    } catch (_) {
+      rollbackManifest = null;
+    } finally {
+      rollbackLoading = false;
+      if (force) renderRollback();
+    }
+  }
+  // Re-render when lastUpdatePayload changes (auto-trigger when the
+  // footer reports that the available version is older than the
+  // installed one — i.e. there's a rollback eligible).
+  (function watchForRollback() {
+    let lastAvail = '';
+    function loop() {
+      const cur = String((lastUpdatePayload && lastUpdatePayload.available) || '');
+      const inst = String((lastUpdatePayload && lastUpdatePayload.current) || '');
+      if (cur !== lastAvail) {
+        lastAvail = cur;
+        if (rollbackMount && !rollbackMount.hasAttribute('hidden')) renderRollback();
+        // Auto-open when feed reports an older-than-installed available
+        // version AND the manifest has at least one rollback candidate.
+        if (inst && cur && compareSemver(cur, inst) < 0 && rollbackManifest && rollbackManifest.versions && rollbackManifest.versions.some(v => compareSemver(v.version, inst) < 0)) {
+          rollbackMount.removeAttribute('hidden');
+          renderRollback();
+        }
+      }
+      setTimeout(loop, 1500);
+    }
+    loop();
+  })();
   if (btnReleaseNotes && window.abayaLauncher.openUrl) {
     btnReleaseNotes.onclick = async function () {
       const st = lastUpdatePayload || (await window.abayaLauncher.updateStatus());

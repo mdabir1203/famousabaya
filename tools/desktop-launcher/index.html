@@ -41,8 +41,15 @@
       backdrop-filter: blur(14px) saturate(130%);
       -webkit-backdrop-filter: blur(14px) saturate(130%);
       box-shadow: var(--shadow);
-      display: grid;
-      grid-template-rows: repeat(10, auto) 1fr auto;
+      /* v1.2.42 — switched from CSS Grid to Flexbox column. The grid's
+         fixed 12-row template couldn't cope with the new togglable
+         supportMount / rollbackMount sections: when they were visible they
+         overflowed the implicit row and got clipped, which the user saw as
+         "the support panel doesn't scroll". Flexbox lets each section keep
+         its natural height and shrinks the main logs area to make room. */
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
       overflow: hidden;
     }
     .titlebar {
@@ -545,11 +552,18 @@
     }
 
     main {
+      /* v1.2.42 — flex: 1 1 auto + min-height: 0 lets main absorb the
+         remaining height in the shell (which is now flexbox). Without
+         min-height: 0 the inner <pre> log panes refuse to scroll because
+         the grid row grows to fit content. */
+      flex: 1 1 auto;
       min-height: 0;
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
       gap: 10px;
       padding: 12px 18px;
+      overflow: hidden;
     }
     .log-wrap {
       min-height: 0;
@@ -617,17 +631,70 @@
       main { grid-template-columns: 1fr; }
     }
   
-    /* ─── Support tab (v1.2.24+) ───────────────────────────────────── */
-    .support-mount { padding: 0 18px 18px; }
-    .support-shell { border-radius: 18px; border: 1px solid rgba(255,255,255,0.16); background: linear-gradient(150deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-    .support-head { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    /* ─── Support tab (v1.2.24+, redesigned in v1.2.42) ───────────────── */
+    /* v1.2.42 layout chain (top → bottom):
+         .shell                  — flex column, overflow hidden
+           └─ .support-mount     — flex 0 1 auto, max-height clamp; shrinks main
+                └─ .support-shell — flex 1 1 auto, fills mount, contains scroll
+                     └─ .support-grid — grid of cards, single row, fills shell
+                          └─ .support-card — flex column, fills grid cell
+                               └─ .support-tickets / .support-thread — overflow-y auto
+       The chain depends on EVERY level setting min-height: 0 and overflow: hidden
+       (except the bottom-most scroll container which is overflow-y: auto). */
+    .support-mount {
+      /* v1.2.42 — give the panel a meaningful size in the shell. The previous
+         `flex: 0 1 auto; max-height: clamp(...)` collapsed the grid to 0px
+         on launch because the natural content height (just the support-head)
+         was tiny and the panel took that. Now: min-height 380px guarantees
+         the cards have room, max-height 60vh keeps the launcher logs usable,
+         flex: 1 1 0 lets it share the remaining shell space with <main>. */
+      flex: 1 1 0;
+      min-height: 380px;
+      max-height: clamp(380px, 62vh, 620px);
+      padding: 0 18px 14px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: min-height 220ms ease, max-height 220ms ease;
+      animation: supportPanelIn 200ms ease-out;
+    }
+    /* v1.2.42 — explicit [hidden] override. The UA `[hidden]` rule has
+       the same specificity as `.support-mount`, but our stylesheet wins
+       by source order — which means `display: flex` would override the
+       UA's `display: none` and the panel would always render. This
+       explicit rule with `[hidden]` keeps the panel hidden by default. */
+    .support-mount[hidden] { display: none; }
+    @keyframes supportPanelIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .support-mount { transition: none; animation: none; }
+    }
+    .support-shell {
+      flex: 1 1 auto;
+      min-height: 0;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: linear-gradient(150deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow: hidden;
+      /* contain isolates style + layout so paint of the support panel
+         doesn't force a full shell reflow. */
+      contain: layout paint style;
+    }
+    .support-head { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; flex: 0 0 auto; }
     @media (max-width: 980px) { .support-head { grid-template-columns: 1fr; } }
+    @media (max-width: 720px) { .support-head { gap: 10px; } }
     .support-head__eyebrow { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: #c9b8ff; }
     .support-head h2 { margin: 4px 0 6px; font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
     .support-head p { margin: 0; color: var(--muted); font-size: 12px; }
     .support-head__who label { display: block; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
-    .support-who { display: flex; gap: 6px; }
-    .support-who input { flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
+    .support-who { display: flex; gap: 6px; flex-wrap: wrap; }
+    .support-who input { flex: 1 1 160px; min-width: 0; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
     .support-config { margin-top: 10px; font-size: 11px; color: var(--muted); }
     .support-config-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
     .support-config code { font-size: 12px; color: #d7c9ff; }
@@ -637,26 +704,71 @@
     .support-config-edit input { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; }
     .support-config-edit p { margin: 4px 0 0; font-size: 11px; }
     .muted { color: var(--muted); }
-    .support-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; min-height: 320px; }
-    @media (max-width: 1200px) { .support-grid { grid-template-columns: 1fr; } }
-    .support-card { border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; background: rgba(8, 5, 18, 0.45); padding: 14px; display: flex; flex-direction: column; min-width: 0; }
+    .support-grid {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      /* v1.2.42 — auto-fit + minmax lets the grid collapse gracefully on
+         narrow windows AND on short windows without a separate media query
+         per breakpoint. */
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      grid-auto-rows: minmax(0, 1fr);
+      gap: 12px;
+      overflow: hidden;
+    }
+    .support-card {
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      background: rgba(8, 5, 18, 0.45);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      overflow: hidden;
+      contain: layout paint style;
+    }
     .support-card h3 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .support-create { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
     .support-create form { display: flex; flex-direction: column; gap: 10px; }
     .support-create label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
-    .support-create input, .support-create select, .support-create textarea { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; font-family: inherit; }
-    .support-create textarea { resize: vertical; min-height: 80px; }
-    .support-form-foot { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 4px; }
-    .support-form-hint { font-size: 11px; color: var(--muted); flex: 1; }
+    .support-create input, .support-create select, .support-create textarea { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: var(--txt); padding: 8px 10px; border-radius: 10px; font-size: 12px; font-family: inherit; min-width: 0; }
+    .support-create textarea { resize: vertical; min-height: 80px; max-height: 240px; }
+    .support-form-foot { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-top: 4px; flex-wrap: wrap; }
+    .support-form-hint { font-size: 11px; color: var(--muted); flex: 1 1 100%; min-width: 0; }
     .support-form-hint.ok { color: var(--ok); }
     .support-form-hint.err { color: var(--danger); }
-    .support-list-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .support-list-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
     .support-list-head h3 { margin: 0; }
-    .support-list-filters { display: flex; gap: 4px; }
+    .support-list-filters { display: flex; gap: 4px; flex-wrap: wrap; }
     .support-list-filters button { font-size: 10px; padding: 5px 9px; letter-spacing: 0.06em; text-transform: uppercase; }
     .support-list-filters button.active { background: rgba(154,124,255,0.24); border-color: rgba(154,124,255,0.6); }
-    .support-tickets { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 360px; }
+    /* v1.2.42 — scroll shadow trick: the two radial-gradient layers fade in
+       only when the user has scrolled away from that edge. background-attachment
+       local + scroll makes the gradient tie to the scroll container's own
+       scroll position so it appears only when content overflows. */
+    .support-tickets {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 80px;
+      max-height: 100%;
+      padding: 4px 8px 4px 4px;
+      overscroll-behavior: contain;
+      contain: layout paint style;
+      scrollbar-gutter: stable;
+      background:
+        radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.45), rgba(0,0,0,0)) center top / 100% 14px no-repeat,
+        radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.45), rgba(0,0,0,0)) center bottom / 100% 14px no-repeat;
+      background-attachment: local, local;
+    }
     .support-empty { color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
-    .support-ticket { border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); cursor: pointer; transition: border-color .15s, background .15s; }
+    .support-error { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px; color: var(--danger); font-size: 12px; text-align: center; }
+    .support-error-detail { color: var(--muted); font-size: 11px; max-width: 220px; overflow-wrap: anywhere; }
+    .support-ticket { content-visibility: auto; contain-intrinsic-size: auto 88px; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.03); cursor: pointer; transition: border-color .15s, background .15s; }
     .support-ticket:hover { border-color: rgba(154,124,255,0.5); background: rgba(154,124,255,0.07); }
     .support-ticket.is-resolved { opacity: 0.6; }
     .support-ticket-row1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -669,27 +781,186 @@
     .support-status-pending { background: rgba(255,210,115,0.18); color: var(--warn); }
     .support-status-resolved { background: rgba(191,246,92,0.18); color: var(--ok); }
     .support-status-closed { background: rgba(255,255,255,0.08); color: var(--muted); }
-    .support-ticket-subject { margin-top: 4px; font-size: 13px; font-weight: 600; }
+    .support-ticket-subject { margin-top: 4px; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
     .support-ticket-meta { font-size: 11px; color: var(--muted); display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
-    .support-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+    .support-detail { display: flex; }
+    .support-detail[hidden] { display: none; }
+    .support-detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); flex: 0 0 auto; }
     .support-detail-id { font-family: var(--mono); font-size: 10px; color: var(--muted); }
-    .support-detail-head h3 { margin: 4px 0 6px; font-size: 16px; }
+    .support-detail-head h3 { margin: 4px 0 6px; font-size: 16px; overflow-wrap: anywhere; }
     .support-detail-meta { font-size: 11px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
     .support-detail-meta .support-prio-urgent, .support-detail-meta .support-prio-normal { padding: 2px 6px; }
-    .support-thread { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 6px 0; min-height: 120px; max-height: 340px; }
-    .support-msg { max-width: 85%; display: flex; flex-direction: column; }
+    /* Thread: same scroll-shadow pattern as support-tickets. */
+    .support-thread {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 6px 8px 6px 4px;
+      min-height: 80px;
+      max-height: 100%;
+      overscroll-behavior: contain;
+      contain: layout paint style;
+      scrollbar-gutter: stable;
+      background:
+        radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.45), rgba(0,0,0,0)) center top / 100% 14px no-repeat,
+        radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.45), rgba(0,0,0,0)) center bottom / 100% 14px no-repeat;
+      background-attachment: local, local;
+    }
+    .support-msg { content-visibility: auto; contain-intrinsic-size: auto 80px; max-width: 85%; display: flex; flex-direction: column; }
     .support-msg.is-out { align-self: flex-end; align-items: flex-end; }
     .support-msg.is-in { align-self: flex-start; }
-    .support-msg-bubble { padding: 8px 12px; border-radius: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+    .support-msg-bubble { padding: 8px 12px; border-radius: 14px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; font-size: 12px; }
     .support-msg.is-out .support-msg-bubble { background: linear-gradient(135deg, rgba(142,108,255,0.4), rgba(111,88,217,0.3)); border-color: rgba(181,159,255,0.5); }
     .support-msg-meta { font-size: 10px; color: var(--muted); margin-top: 3px; display: flex; gap: 4px; }
     .support-event { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); padding: 2px 0; font-style: italic; }
     .support-event-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.2); }
     .support-event-label { text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-    .support-detail-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .support-detail-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); flex: 0 0 auto; }
     .support-detail-hint { font-size: 11px; color: var(--muted); }
     button.ghost { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.16); }
     button.ghost:hover { background: rgba(255,255,255,0.1); }
+    /* Active toolbar link (currently used by the Support toggle) */
+    .links button.active,
+    .links button.active:hover { background: rgba(154,124,255,0.24); border-color: rgba(154,124,255,0.6); color: var(--txt); }
+    /* Support + rollback mount containers. Hidden by default; toggled on by
+       the Support / Rollback buttons in the toolbar. v1.2.42 — both are
+       flex children of the shell so they shrink main and scroll internally
+       when content overflows. */
+    .support-mount {
+      /* v1.2.42 — defined above (see the v1.2.42 redesigned block). This
+         legacy rule is intentionally not repeated here. */
+    }
+    .rollback-mount {
+      /* v1.2.42 — same approach as .support-mount: flex: 1 1 0 with a
+         min-height guarantee so the chooser has room even when the manifest
+         fetch is still loading. */
+      flex: 1 1 0;
+      min-height: 240px;
+      max-height: clamp(240px, 50vh, 480px);
+      padding: 0 18px 14px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: min-height 220ms ease, max-height 220ms ease;
+      animation: supportPanelIn 200ms ease-out;
+    }
+    /* Same hidden-attribute guard as .support-mount. */
+    .rollback-mount[hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .rollback-mount { transition: none; animation: none; }
+    }
+    .rollback-shell {
+      flex: 1 1 auto;
+      min-height: 0;
+      border-radius: 16px;
+      border: 1px solid rgba(255,210,115,0.32);
+      background: linear-gradient(150deg, rgba(255,210,115,0.06), rgba(255,255,255,0.02));
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+      contain: layout paint style;
+    }
+    .rollback-shell.is-warning { border-color: rgba(255,141,161,0.42); background: linear-gradient(150deg, rgba(255,141,161,0.06), rgba(255,255,255,0.02)); }
+    .rollback-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; flex: 0 0 auto; }
+    .rollback-head__title { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
+    .rollback-head__eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; color: var(--warn); }
+    .rollback-shell.is-warning .rollback-head__eyebrow { color: #ffb1c0; }
+    .rollback-head__hook { margin: 0; font-size: 14px; font-weight: 700; color: var(--txt); overflow-wrap: anywhere; }
+    .rollback-head__outcome { margin: 0; font-size: 12px; color: var(--muted); }
+    .rollback-head__actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; }
+    .rollback-list {
+      flex: 1 1 auto;
+      min-height: 80px;
+      max-height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      padding-right: 6px;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      background:
+        radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.45), rgba(0,0,0,0)) center top / 100% 14px no-repeat,
+        radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.45), rgba(0,0,0,0)) center bottom / 100% 14px no-repeat;
+      background-attachment: local, local;
+    }
+    .rollback-row { display: grid; grid-template-columns: minmax(100px, auto) minmax(0, 1fr) 1fr auto; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 12px; background: rgba(8,5,18,0.5); border: 1px solid rgba(255,255,255,0.08); }
+    @media (max-width: 880px) {
+      .rollback-row { grid-template-columns: minmax(90px, auto) 1fr auto; row-gap: 6px; }
+      .rollback-row__meta { grid-column: 2 / -1; }
+    }
+    @media (max-width: 620px) {
+      .rollback-row { grid-template-columns: 1fr auto; }
+      .rollback-row__meta { grid-column: 1 / -1; }
+    }
+    .rollback-row.is-current { border-color: rgba(191,246,92,0.4); background: rgba(191,246,92,0.07); }
+    .rollback-row.is-latest { border-color: rgba(154,124,255,0.4); background: rgba(154,124,255,0.08); }
+    .rollback-row.is-older { border-color: rgba(255,210,115,0.32); }
+    .rollback-row.is-broken { border-color: rgba(255,141,161,0.4); background: rgba(255,141,161,0.05); }
+    .rollback-row__ver { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+    .rollback-row__meta { font-size: 11px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+    .rollback-row__chip { font-size: 10px; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; background: rgba(255,255,255,0.08); color: var(--muted); }
+    .rollback-row__chip.chip-latest { background: rgba(154,124,255,0.18); color: #c9b8ff; }
+    .rollback-row__chip.chip-current { background: rgba(191,246,92,0.18); color: var(--ok); }
+    .rollback-row__chip.chip-broken { background: rgba(255,141,161,0.2); color: #ffb1c0; }
+    .rollback-error { padding: 14px; color: var(--danger); font-size: 12px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    .rollback-error__detail { color: var(--muted); font-size: 11px; max-width: 380px; text-align: center; overflow-wrap: anywhere; }
+    /* Sticky filter bar — keeps the All / Open / Pending / Resolved filters visible
+       even when the ticket list scrolls under them. */
+    .support-list > .support-list-head { position: sticky; top: 0; z-index: 2; background: linear-gradient(180deg, rgba(8,5,18,0.96) 70%, rgba(8,5,18,0)); padding-bottom: 8px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); margin-left: -14px; margin-right: -14px; padding-left: 14px; padding-right: 14px; }
+    /* Reduced-motion: keep our animations lazy and never jumpy. */
+    @media (prefers-reduced-motion: reduce) {
+      .support-ticket, .support-msg { transition: none; }
+    }
+    /* ── v1.2.42 — custom scrollbars so the operator can SEE that there's
+         more content to scroll to. The Electron webview uses WebKit, so
+         ::-webkit-scrollbar is the right hook. Width 10px is chunky enough
+         to be discoverable on a touch tablet, but not so wide it eats the
+         ticket card. */
+    .support-tickets::-webkit-scrollbar,
+    .support-thread::-webkit-scrollbar,
+    .rollback-list::-webkit-scrollbar,
+    .support-create::-webkit-scrollbar { width: 10px; height: 10px; }
+    .support-tickets::-webkit-scrollbar-track,
+    .support-thread::-webkit-scrollbar-track,
+    .rollback-list::-webkit-scrollbar-track,
+    .support-create::-webkit-scrollbar-track { background: transparent; }
+    .support-tickets::-webkit-scrollbar-thumb,
+    .support-thread::-webkit-scrollbar-thumb,
+    .rollback-list::-webkit-scrollbar-thumb,
+    .support-create::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.16);
+      border-radius: 5px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .support-tickets::-webkit-scrollbar-thumb:hover,
+    .support-thread::-webkit-scrollbar-thumb:hover,
+    .rollback-list::-webkit-scrollbar-thumb:hover,
+    .support-create::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.32);
+      background-clip: padding-box;
+    }
+    /* Very short windows: the support panel only has ~280px of height, so
+       collapse the cards to a single column and let each card scroll. */
+    @media (max-height: 640px) {
+      .support-grid { grid-template-columns: minmax(0, 1fr); }
+      .support-mount { max-height: clamp(300px, calc(100% - 320px), 640px); }
+    }
+    /* Narrow + short: full-screen panel via small spacer above. */
+    @media (max-width: 720px) and (max-height: 720px) {
+      .support-head__who { order: 2; }
+      .support-head__title { order: 1; }
+    }
+    /* Reduced motion: drop the scroll-shadow pulse if the user has it off. */
+    @media (prefers-reduced-motion: reduce) {
+      .support-tickets, .support-thread, .rollback-list { background: none; }
+    }
   </style>
 </head>
 <body>
@@ -768,11 +1039,17 @@
         <button type='button' data-url='http://127.0.0.1:PORT_PLACEHOLDER/kiosk.html'>Kiosk</button>
         <button type='button' data-url='http://127.0.0.1:PORT_PLACEHOLDER/dashboard.html'>Dashboard</button>
         <button type='button' data-url='http://127.0.0.1:PORT_PLACEHOLDER/setup'>Setup</button>
+        <button type='button' id='btnToggleSupport' aria-expanded='false' aria-controls='supportMount' title='Open the Support ticket panel'>Support</button>
       </div>
       <div class='links'>
         <button type='button' data-url='https://abaya-track-leaderboard.pages.dev'>Leaderboard</button>
+        <button type='button' id='btnToggleRollback' aria-expanded='false' aria-controls='rollbackMount' title='Pick any published version to install or roll back to'>Show rollback</button>
       </div>
     </section>
+
+    <section id='supportMount' class='support-mount' aria-label='Support tickets' hidden></section>
+    <section id='rollbackMount' class='rollback-mount' aria-label='Rollback / install other version' hidden></section>
+
     <div id='updateSuccessBanner' class='update-success-banner' role='status'>
       <span id='updateSuccessText'></span>
       <button type='button' id='btnDismissUpdateSuccess'>Dismiss</button>
@@ -801,8 +1078,6 @@
       </div>
     </section>
 
-    
-    <section id='supportMount' class='support-mount' aria-label='Support tickets'></section>
 <main>
       <div class='log-wrap'>
         <div class='log-head'><span>Server Log</span><span id='serverDot' class='dot'></span></div>
