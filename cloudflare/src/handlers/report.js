@@ -8,6 +8,7 @@ import {
   factoryDateStringForUnix,
 } from '../working-hours.js';
 import { reportRangeForType, safeYmdOrFallback, customRange } from './report-shared.js';
+import { activeSessionWhere } from '../domain/data-cleanup.js';
 
 export function rowElapsedSec(row) {
   const start = Number(row && row.min_started_at);
@@ -66,6 +67,12 @@ export async function handleReport(env, url) {
   const t0 = Date.now();
   const type = url.searchParams.get('type') || 'daily';
   const factoryToday = factoryTodayString(env);
+  // v1.2.45 — `nowUnix` is the snapshot timestamp the read-path scrub
+  // uses to compute the 24h rolling cutoff for active_sessions. Pinned
+  // to `t0` (Date.now()) so the cutoff is identical for every query in
+  // the runReportBatch — a session that crosses the cutoff mid-batch
+  // cannot appear in some aggregations and not others.
+  const nowUnix = Math.floor(t0 / 1000);
   const localToday = safeYmdOrFallback(url.searchParams.get('local_today'), factoryToday);
   // Optional explicit window: from+to (custom range) or date (anchor day for
   // daily/weekly/monthly/yearly). Backwards compatible — without them the
@@ -173,9 +180,12 @@ export async function handleReport(env, url) {
       // Working-hours config + live sessions ride the same batch: one D1 round
       // trip for the whole report instead of four separate ones.
       env.DB.prepare(`SELECT v FROM worker_settings WHERE k = ?`).bind(WORKING_HOURS_KEY),
+      // v1.2.45 — read-path scrub: only current roster + last 24h.
+      // See cloudflare/src/domain/data-cleanup.js for the predicate.
       env.DB.prepare(`
       SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code, started_at
       FROM active_sessions
+      WHERE ${activeSessionWhere(nowUnix)}
     `),
     ]).then((rows) => {
       dbMs += Date.now() - t;
@@ -206,7 +216,6 @@ export async function handleReport(env, url) {
 
   const activeRows = (activeRes && activeRes.results) || [];
 
-  const nowUnix = Math.floor(Date.now() / 1000);
   const inRangeActive = activeRows.filter((r) => {
     const d = factoryDateStringForUnix(env, Number(r.started_at) || 0);
     return d >= range.startYmd && d <= range.endYmd;

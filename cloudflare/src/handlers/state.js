@@ -13,6 +13,7 @@ import {
   workingStatusNow,
 } from '../working-hours.js';
 import { canonicalEmpProcess, emptyProcessSplit } from '../domain/process.js';
+import { activeSessionWhere, dedupSessionsCte } from '../domain/data-cleanup.js';
 import { isValidYmd } from './report-shared.js';
 
 // In-memory response cache for handleState (v1.2.26 — D1 free-tier mitigation).
@@ -100,6 +101,12 @@ export async function handleState(env, url) {
   }
 
   const factoryToday = factoryTodayString(env);
+  // v1.2.45 — `nowSec` is the snapshot timestamp the read-path scrub
+  // uses to compute the 24h rolling cutoff for active_sessions. Pinned
+  // to `now` (Date.now()) so the cutoff is identical for every query
+  // in this batch — a session that crosses the cutoff mid-batch cannot
+  // appear in some aggregations and not others.
+  const nowSec = Math.floor(now / 1000);
   const workingCfg = await getWorkingHoursConfig(env);
   const todayKey = weekdayKeyInTz(Math.floor(Date.now() / 1000), workingCfg.timezone || 'Asia/Dubai');
   const windowsToday = windowsForDay(workingCfg, todayKey);
@@ -172,17 +179,29 @@ export async function handleState(env, url) {
   // otherwise include everything up to today.
   const logsToYmd = explicitRange ? toYmd : factoryToday;
 
+  // v1.2.45 — read-path scrub: only show active_sessions rows that
+  // belong to the current roster AND are younger than 24h. Older rows
+  // are orphans (close-stale-sessions never ran or crashed), newer-but-
+  // not-in-roster rows are ghosts (the factory's pre-v1.2.44 close-stale
+  // endpoint can resurrect them on every restart). See
+  // cloudflare/src/domain/data-cleanup.js for the predicate source.
   const stmtActive = env.DB.prepare(`
       SELECT emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
         abaya_id, abaya_code, station, started_at
-      FROM active_sessions ORDER BY started_at ASC
+      FROM active_sessions
+      WHERE ${activeSessionWhere(nowSec)}
+      ORDER BY started_at ASC
     `);
+  // v1.2.45 — read-path scrub: filter out synthetic emp_ids from the
+  // logs list (mirrors the `LIKE 'e_bc_%'` guard the perf / aggregate
+  // queries already have). Without this, every dup-pushed ghost id
+  // shows up in the Recent Invoice Logs table on the dashboard.
   const stmtLogs = env.DB.prepare(`
       SELECT id, emp_id, emp_name, emp_code, emp_process, emp_color, emp_initials,
         abaya_id, abaya_code, station, started_at, ended_at, duration_sec,
         hour_of_day, day_date, invoice_count, invoice_serial,
         NULL as quantity, NULL as checker_barcode
-      FROM sessions WHERE day_date >= ? AND day_date <= ?
+      FROM sessions WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'
       ORDER BY ended_at DESC LIMIT ?
     `).bind(fromYmd, logsToYmd, limit);
   // Per-employee perf: pick the *latest* emp_name / emp_process / emp_code /
@@ -199,23 +218,31 @@ export async function handleState(env, url) {
   // from the sessions table; this guard keeps the aggregations clean if
   // a stray row reappears. Mirrors the client-side filter that the local
   // dashboard already had in v1.2.14.
+  // v1.2.45 — additionally dedup (emp_id, started_at) clusters at the
+  // SQL layer via the `survivors` CTE (one row per cluster, picking the
+  // max ended_at). Without this, Wahid on 2026-09-16 had 3 cloud rows
+  // for the same Start — the perf / aggregate counts tripled.
   const stmtPerf = env.DB.prepare(`
-      WITH agg AS (
-        SELECT emp_id, COUNT(*) as units,
-               ROUND(AVG(duration_sec)) as avg_sec,
-               SUM(duration_sec) as total_sec
-        FROM sessions
-        WHERE day_date = ? AND emp_id LIKE 'e_bc_%'
-        GROUP BY emp_id
+      ${dedupSessionsCte()},
+      agg AS (
+        SELECT s.emp_id, COUNT(*) as units,
+               ROUND(AVG(s.duration_sec)) as avg_sec,
+               SUM(s.duration_sec) as total_sec
+        FROM sessions s
+        JOIN survivors w ON w.id = s.id
+        WHERE s.day_date = ? AND s.emp_id LIKE 'e_bc_%'
+        GROUP BY s.emp_id
       ),
       latest AS (
         SELECT s.emp_id, s.emp_name, s.emp_process, s.emp_color, s.emp_initials
         FROM sessions s
+        JOIN survivors w ON w.id = s.id
         JOIN (
-          SELECT emp_id, MAX(ended_at) AS last_end
-          FROM sessions
-          WHERE day_date = ? AND emp_id LIKE 'e_bc_%'
-          GROUP BY emp_id
+          SELECT s2.emp_id, MAX(s2.ended_at) AS last_end
+          FROM sessions s2
+          JOIN survivors w2 ON w2.id = s2.id
+          WHERE s2.day_date = ? AND s2.emp_id LIKE 'e_bc_%'
+          GROUP BY s2.emp_id
         ) m ON m.emp_id = s.emp_id AND m.last_end = s.ended_at
       )
       SELECT agg.emp_id, latest.emp_name, latest.emp_process, latest.emp_color, latest.emp_initials,
@@ -231,9 +258,14 @@ export async function handleState(env, url) {
       FROM daily_stats WHERE stat_date >= ? AND stat_date <= ?
       ORDER BY stat_date DESC LIMIT 30
     `).bind(fromYmd, toYmd);
+  // v1.2.45 — read-path scrub: dedup (emp_id, started_at) clusters before
+  // counting. Without this, the operator's PROCESS COMPLETED KPI on the
+  // dashboard was inflated by close-stale-sessions re-pushes.
   const stmtAgg = env.DB.prepare(`
-      SELECT COUNT(*) as cnt, COALESCE(SUM(duration_sec), 0) as total_sec
-      FROM sessions WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'
+      ${dedupSessionsCte()}
+      SELECT COUNT(*) as cnt, COALESCE(SUM(s.duration_sec), 0) as total_sec
+      FROM sessions s JOIN survivors w ON w.id = s.id
+      WHERE s.day_date >= ? AND s.day_date <= ? AND s.emp_id LIKE 'e_bc_%'
     `).bind(anchorYmd, toYmd);
   // Distinct abayas that touched the line in the KPI window. The
   // existing `completed_today` counts finished sessions; this counts
@@ -242,32 +274,50 @@ export async function handleState(env, url) {
   // The operator's question "how many abayas did we deliver?" is
   // answered by this number, not the session count.
   // Excludes sessions with no abaya_id (a few historical rows have NULL).
+  // v1.2.45 — read-path scrub: dedup (emp_id, started_at) clusters. The
+  // COUNT(DISTINCT abaya_id) was correct in principle (one abaya = one
+  // count regardless of process steps), but dup-pushed rows doubled the
+  // abayas on the Garment Totals tile.
   const stmtAbayasDelivered = env.DB.prepare(`
-      SELECT COUNT(DISTINCT abaya_id) as abayas_delivered
-      FROM sessions
-      WHERE day_date >= ? AND day_date <= ?
-        AND abaya_id IS NOT NULL AND abaya_id != ''
-        AND emp_id LIKE 'e_bc_%'
+      ${dedupSessionsCte()}
+      SELECT COUNT(DISTINCT s.abaya_id) as abayas_delivered
+      FROM sessions s JOIN survivors w ON w.id = s.id
+      WHERE s.day_date >= ? AND s.day_date <= ?
+        AND s.abaya_id IS NOT NULL AND s.abaya_id != ''
+        AND s.emp_id LIKE 'e_bc_%'
     `).bind(anchorYmd, toYmd);
+  // v1.2.45 — read-path scrub: dedup (emp_id, started_at) clusters before
+  // grouping by process. Same rationale as stmtPerf / stmtAgg.
   const stmtProcSplit = env.DB.prepare(`
-      SELECT emp_process, COUNT(*) as cnt FROM sessions
-      WHERE day_date >= ? AND day_date <= ? AND emp_id LIKE 'e_bc_%'
-      GROUP BY emp_process
+      ${dedupSessionsCte()}
+      SELECT s.emp_process, COUNT(*) as cnt
+      FROM sessions s JOIN survivors w ON w.id = s.id
+      WHERE s.day_date >= ? AND s.day_date <= ? AND s.emp_id LIKE 'e_bc_%'
+      GROUP BY s.emp_process
     `).bind(anchorYmd, toYmd);
+  // v1.2.45 — read-path scrub: dedup (emp_id, started_at) clusters before
+  // grouping by hour. Same rationale as stmtPerf.
   const stmtHourly = env.DB.prepare(`
-      SELECT hour_of_day, COUNT(*) as cnt FROM sessions
-      WHERE day_date = ? AND hour_of_day >= ? AND hour_of_day <= ?
-        AND emp_id LIKE 'e_bc_%'
-      GROUP BY hour_of_day
+      ${dedupSessionsCte()}
+      SELECT s.hour_of_day, COUNT(*) as cnt
+      FROM sessions s JOIN survivors w ON w.id = s.id
+      WHERE s.day_date = ? AND s.hour_of_day >= ? AND s.hour_of_day <= ?
+        AND s.emp_id LIKE 'e_bc_%'
+      GROUP BY s.hour_of_day
     `).bind(anchorYmd, hourStart, hourEnd);
+  // v1.2.45 — read-path scrub: dedup (emp_id, started_at) clusters before
+  // grouping by abaya. The Garment Totals tile was showing inflated
+  // `segments` counts (a dup-pushed Wahid session triple-counted the
+  // CF111 abaya).
   const stmtGarment = env.DB.prepare(`
-      SELECT abaya_id, MAX(abaya_code) as abaya_code,
+      ${dedupSessionsCte()}
+      SELECT s.abaya_id, MAX(s.abaya_code) as abaya_code,
         COUNT(*) as segments,
-        COALESCE(SUM(duration_sec), 0) as completed_sec
-      FROM sessions
-      WHERE day_date >= ? AND day_date <= ?
-      GROUP BY abaya_id
-      ORDER BY SUM(duration_sec) DESC
+        COALESCE(SUM(s.duration_sec), 0) as completed_sec
+      FROM sessions s JOIN survivors w ON w.id = s.id
+      WHERE s.day_date >= ? AND s.day_date <= ?
+      GROUP BY s.abaya_id
+      ORDER BY SUM(s.duration_sec) DESC
       LIMIT 800
     `).bind(anchorYmd, toYmd);
 

@@ -355,4 +355,66 @@ Before any commit that touches `shared/`, `cloudflare/src/`,
 - [ ] Did I run `npm test`?
   → All 57+ tests pass.
 
-If any box is unchecked, the commit is not ready.
+## 11. The read-path scrub contract — drop ghosts + dups at the SQL layer (v1.2.45)
+
+The cloud's `active_sessions` and `sessions` tables may contain noise the
+factory's pre-v1.2.44 server is still pushing:
+
+- **Ghost `active_sessions` rows** — `emp_id` not in the current roster
+  (`e_bc_999998` sentinel, `e_bc_00000141 / Ashanfi`, future rosters).
+- **Orphan `active_sessions` rows** — `started_at` older than 24h with
+  no matching `session_finish` (close-stale-sessions never ran, or
+  crashed before pushing).
+- **Duplicate `sessions` rows** — same `(emp_id, started_at)`, different
+  `ended_at` from pre-v1.2.43 close-stale-sessions re-pushes. The cloud
+  D1 PK is `'WL-' + emp_id + '-' + ended_at` so each variant landed as
+  a new row.
+
+The migration files (0022 ghost cleanup, 0023 dup dedup) are one-time
+fixes; new ghost/dup rows keep accumulating until every factory
+laptop picks up v1.2.43+ with the server-side idempotency guard. Until
+then, the **cloud read path** is responsible for hiding this noise from
+the CEO dashboard.
+
+`cloudflare/src/domain/data-cleanup.js` is the source of truth for the
+two scrub predicates:
+
+```js
+import { activeSessionWhere, dedupSessionsCte } from '../domain/data-cleanup.js';
+
+// active_sessions: only current roster + last 24h
+const stmtActive = env.DB.prepare(`
+  SELECT ... FROM active_sessions WHERE ${activeSessionWhere(nowSec)} ORDER BY started_at ASC
+`);
+
+// sessions: dedup (emp_id, started_at) clusters, keeping max(ended_at)
+const stmtSome = env.DB.prepare(`
+  ${dedupSessionsCte()}
+  SELECT s.* FROM sessions s JOIN survivors w ON w.id = s.id
+  WHERE s.day_date = ?
+`);
+```
+
+Apply `activeSessionWhere` to **every** `FROM active_sessions` read that
+is dashboard-facing (state.js live tile, report.js active rows). Apply
+`dedupSessionsCte` to **every** `FROM sessions` aggregation that the
+dashboard renders (state.js perf/agg/hourly/garment, report.js by-employee/
+by-process). Internal handlers (employee-day.js, ingest.js) keep their
+own per-row logic — they don't need this scrub because they're called
+with a known emp_id.
+
+**Three enforcement layers:**
+
+1. **Live tile (`/api/state` → `stmtActive`)** — drops ghost and orphan
+   rows from the dashboard's Live Active Sessions section.
+2. **Aggregations (`/api/state` → `stmtPerf`/`stmtAgg`/`stmtProcSplit`/
+   `stmtHourly`/`stmtGarment`/`stmtAbayasDelivered`)** — counts and
+   sums are computed after dedup, so PROCESS COMPLETED, WORK TIME,
+   ABAYAS DELIVERED, EMPLOYEE PERFORMANCE all reflect unique sessions.
+3. **Recent logs (`/api/state` → `stmtLogs`)** — `emp_id LIKE 'e_bc_%'`
+   guard filters synthetics out of the Recent Invoice Logs table.
+
+If you add a new dashboard-facing handler that reads from
+`active_sessions` or `sessions`, copy both helpers in the same commit.
+The unit tests in `tests/data-cleanup.test.mjs` pin the SQL shape and
+the roster size invariant.
