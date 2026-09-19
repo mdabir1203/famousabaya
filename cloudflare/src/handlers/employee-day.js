@@ -133,6 +133,32 @@ export async function handleEmployeeDay(env, url) {
     live: false,
   }));
 
+  // v1.2.43 — defense-in-depth dedup. Historical data on the cloud may
+  // still carry duplicate (emp_id, started_at) clusters from before the
+  // server-side idempotency guard landed (see migration 0023 for the
+  // one-time cleanup and server.js isDuplicateSessionFinish for the
+  // runtime guard). Keep the row with the largest ended_at per cluster;
+  // that's the latest close attempt and reflects the actual end of
+  // work. (emp_id is constant within this query — it's filtered by the
+  // empIdPlaceholders — so the dedup key reduces to started_at.)
+  if (sessions.length > 1) {
+    const dedupByStart = new Map();
+    for (const s of sessions) {
+      const startKey = Number(s.started_at || 0);
+      const prev = dedupByStart.get(startKey);
+      if (!prev || Number(s.ended_at || 0) > Number(prev.ended_at || 0)) {
+        dedupByStart.set(startKey, s);
+      }
+    }
+    if (dedupByStart.size < sessions.length) {
+      const dedupedSessions = Array.from(dedupByStart.values()).sort(
+        (a, b) => Number(a.started_at || 0) - Number(b.started_at || 0)
+      );
+      sessions.length = 0;
+      sessions.push(...dedupedSessions);
+    }
+  }
+
   // Always load workingCfg — we use it both for the live session (today only)
   // and to window every finished session's duration (always).
   const workingCfg = workingHoursConfigFromRow(whRes && whRes.results && whRes.results[0]);
@@ -259,7 +285,12 @@ export async function handleEmployeeDay(env, url) {
       factory_today: factoryToday,
       emp: empResp,
       totals: {
-        units: rows.length,
+        // v1.2.43 — count distinct sessions (post-dedup), not raw D1 rows.
+        // rows.length still reflects the pre-dedup cluster sizes for any
+        // legacy duplicates that haven't been cleaned up by migration 0023
+        // yet. The operator's KPI is "how many sessions did this worker
+        // complete today" — which is the deduped count.
+        units: sessions.filter((x) => !x.live).length,
         active_time_sec: activeSec,
         live_active_time_sec: liveSec,
         full_time_sec: activeSec + liveSec,

@@ -603,6 +603,13 @@ async function tryPostCeoIngestOnce(type, payload) {
   });
 }
 
+/**
+ * v1.2.43 — Idempotency check for session_finish pushes. The actual
+ * matching lives in shared/session-dedup.cjs so it can be unit-tested
+ * without spawning a server subprocess. See that file for the rationale.
+ */
+const { isDuplicateSessionFinish } = require('./shared/session-dedup.cjs');
+
 async function pushToCloudflare(type, payload) {
   if (!CF_URL || !CF_SECRET) return;
   // v1.2.40 — Stamp every outbound push with a monotonic factory-local
@@ -2421,6 +2428,22 @@ io.on('connection', (socket) => {
     }
 
     var now = Date.now();
+    // v1.2.44 — END-TIME CONTRACT INVARIANT
+    // -------------------------------------------------------------------------
+    // `now` (assigned above) is the exact millisecond at which the worker
+    // tapped Finish at the kiosk. This value is preserved UNCHANGED as
+    // `record.end` here, then pushed to the cloud as `ended_at =
+    // Math.floor(record.end / 1000)`. The cloud stores it verbatim and
+    // the day-report modal renders it as-is. NEVER derive `end` /
+    // `ended_at` from any formula — see AGENTS.md §2 (timestamp contract)
+    // and the v1.2.43 release notes for the incident this guards
+    // against.
+    //
+    // `duration_seconds` below IS derived (it's the in-shift overlap of
+    // start..end), and that's correct — duration is a separate concept
+    // from the end timestamp. The DURATION column on the dashboard
+    // shows duration_seconds; the END TIME column shows ended_at.
+    // -------------------------------------------------------------------------
     // Count only seconds that fall within configured shift windows so that breaks / off-hours
     // never inflate productivity numbers. start/end timestamps are preserved unchanged.
     var duration_seconds = Math.floor(
@@ -2510,7 +2533,14 @@ io.on('connection', (socket) => {
       cfPayload.quantity = record.quantity;
       cfPayload.checker_barcode = checker_barcode;
     }
-    pushToCloudflare('session_finish', cfPayload);
+    // v1.2.43 — defense in depth: if a finish for this (emp_id, start)
+    // already landed in COMPLETED_LOGS, suppress the duplicate push.
+    // Cheap O(N) scan; COMPLETED_LOGS is bounded by OFFLINE_LOG_WINDOW_MS.
+    if (isDuplicateSessionFinish(COMPLETED_LOGS, emp_id, record.start)) {
+      console.log('[req_finishWork] skipping duplicate cloud push for', emp_id, 'start=', record.start);
+    } else {
+      pushToCloudflare('session_finish', cfPayload);
+    }
   });
 
   /**
@@ -2557,6 +2587,20 @@ io.on('connection', (socket) => {
       if (!emp_id) { results.push({ emp_id, error: 'missing emp_id' }); skippedCount++; continue; }
       const sess = ACTIVE_SESSIONS[emp_id];
       if (!sess) { results.push({ emp_id, error: 'no_active_session' }); skippedCount++; continue; }
+      // v1.2.43 — defense in depth: skip if a finish for this (emp_id,
+      // started_at) is already in COMPLETED_LOGS. Without this guard a
+      // re-boot before persistOfflineDashboardReport's setImmediate fires
+      // would re-hydrate ACTIVE_SESSIONS from disk and let close-stale run
+      // again on the same orphan, pushing a second session_finish to the
+      // cloud and creating a duplicate row in cloud D1 sessions.
+      if (isDuplicateSessionFinish(COMPLETED_LOGS, emp_id, sess.started_at)) {
+        // Also drop the in-memory row so the next call won't retry — the
+        // existing COMPLETED_LOGS entry already represents this session.
+        delete ACTIVE_SESSIONS[emp_id];
+        results.push({ emp_id, ok: true, alreadyClosed: true, started_at: sess.started_at });
+        skippedCount++;
+        continue;
+      }
       // Resolve end time: explicit end_ms wins; otherwise cap at min(started + 8h, now)
       let endMs = Number(item.end_ms) || 0;
       if (!(endMs > 0) || endMs > now) endMs = now;

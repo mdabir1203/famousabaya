@@ -240,6 +240,17 @@ test('canonicalProcess mirrors the cloud: case-insensitive aliases + khaka work'
     { input: 'Stone Work',    want: 'Stone Work' },
     { input: 'Embroidery',    want: 'Embroidery' },
     { input: 'Invoice maker', want: 'Invoice maker' },
+    // v1.2.43 — previously orphaned names from data/work-types.json that
+    // were silently passing through unchanged and missing from the
+    // daily_stats rollups. Now they canonicalize to themselves so the
+    // PROCESS_TO_DAILY_COL table can bucket them into *_units columns.
+    { input: 'Show Button',   want: 'Show Button' },
+    { input: 'show button',   want: 'Show Button' },
+    { input: 'Alter',         want: 'Alter' },
+    { input: 'Complete',      want: 'Complete' },
+    { input: 'complete',      want: 'Complete' },
+    { input: 'Incomplete',    want: 'Incomplete' },
+    { input: 'Cutting',       want: 'Tailor (01)' },
   ];
   state.completedLogs = cases.map((c, i) => ({
     emp_id: 'e_bc_00000121',

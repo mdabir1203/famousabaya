@@ -1,0 +1,120 @@
+-- 0023_dedup_sessions_per_emp_started_at.sql
+--
+-- One-time cleanup of duplicate `sessions` rows that share the same
+-- (emp_id, started_at) but have different ended_at values.
+--
+-- Root cause: the factory's /api/admin/close-stale-sessions endpoint
+-- (server.js line 2539+) pushed a fresh session_finish each time it
+-- was called on the same orphan active session. Repeated boots
+-- re-hydrated ACTIVE_SESSIONS from the offline-report before the
+-- post-close setImmediate persisted, so a second close-stale call saw
+-- the orphan again and pushed another session_finish. The cloud
+-- sessions table has PK = 'WL-' + emp_id + '-' + ended_at, so each
+-- row had a unique id and was accepted as new data.
+--
+-- Symptom on the cloud dashboard (dashboard.farewellabaya.com):
+-- /api/report/employee-day returned N rows for the same session,
+-- each with the same started_at and emp_process but a different
+-- ended_at and duration_sec. The first cluster the operator flagged
+-- was Wahid (e_bc_00000138) on 2026-09-16: 3 rows with start
+-- 8:55 PM and end 11:04 AM, 7:03 PM, 9:54 PM respectively.
+--
+-- Strategy: keep the row with the LATEST ended_at per
+-- (emp_id, started_at). The latest close is the one that reflects
+-- the actual end of work (or the last orphan-close attempt that
+-- pushed past the worker's real finish). Earlier closes are either
+-- (a) superseded by a real worker Finish later that day, or
+-- (b) redundant orphan-close pushes that should never have been
+-- written. Either way they over-count and should be removed.
+--
+-- We use a CTE with ROW_NUMBER() OVER (D1 supports window functions
+-- as of compatibility_date 2024-11-01 — see wrangler.toml). The CTE
+-- is inlined in a single DELETE statement; no TEMP TABLE is needed.
+--
+-- v1.2.43 (2026-09-19, post-incident): the original migration used
+-- CREATE TEMP TABLE + ROW_NUMBER() in a separate _session_dedup_loser
+-- temp table, which timed out under `wrangler d1 execute --file` for
+-- the operator and produced a hand-rewritten CTE that did NOT filter
+-- by ROW_NUMBER() — the resulting DELETE matched every row and
+-- destroyed ~7,600 historical sessions rows. We caught it via D1
+-- Time Travel restore (bookmark post-0022-apply) and re-applied
+-- with this safer form. The CTE below is the canonical form for D1:
+-- a single statement, no temp tables, no separate "would_delete"
+-- preview — the dry-run is a SELECT sibling you can run as a read.
+--
+-- Defense in depth:
+--   - Migration 0024 (server.js close-stale-sessions idempotency
+--     check, also part of v1.2.43) prevents NEW duplicates from
+--     being pushed from the factory side.
+--   - employee-day.js read-time dedup covers any future drift
+--     between cloud and offline.
+--
+-- Run sequence (operator):
+--
+--   # 0. Confirm you're targeting the cloud.
+--   cd cloudflare
+--   export CLOUDFLARE_ACCOUNT_ID=...
+--   export CLOUDFLARE_API_TOKEN=...
+--
+--   # 1. DRY RUN — preview what would be deleted.
+--   npx wrangler d1 execute abaya-db --remote --command="
+--     WITH ranked AS (
+--       SELECT id, ROW_NUMBER() OVER (
+--                PARTITION BY emp_id, started_at
+--                ORDER BY ended_at DESC, id DESC
+--              ) AS rn
+--         FROM sessions
+--     )
+--     SELECT COUNT(*) AS would_delete
+--       FROM ranked
+--      WHERE rn > 1;
+--   "
+--   # Expect: ~355 as of 2026-09-19.
+--
+--   # 2. APPLY.
+--   npx wrangler d1 execute abaya-db --remote --command="
+--     WITH ranked AS (
+--       SELECT id, ROW_NUMBER() OVER (
+--                PARTITION BY emp_id, started_at
+--                ORDER BY ended_at DESC, id DESC
+--              ) AS rn
+--         FROM sessions
+--     )
+--     DELETE FROM sessions
+--      WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+--   "
+--
+--   # 3. VERIFY — must show 0 clusters.
+--   npx wrangler d1 execute abaya-db --remote --command="
+--     SELECT COUNT(*) AS dup_groups_remaining
+--       FROM (SELECT 1 FROM sessions
+--              GROUP BY emp_id, started_at HAVING COUNT(*) > 1);
+--   "
+--   # Expect: 0.
+--
+-- Idempotency:
+--   Re-running this migration after a successful first run matches
+--   0 rows in the DELETE (every cluster has exactly one survivor).
+--   Safe.
+--
+-- Rollback:
+--   Use `wrangler d1 time-travel restore abaya-db --bookmark=<pre>`.
+--   D1 keeps 30 days of bookmarks. The wrangler output of the run
+--   you want to roll back from includes a "To undo this operation,
+--   you can restore to the previous bookmark" line; copy that
+--   bookmark. Time Travel is a destructive restore of the entire
+--   database, so use it only as a last resort.
+
+-- The migration itself: a single CTE-DELETE statement. No TEMP TABLEs,
+-- no multi-statement files, no chance of wrangler's import parser
+-- losing the filter.
+
+WITH ranked AS (
+  SELECT id, ROW_NUMBER() OVER (
+           PARTITION BY emp_id, started_at
+           ORDER BY ended_at DESC, id DESC
+         ) AS rn
+    FROM sessions
+)
+DELETE FROM sessions
+ WHERE id IN (SELECT id FROM ranked WHERE rn > 1);

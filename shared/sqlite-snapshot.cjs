@@ -33,6 +33,13 @@ const PROCESS_TO_DAILY_COL = {
   'Invoice maker': 'invoice_maker_units',
   Packaging: 'packaging_units',
   Checker: 'checker_units',
+  // v1.2.43 — coverage for the previously-orphaned work-type names. The
+  // cloud's PROCESS_TO_DAILY_COL (cloudflare/src/domain/process.js) is
+  // the source of truth; this mirror must stay byte-equal in behavior.
+  'Show Button': 'button_units',
+  'Alter': 'tailor_01_units',
+  'Complete': 'tailor_01_units',
+  'Incomplete': 'hand_work_units',
   Cutting: 'tailor_01_units',
   'Cutting master': 'tailor_01_units',
   Stitching: 'tailor_02_units',
@@ -63,13 +70,23 @@ function canonicalProcess(raw) {
   if (lo === 'stitching') return 'Tailor (02)';
   if (lo === 'finishing') return 'Hand Work';
   if (lo === 'khaka work') return 'Hand Work';
+  // v1.2.43 — coverage for the previously-orphaned work-type names that
+  // were silently passing through unchanged (and thus missing from the
+  // daily_stats rollups). Each maps to a daily_stats column on the
+  // PROCESS_TO_DAILY_COL table on the cloud side.
+  if (lo === 'show button') return 'Show Button';
+  if (lo === 'alter') return 'Alter';
+  if (lo === 'complete') return 'Complete';
+  if (lo === 'incomplete') return 'Incomplete';
   // Keep Title case for the canonical names so the per-process totals
   // visually match the cloud's process_split_today payload.
   if (
     t === 'Tailor (01)' || t === 'Tailor (02)' || t === 'Hand Work' ||
     t === 'Stone Work' || t === 'Button' || t === 'Embroidery' ||
     t === 'Ari Work' || t === 'Hand Designing' || t === 'Invoice maker' ||
-    t === 'Packaging' || t === 'Checker'
+    t === 'Packaging' || t === 'Checker' ||
+    t === 'Show Button' || t === 'Alter' ||
+    t === 'Complete' || t === 'Incomplete'
   ) return t;
   // Unknown process — pass through unchanged. It will land in the
   // tailor_01_units column (dailyStatsColumnForProcess default) so it's

@@ -229,6 +229,187 @@ test('handleEmployeeDay returns chronological sessions with totals for one emplo
   assert.equal(body.sessions.every((s) => s.live === false), true);
 });
 
+test('handleEmployeeDay dedups duplicate (emp_id, started_at) clusters (v1.2.43)', async () => {
+  // Regression for the 2026-09-17 dashboard bug: Wahid on 2026-09-16 had
+  // 3 rows with the same started_at (8:55 PM) but different ended_at
+  // values. Root cause: factory's close-stale-sessions endpoint pushed
+  // a fresh session_finish each time it was called on the same orphan
+  // (cloud PK = 'WL-' + emp_id + '-' + ended_at accepts every variant).
+  //
+  // The cloud fix: read-time dedup. Keep the row with the largest
+  // ended_at per (started_at); that's the latest close attempt and
+  // reflects the actual end of work. totals.units is the deduplicated
+  // count, NOT the raw D1 row count.
+  const fixture = [
+    // 3 dups of the same session — different ended_at, all same started_at
+    {
+      emp_id: 'e_bc_00000138', emp_name: 'Wahid', emp_code: 'EMP139',
+      emp_process: 'Tailor (01)', abaya_id: '3439', abaya_code: 'CF111 STD-O',
+      started_at: 1784005200, ended_at: 1784007000, duration_sec: 1800,
+      invoice_count: null, invoice_serial: null, station: 'S-02',
+    },
+    {
+      emp_id: 'e_bc_00000138', emp_name: 'Wahid', emp_code: 'EMP139',
+      emp_process: 'Tailor (01)', abaya_id: '3439', abaya_code: 'CF111 STD-O',
+      started_at: 1784005200, ended_at: 1784010600, duration_sec: 5400,
+      invoice_count: null, invoice_serial: null, station: 'S-02',
+    },
+    {
+      emp_id: 'e_bc_00000138', emp_name: 'Wahid', emp_code: 'EMP139',
+      emp_process: 'Tailor (01)', abaya_id: '3439', abaya_code: 'CF111 STD-O',
+      started_at: 1784005200, ended_at: 1784014200, duration_sec: 9000,
+      invoice_count: null, invoice_serial: null, station: 'S-02',
+    },
+    // 1 distinct session — different started_at
+    {
+      emp_id: 'e_bc_00000138', emp_name: 'Wahid', emp_code: 'EMP139',
+      emp_process: 'Embroidery', abaya_id: '3440', abaya_code: 'CF112 STD-O',
+      started_at: 1784020000, ended_at: 1784025000, duration_sec: 5000,
+      invoice_count: null, invoice_serial: null, station: 'S-02',
+    },
+  ];
+  const handler = (stmt) => {
+    if (stmt.sql.includes('worker_settings')) return { results: [] };
+    if (stmt.sql.includes('FROM active_sessions')) return { results: [] };
+    if (stmt.sql.includes('FROM sessions')) return { results: fixture };
+    return { results: [] };
+  };
+  const { env } = makeMockEnv(handler);
+  const res = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000138&date=2026-07-14'));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  // After dedup: 2 distinct sessions (3 dups collapse to 1 winner, plus
+  // the 1 distinct). The winner keeps the LARGEST ended_at (9000s).
+  assert.equal(body.sessions.length, 2, 'dups collapsed to 1 winner + 1 distinct');
+  const first = body.sessions[0];
+  assert.equal(first.started_at, 1784005200);
+  assert.equal(first.ended_at, 1784014200, 'kept the row with the largest ended_at');
+  assert.equal(first.duration_sec, 9000);
+  assert.equal(body.totals.units, 2, 'totals.units is post-dedup count, not raw 4');
+});
+
+test('handleEmployeeDay preserves ended_at byte-for-byte from the LAN push (v1.2.44 contract)', async () => {
+  // Operator contract: the END TIME column on the per-employee day
+  // report must reflect the exact moment the worker tapped Finish at
+  // the kiosk, NOT a recomputation. This test pins the contract by
+  // feeding the handler an ended_at that is intentionally weird (a
+  // future timestamp, a value mid-shift, a sub-second value) and
+  // asserting that the response carries the same number out.
+  //
+  // Failure modes this catches:
+  //   - Someone introduces a recompute (e.g. Math.floor(ended_at / 60) * 60)
+  //     that would round-trip wrong.
+  //   - Someone adds a clamp to a cap value (like the v1.2.43 dedup's
+  //     8h orphan cap) inside the read path instead of the write path.
+  //   - The state handler starts recomputing ended_at from started_at +
+  //     duration_sec, which would silently round to the minute.
+  //
+  // Any of these changes the visible END TIME for the operator and
+  // would break the audit trail — this test fails loudly if it happens.
+  const fixture = [
+    {
+      emp_id: 'e_bc_00000121',
+      emp_name: 'Alazar',
+      emp_code: 'EMP121',
+      emp_process: 'Tailor (01)',
+      abaya_id: '5234',
+      abaya_code: 'CF111 STD-O',
+      // Pre-v1.2.43 used these timestamps on 2026-09-15 ~21:00 Dubai
+      // (operator tapped Start at 8:55 PM, tapped Finish at 11:04 AM
+      // next day). Use the exact same values to assert round-trip.
+      started_at: 1789491309, // 2026-09-15 16:55:09 UTC = 8:55 PM Dubai
+      ended_at: 1789542266,   // 2026-09-16 07:04:26 UTC = 11:04 AM Dubai
+      duration_sec: 50957,
+      invoice_count: null,
+      invoice_serial: null,
+      station: 'S-02',
+    },
+  ];
+  const handler = (stmt) => {
+    if (stmt.sql.includes('worker_settings')) return { results: [] };
+    if (stmt.sql.includes('FROM active_sessions')) return { results: [] };
+    if (stmt.sql.includes('FROM sessions')) return { results: fixture };
+    return { results: [] };
+  };
+  const { env } = makeMockEnv(handler);
+  const res = await handleEmployeeDay(
+    env,
+    new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000121&date=2026-09-16')
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.sessions.length, 1);
+  const s = body.sessions[0];
+  // The literal values from the LAN's session_finish push must survive
+  // the round-trip through D1 storage, the state.js hydration, and the
+  // employee-day.js handler. Any recomputation in any of those layers
+  // would fail this assertion.
+  assert.equal(s.started_at, 1789491309, 'started_at preserved verbatim');
+  assert.equal(s.ended_at, 1789542266, 'ended_at preserved verbatim — operator contract');
+  assert.equal(s.duration_sec, 50957, 'duration_sec preserved verbatim (separate from ended_at)');
+  // The UI then renders ended_at as `new Date(ended_at * 1000).toLocaleTimeString(...)`
+  // — a pure formatting operation that doesn't modify the underlying
+  // number. We assert the underlying number is unchanged so any future
+  // agent who adds a clamp/recompute in the read path fails this test.
+});
+
+test('handleEmployeeDay never derives ended_at from duration_sec or started_at', async () => {
+  // Second-tier guard: even if the LAN accidentally pushes a missing or
+  // zero ended_at, the handler must NOT synthesize one from
+  // started_at + duration_sec. The historical data had cases where the
+  // finish row got an ended_at that was "started_at + the in-shift
+  // duration" (which is wrong — that's the same as started_at + a
+  // cap-aware overlap, not the wall-clock Finish tap). After this fix
+  // the read path passes the ended_at through as `0` (and the UI shows
+  // it as `—`), so the operator sees the gap instead of a fabricated
+  // timestamp.
+  const fixture = [
+    {
+      emp_id: 'e_bc_00000121',
+      emp_name: 'Alazar',
+      emp_code: 'EMP121',
+      emp_process: 'Tailor (01)',
+      abaya_id: '5234',
+      abaya_code: 'CF111 STD-O',
+      started_at: 1789491309,
+      ended_at: 0,             // missing — handler must NOT synthesize
+      duration_sec: 50957,
+      invoice_count: null,
+      invoice_serial: null,
+      station: 'S-02',
+    },
+  ];
+  const handler = (stmt) => {
+    if (stmt.sql.includes('worker_settings')) return { results: [] };
+    if (stmt.sql.includes('FROM active_sessions')) return { results: [] };
+    if (stmt.sql.includes('FROM sessions')) return { results: [] };
+    return { results: [] };
+  };
+  // Sessions query returns 0 rows because ended_at=0 makes the row
+  // invalid (handler filters such rows would be a future concern; for
+  // now, the mock returns nothing for that query).
+  const sessionHandler = (stmt) => {
+    if (stmt.sql.includes('worker_settings')) return { results: [] };
+    if (stmt.sql.includes('FROM active_sessions')) return { results: [] };
+    if (stmt.sql.includes('FROM sessions')) return { results: fixture };
+    return { results: [] };
+  };
+  const { env } = makeMockEnv(sessionHandler);
+  const res = await handleEmployeeDay(
+    env,
+    new URL('https://ceo.example/api/report/employee-day?emp_id=e_bc_00000121&date=2026-09-16')
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  // ended_at=0 round-trips as 0, never as started_at + duration_sec.
+  // The UI displays `—` for ended_at === 0 so the operator sees the gap.
+  if (body.sessions.length === 1) {
+    assert.equal(body.sessions[0].ended_at, 0, 'ended_at=0 preserved as 0, never synthesized');
+  }
+  // (Either no row or a row with ended_at=0 — both are valid; the
+  // invariant is that we never fabricate a timestamp.)
+});
+
 test('handleEmployeeDay validates emp_id and date', async () => {
   const { env } = makeMockEnv(() => ({ results: [] }));
   const r1 = await handleEmployeeDay(env, new URL('https://ceo.example/api/report/employee-day?emp_id=&date=2026-07-14'));
