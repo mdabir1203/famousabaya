@@ -138,6 +138,47 @@ export async function handleIngest(request, env) {
     return errRes('session_finish requires emp_id and ended_at', 400);
   }
 
+  // v1.2.44 — END-TIME CONTRACT INVARIANT
+  // -------------------------------------------------------------------------
+  // `p.ended_at` MUST be the exact Unix second at which the worker tapped
+  // Finish at the kiosk (or, for /api/admin/close-stale-sessions orphan
+  // closes, the synthetic end time the LAN's close-stale code computed —
+  // which is itself Date.now() at the moment of close, capped at 8 hours
+  // after Start). It is NEVER to be derived from any formula on this side
+  // of the boundary. The CEO dashboard's per-employee day report shows
+  // this value verbatim in the SESSIONS table — see ceo-pages.js edFmtRange
+  // — and the operator's audit depends on it being the actual tap time.
+  //
+  // Three runtime guards below catch the cases that broke the contract in
+  // pre-v1.2.43 history (when close-stale-sessions re-runs on the same
+  // orphan pushed a fresh session_finish with endMs = Date.now(), creating
+  // duplicate rows with three different "end times" for one Start). After
+  // v1.2.43 the LAN side has its own isDuplicateSessionFinish guard that
+  // suppresses the re-push; these guards are defense in depth so a future
+  // regression on either side is rejected loudly instead of silently
+  // overwriting a real worker's Finish tap.
+  //
+  // DO NOT change this block without re-reading AGENTS.md §2
+  // (timestamp contract) and the v1.2.43 release notes — these guards are
+  // the operator-facing guarantee that the displayed END TIME matches
+  // the kiosk tap.
+  // -------------------------------------------------------------------------
+  const startedAtSec = Number(p.started_at);
+  const endedAtSec = Number(p.ended_at);
+  if (!Number.isFinite(startedAtSec) || startedAtSec <= 0) {
+    return errRes('session_finish requires started_at > 0 (the worker tap time on Start)', 400);
+  }
+  if (!Number.isFinite(endedAtSec) || endedAtSec <= 0) {
+    return errRes('session_finish requires ended_at > 0 (the worker tap time on Finish)', 400);
+  }
+  if (endedAtSec <= startedAtSec) {
+    return errRes(
+      'session_finish ended_at must be strictly greater than started_at ' +
+      '(got ended_at=' + endedAtSec + ', started_at=' + startedAtSec + ')',
+      400
+    );
+  }
+
   const sessionId = 'WL-' + p.emp_id + '-' + p.ended_at;
   const dayDate = factoryDateStringForUnix(env, p.ended_at);
   const hourOfDay = factoryHourForUnix(env, p.ended_at);

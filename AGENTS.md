@@ -50,7 +50,7 @@ NFC badges), update all four layers in the same commit. The regex is
 
 ---
 
-## 2. The timestamp contract — snapshot stores **seconds**
+## 2. The timestamp contract — snapshot stores **seconds**, END TIME is the worker's Finish tap
 
 The cloud D1 stores `started_at` and `ended_at` as Unix **seconds**
 (`INTEGER NOT NULL`). The local factory server's offline JSON carries
@@ -63,6 +63,52 @@ drop-in.
 normalizeToUnixSec(raw)`. It auto-detects ms vs sec by magnitude: anything
 > 1e12 is ms (year 2001+ in seconds is still < 1e10; 1e12 seconds is year
 33658), anything ≤ 1e12 is seconds.
+
+### 2.1 The END TIME contract — operator-visible invariant (v1.2.44)
+
+The `ended_at` field stored in `sessions` (and rendered on the day-report
+modal's END TIME column) MUST be the exact Unix second at which the worker
+tapped Finish at the kiosk. It is NEVER to be derived from any formula
+on this side of the boundary — no `started_at + duration_sec`, no
+`Math.floor` rounding, no clamp to a cap, no re-derivation in the read path.
+
+**Why this is non-negotiable:**
+
+- The operator's audit depends on the displayed END TIME being the actual
+  tap time. A Finish at 11:04 AM Dubai must display as 11:04 AM, not as
+  11:00 AM (rounded) or 10:00 AM (clamped to a shift boundary).
+- The cloud's `windowedActiveTimeSec` and `overlapSecWithWindows` compute
+  `duration_sec` (in-shift minutes), which is a DIFFERENT concept and
+  belongs in its own column. The DURATION cell on the dashboard shows
+  `duration_sec`; the END TIME cell shows `ended_at`. Don't mix them.
+- Pre-v1.2.43 history: `/api/admin/close-stale-sessions` pushed a fresh
+  `session_finish` each call on the same orphan, with `ended_at =
+  Date.now()` at the moment of close. This created the "Wahid's row on
+  2026-09-16 had 3 end times" bug. v1.2.43's idempotency guard prevents
+  future occurrences; the runtime assertions in
+  `cloudflare/src/handlers/ingest.js` and the unit tests in
+  `tests/ceo-report.test.mjs` (handleEmployeeDay preserves ended_at
+  byte-for-byte) catch any future regression.
+
+**Three enforcement layers:**
+
+1. **LAN-side**: `server.js → req_finishWork` sets `end = Date.now()`
+   at the moment of the Finish tap and pushes it verbatim to the cloud.
+   The `isDuplicateSessionFinish` guard (v1.2.43) prevents re-pushes.
+2. **Cloud-side**: `cloudflare/src/handlers/ingest.js` runtime
+   assertions (v1.2.44) reject any `session_finish` push where
+   `ended_at <= 0`, `ended_at <= started_at`, or `ended_at` is not a
+   finite number. The cloud never overwrites `ended_at` with a derived
+   value.
+3. **Read-side**: `cloudflare/src/handlers/employee-day.js` and
+   `cloudflare/src/ui/ceo-pages.js` pass `ended_at` through unchanged.
+   The UI does a pure formatting operation
+   (`new Date(sec * 1000).toLocaleTimeString({timeZone: 'Asia/Dubai'})`)
+   that doesn't modify the underlying number.
+
+If you ever need to change this — for example, to support a kiosk that
+sends a partial-second timestamp — extend `normalizeToUnixSec` to handle
+the new shape, don't introduce a recompute in the cloud read path.
 
 The function also handles **both** field-name shapes:
 
@@ -291,6 +337,14 @@ Before any commit that touches `shared/`, `cloudflare/src/`,
   JSON?
   → Update both `server.js`'s hydration and `shared/sqlite-snapshot.cjs`'s
   `normalizeToUnixSec` + field-name fallback.
+- [ ] Did I touch `ended_at` in any path — LAN push, cloud ingest,
+  read handler, or UI formatter?
+  → It MUST be the worker's Finish tap time, preserved verbatim from
+  `Date.now()` at the moment of tap. NEVER derive it (no
+  `started_at + duration_sec`, no clamp, no round). The runtime
+  assertions in `cloudflare/src/handlers/ingest.js` and the unit
+  tests in `tests/ceo-report.test.mjs` (`preserves ended_at
+  byte-for-byte`) enforce this contract. See §2.1.
 - [ ] Did I change `completed_count`, `active_count`, or any other
   `snapshot_meta` key?
   → Make sure the new value matches what's actually in the table
