@@ -3056,13 +3056,71 @@ function renderEmployeeDay(data) {
       const liveBadge = s.live
         ? ' <span class="cr-status" style="color:var(--bl);background:var(--blb);border-color:rgba(106,95,193,.3)">live</span>'
         : '';
+      // v1.2.47 — per-abaya visual distinction on the day-modal sessions
+      // list. Two CF111 rows in one day should look like "two sessions
+      // on the SAME abaya", not "two identical rows". Two ways:
+      //   1) a per-abaya swatch + a thin left border tinted from the
+      //      abaya_id (deterministic hash so a row's color is stable
+      //      across refreshes). Same abaya_code → same swatch.
+      //   2) a "Custom" pill on rows whose abaya is marked is_custom=1
+      //      in the catalog (mirrors the live-row treatment at line ~1812
+      //      so the operator doesn't have to context-switch between
+      //      modals to spot multi-week builds).
+      //
+      // Sourcing: data comes from the session row itself (abaya_id,
+      // abaya_code) plus STATE.abaya_builds for the is_custom flag — we
+      // don't re-fetch the catalog. The catalog map is already loaded
+      // by loadAbayaCatalog() and STATE is refreshed on every /api/state
+      // poll, so this is essentially free.
+      const abayaCode = String(s.abaya_code || s.abaya_id || '\u2014');
+      const abayaIdStr = String(s.abaya_id || '');
+      const isCustom = abayaIdStr ? abayaIsCustom(abayaIdStr) : false;
+      // Stable, well-spaced HSL hue from the abaya_id so each abaya
+      // gets a unique but readable accent color. Saturation/lightness
+      // pinned so the chip reads on the dark modal background.
+      let accent = '#6b5fc1';
+      if (abayaIdStr) {
+        let h = 0;
+        for (let i = 0; i < abayaIdStr.length; i++) {
+          h = ((h * 31) + abayaIdStr.charCodeAt(i)) >>> 0;
+        }
+        const hue = h % 360;
+        accent = 'hsl(' + hue + ' 65% 60%)';
+      }
+      const customPill = isCustom
+        ? ' <span title="Marked is_custom=1 in abaya_catalog. Multi-week style that legitimately spans many sessions." style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
+        : '';
+      // Audit data attributes (data-started-at-ms, data-ended-at-ms)
+      // carry the raw epoch seconds the kiosk captured at the moment of
+      // Start / Finish tap (server.js:2360 / server.js:2430, pushed
+      // verbatim by the cloud ingest handler). The UI multiplies by 1000
+      // when stamping these into the DOM so the value matches
+      // Date.now()'s ms shape, but the underlying number is not
+      // derived -- see the v1.2.44 END-TIME contract mirrored here.
+      const auditAttrs =
+        ' data-session-id="' + esc(String(s.log_id || (abayaIdStr + ':' + s.started_at))) + '"' +
+        ' data-abaya-id="' + esc(abayaIdStr) + '"' +
+        ' data-abaya-code="' + esc(abayaCode) + '"' +
+        ' data-started-at-ms="' + esc(String(s.started_at || 0)) + '"' +
+        (s.live ? '' : ' data-ended-at-ms="' + esc(String(s.ended_at || 0)) + '"');
+      // Per-abaya visual distinction. Two CF111 rows share the same
+      // left-border tint + swatch dot — the operator reads them as
+      // "the same abaya, two sessions". A CF112 row next to them has
+      // a different border color so the eye can scan to "different
+      // abaya" instantly without reading the abaya_code text. The
+      // swatch dot uses the same accent so the row reads as a unit.
+      const liveBg = s.live ? 'background:rgba(106,95,193,.10);' : '';
       sessionsHtml +=
-        '<div style="display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1.1fr) 76px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center;' +
-        (s.live ? 'background:rgba(106,95,193,.10);' : '') +
+        '<div' + auditAttrs + ' style="display:grid;grid-template-columns:120px minmax(0,1fr) minmax(0,1.1fr) 76px;gap:8px;padding:10px 12px;border-bottom:1px solid rgba(54,45,89,.2);font-size:12px;align-items:center;' +
+        liveBg +
+        'border-left:3px solid ' + accent + ';' +
         '">' +
           '<span style="color:var(--tx3);font-variant-numeric:tabular-nums">' + esc(edFmtRange(s)) + '</span>' +
           '<span style="font-weight:600;color:' + procColor + '">' + esc(String(s.emp_process || '\u2014')) + liveBadge + '</span>' +
-          '<span style="color:var(--tx2);font-family:var(--fn-mono);font-size:11px">' + esc(String(s.abaya_code || s.abaya_id || '\u2014')) + '</span>' +
+          '<span style="color:var(--tx2);font-family:var(--fn-mono);font-size:11px;display:flex;align-items:center;gap:6px">' +
+            '<span aria-hidden="true" title="abaya ' + esc(abayaCode) + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + accent + ';flex:0 0 auto"></span>' +
+            '<span>' + esc(abayaCode) + customPill + '</span>' +
+          '</span>' +
           '<span style="text-align:right;color:var(--gr);font-weight:700;font-variant-numeric:tabular-nums">' + esc(fmtHMS(s.duration_sec)) + '</span>' +
         '</div>';
     });

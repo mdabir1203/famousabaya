@@ -7,6 +7,14 @@ import {
 } from '../working-hours.js';
 import { isValidYmd } from './report-shared.js';
 import { windowedActiveTimeSec } from './report.js';
+// v1.2.46 — read-path scrub: the previous-day history strip ("4u 9h 55m" on
+// 09-20) and the empty-day "nearby dates" hint used a raw `COUNT(*)` GROUP
+// BY day_date. While the factory's LAN server still pushes pre-v1.2.43 dup
+// rows, those numbers disagreed with PROCESS COMPLETED on the same modal
+// (the in-modal dedup pass at lines below kept totals.units honest, but
+// recent_days didn't go through it). Apply dedupSessionsCte() to both
+// queries — same pattern as state.js stmtAgg / stmtPerf. See AGENTS.md §11.
+import { dedupSessionsCte } from '../domain/data-cleanup.js';
 
 /**
  * GET /api/report/employee-day?emp_id=X&date=YYYY-MM-DD
@@ -95,7 +103,7 @@ export async function handleEmployeeDay(env, url) {
   const stmts = [
     env.DB.prepare(
       `
-      SELECT emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code,
+      SELECT id, emp_id, emp_name, emp_code, emp_process, abaya_id, abaya_code,
         started_at, ended_at, duration_sec, invoice_count, invoice_serial, station
       FROM sessions
       WHERE day_date = ? AND emp_id IN (${empIdPlaceholders})
@@ -121,6 +129,13 @@ export async function handleEmployeeDay(env, url) {
   const rows = (sessionsRes && sessionsRes.results) || [];
 
   const sessions = rows.map((r) => ({
+    // v1.2.47 — surface the cloud D1 PK (`WL-<emp_id>-<ended_at>` shape)
+    // so the day-modal UI can stamp an audit-stable data-session-id on
+    // each row. Pair with the raw started_at_ms / ended_at_ms data
+    // attributes the UI emits (see ceo-pages.js edFmtRange block) to
+    // give every future "trace this session" hook a stable identifier
+    // without re-querying D1.
+    log_id: r.id != null ? String(r.id) : '',
     emp_process: r.emp_process || '—',
     abaya_id: r.abaya_id != null ? String(r.abaya_id) : '',
     abaya_code: r.abaya_code != null ? String(r.abaya_code) : '',
@@ -223,12 +238,17 @@ export async function handleEmployeeDay(env, url) {
   let nearbyDates = [];
   if (rows.length === 0 && empIdList.length) {
     try {
+      // v1.2.46 — read-path scrub: deduplicate (emp_id, started_at)
+      // clusters so the "X units" chip matches what PROCESS COMPLETED
+      // would show if the operator jumped to that day. Raw COUNT(*)
+      // would inflate the chip on days with stale dup-pushed rows.
       const nearbyRes = await env.DB.prepare(
-        `SELECT day_date, COUNT(*) AS n
-         FROM sessions
-         WHERE emp_id IN (${empIdPlaceholders})
-         GROUP BY day_date
-         ORDER BY ABS(julianday(day_date) - julianday(?)) ASC
+        `${dedupSessionsCte()}
+         SELECT s.day_date, COUNT(*) AS n
+         FROM sessions s JOIN survivors w ON w.id = s.id
+         WHERE s.emp_id IN (${empIdPlaceholders})
+         GROUP BY s.day_date
+         ORDER BY ABS(julianday(s.day_date) - julianday(?)) ASC
          LIMIT 3`
       ).bind(...empIdList, date).all();
       nearbyDates = (nearbyRes.results || []).map((r) => ({
@@ -260,12 +280,21 @@ export async function handleEmployeeDay(env, url) {
           String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
           String(d.getUTCDate()).padStart(2, '0');
       })();
+      // v1.2.46 — read-path scrub: deduplicate (emp_id, started_at)
+      // clusters BEFORE counting. Before this fix, a single emp-day with
+      // one stale dup-pushed row would show "4u" on the history strip
+      // while PROCESS COMPLETED on the same modal correctly said 3. The
+      // operator-visible mismatch was the 4u vs 3 bug filed on 2026-09-23.
+      // Apply dedupSessionsCte() — same pattern as state.js stmtAgg /
+      // stmtPerf / stmtGarment — so the per-day count agrees with the
+      // post-dedup totals.units the modal header is already showing.
       const recentRes = await env.DB.prepare(
-        `SELECT day_date, COUNT(*) AS n, COALESCE(SUM(duration_sec), 0) AS total_sec
-         FROM sessions
-         WHERE emp_id IN (${empIdPlaceholders}) AND day_date >= ? AND day_date <= ?
-         GROUP BY day_date
-         ORDER BY day_date DESC
+        `${dedupSessionsCte()}
+         SELECT s.day_date, COUNT(*) AS n, COALESCE(SUM(s.duration_sec), 0) AS total_sec
+         FROM sessions s JOIN survivors w ON w.id = s.id
+         WHERE s.emp_id IN (${empIdPlaceholders}) AND s.day_date >= ? AND s.day_date <= ?
+         GROUP BY s.day_date
+         ORDER BY s.day_date DESC
          LIMIT ?`
       ).bind(...empIdList, fromYmd, start, RECENT_DAYS_N).all();
       recentDays = (recentRes.results || []).map((r) => ({

@@ -113,8 +113,8 @@ test('dedupSessionsCte returns a syntactically valid CTE for ROW_NUMBER dedup', 
   assert.ok(cte.startsWith('WITH survivors AS ('), `unexpected prefix: ${cte}`);
   assert.ok(cte.includes('ROW_NUMBER() OVER'), 'must use ROW_NUMBER window function');
   assert.ok(
-    cte.includes('PARTITION BY emp_id, started_at'),
-    'must partition by the dup key (emp_id, started_at)'
+    cte.includes('PARTITION BY emp_id, started_at, day_date'),
+    'must partition by the dup key (emp_id, started_at, day_date) so cross-day clusters dedup per-day — see AGENTS.md §11 and v1.2.48'
   );
   assert.ok(
     cte.includes('ORDER BY ended_at DESC, id DESC'),
