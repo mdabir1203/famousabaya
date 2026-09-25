@@ -1,6 +1,6 @@
 {
     "name": "abaya-server",
-    "version": "1.2.45",
+    "version": "1.2.50",
     "packageManager": "yarn@4.13.0",
     "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
     "main": "server.js",
@@ -35,7 +35,7 @@
         "evaluate:rollout": "node scripts/evaluate-rollout.cjs",
         "evaluate:live": "bash scripts/eval-live-boot.sh",
         "verify:ceo": "node scripts/verify-ceo-state.mjs",
-        "publish:lan-mirror": "node scripts/publish-lan-update-mirror.mjs",
+        "publish:lan-mirror": "node scripts/publish-lan-update-mirror.cjs",
         "perf:cf": "echo See cloudflare/docs/PERFORMANCE-CHECKLIST.md (Lighthouse + curl budgets)",
         "launcher:gui": "node ./tools/desktop-launcher/start-electron.cjs"
     },
@@ -59,6 +59,9 @@
         "xlsx": "^0.18.5"
     },
     "devDependencies": {
+        "@playwright/test": "^1.63.0",
+        "better-sqlite3": "^13.0.3",
+        "playwright": "^1.63.0",
         "sharp": "^0.33.5",
         "socket.io-client": "^4.8.3",
         "unenv": "2.0.0-rc.24",
