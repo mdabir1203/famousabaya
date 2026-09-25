@@ -1,6 +1,6 @@
 {
     "name": "abaya-server",
-    "version": "1.2.49",
+    "version": "1.2.50",
     "packageManager": "yarn@4.13.0",
     "description": "AbaYa Track factory server (kiosk, dashboard, Cloudflare sync)",
     "main": "server.js",
@@ -59,6 +59,7 @@
         "xlsx": "^0.18.5"
     },
     "devDependencies": {
+        "@playwright/test": "^1.63.0",
         "better-sqlite3": "^13.0.3",
         "playwright": "^1.63.0",
         "sharp": "^0.33.5",

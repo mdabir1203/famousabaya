@@ -31,6 +31,8 @@ const SOCKET_IO_OPTS = {
 };
 
 const socket = io(SOCKET_IO_OPTS);
+// Expose socket for test instrumentation — removable without affecting production behavior.
+window.__kioskSocket = socket;
 
 /** Synced with server /api/work-types and client-config workTypesVersion */
 let lastWorkTypesVersionSeen = null;
@@ -1369,6 +1371,16 @@ function emitFinishWork(extra) {
     document.getElementById('stepbar').style.display = 'none';
     goTo('conf');
     showToast(buildFinishSuccessMessage(finishProcess, res), 'success');
+
+    // Immediately remove from local active state so the demo grid clears
+    // without waiting for the state_update broadcast — guards against a
+    // Socket.IO reconnect delay leaving the "Working" badge stuck.
+    if (selEmp && selEmp.id) {
+      delete activeSessionsByEmployee[selEmp.id];
+      lastActiveEmployeeIds = Object.keys(activeSessionsByEmployee);
+      renderDemoGrid(lastActiveEmployeeIds);
+      updateFpActiveSessionsBanner();
+    }
 
     setTimeout(() => {
       selEmp = null;
