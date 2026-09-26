@@ -276,7 +276,17 @@ User-facing version (`tools/desktop-launcher/package.json`):
 - Bump the `patch` segment (1.2.14 → 1.2.15) for bug fixes.
 - Bump the `minor` segment (1.2.14 → 1.3.0) for new features / schema
   additions.
-- Always add a release note to `docs/releases/vX.Y.Z.md` describing:
+- **Audit version continuity before starting a new fix.** Before bumping
+  the version for a new fix, run `git log --oneline v<prev>..HEAD` and
+  check that the output covers every intermediate version. If commits exist
+  in a **disconnected branch** (e.g. `install-coherence-*`) that are
+  ahead of the last documented release, they must be merged or rebased
+  before the new version ships. A version bump in `package.json` without
+  the corresponding release notes is a red flag — trace all commits
+  between the last documented version and HEAD to ensure nothing was
+  skipped. The v1.2.46–1.2.49 gap (coherence branch not merged to main)
+  is the canonical incident this guard prevents.
+- Add a release note to `docs/releases/vX.Y.Z.md` describing:
   - The bug / feature in one sentence.
   - The exact files / migrations that changed.
   - What factory PCs will see (or what they need to do).
@@ -608,7 +618,29 @@ incident):
   deploy" the first assertion, blocking any deploy that blanks the
   page.
 
-If a change is genuinely too small to warrant a full Playwright run
-(e.g. a single-line typo fix in a comment), the developer MUST still
-document in the release notes why the verification policy was waived.
-No silent skips.
+**Mandatory skill load before every run.** Before executing
+`scripts/verify-deploy.mjs`, the developer (or agent) MUST load the
+`verification-rigorous` skill via `skill({ name: 'verification-rigorous' })`.
+The skill is the authoritative protocol — Phase 1 (preflight) through
+Phase 8 (teardown + self-verification). Running the script without
+reading the skill is a policy violation.
+
+**The three-artifact rule is non-negotiable.** Every PASS or FAIL claim
+MUST be backed by three simultaneous artifacts captured at the assertion
+point:
+
+1. A **screenshot** of the page at the moment the assertion fires.
+2. A line in the **assertion log** stating the exact predicate checked
+   (e.g. `OK: `.innerText === '3'`).
+3. A **console or network excerpt** capturing the state at the same moment.
+
+A scenario with only a screenshot and no assertion log line, or with
+logs but no screenshot, is **incomplete** and must be re-run. The skill's
+atomic quality checklist (§7 of the skill) enforces this before the report
+is written.
+
+**No silent skips.** If a change is genuinely too small to warrant a
+full Playwright run (e.g. a single-line typo fix in a comment), the
+developer MUST document in the release notes why the verification policy
+was waived. The waiver goes in `docs/releases/vX.Y.Z.md` under a
+`## Verification` heading with the specific reason. No silent skips.
