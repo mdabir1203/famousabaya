@@ -679,6 +679,84 @@ function logDurationSec(l) {
   return Math.floor(n);
 }
 
+// ─── Per-abaya visual distinction (v1.2.49, mirrors cloud ceo-pages.js) ────
+//
+// Offline dashboard surfaces that show abayas (Live Active Sessions row,
+// Recent Checker Logs row, Recent Invoice Logs row) get the same
+// per-abaya accent as the cloud day-modal's sessions list:
+//   - a small color swatch to the left of the abaya code
+//   - a 3px left border on the row tinted from a deterministic hash of
+//     abaya_id (so two CF111 rows share the same border, a CF112 row
+//     next to them has a different border — the operator reads them as
+//     "one build, two sessions" vs "different abaya" without reading
+//     the abaya_code text)
+//
+// Both pieces render from the same accent color, sourced from
+// abaya_id so a future catalog rename doesn't shuffle the colors.
+//
+// Source: abaya_id (stable across catalog edits). Mirrors the same
+// hash used in cloudflare/src/ui/ceo-pages.js#edFmtRowBuild for the
+// cloud day-modal. No new fetches — the catalog is already loaded
+// once per STATE update.
+
+/**
+ * Stable HSL accent color for an abaya_id. Same multiplicative-hash
+ * formula as the cloud so the two dashboards agree on which abaya
+ * gets which border.
+ */
+function abayaAccentFor(abayaId) {
+  const id = String(abayaId || '');
+  if (!id) return '#6b5fc1';
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = ((h * 31) + id.charCodeAt(i)) >>> 0;
+  }
+  const hue = h % 360;
+  return 'hsl(' + hue + ' 65% 60%)';
+}
+
+/** "Custom" pill HTML for an abaya_id when the local catalog has
+ *  is_custom=1. Mirrors the live-row treatment at line ~1203 (the
+ *  "this build" cell on the offline Live Active Sessions panel)
+ *  and the cloud day-modal's sessions list. */
+function abayaCustomPillFor(abayaId) {
+  const id = String(abayaId || '');
+  if (!id) return '';
+  const row = ABAYAS.find((a) => a.id === id);
+  if (!row || Number(row.is_custom) !== 1) return '';
+  return (
+    ' <span title="Marked is_custom=1 in the local abaya catalog (xlsx \`Is Custom\` column). Multi-week style that legitimately spans many sessions."' +
+    ' style="display:inline-block;margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#c4b5fd;background:rgba(124,58,237,.18);border:1px solid rgba(167,139,250,.4);border-radius:8px;padding:1px 6px;vertical-align:middle">Custom</span>'
+  );
+}
+
+/** Audit data attributes (v1.2.47 mirror) — stamped on Live Active
+ *  Sessions rows + Recent Checker/Invoice Logs rows. Future offline
+ *  ops scripts can read the raw kiosk-tap timestamps without re-
+ *  querying the LAN server. Matches the cloud contract: data-* are
+ *  derived only from fields the LAN already pushed, never from
+ *  recomputed/derived values.  */
+function rowAuditAttrsFor(l) {
+  const l0 = l && typeof l === 'object' ? l : {};
+  const started = l0.started_at != null ? Number(l0.started_at) : (l0.start != null ? Number(l0.start) : 0);
+  const ended = l0.ended_at != null ? Number(l0.ended_at) : (l0.end != null ? Number(l0.end) : 0);
+  // Stable session id: cloud uses 'WL-<emp_id>-<ended_at>'. Offline
+  // doesn't have a matching PK shape — fall back to a stable composite
+  // (emp_id + started_at) which is unique within a single boot since
+  // server.js' idempotency check (v1.2.43) suppresses dup pushes.
+  const sid = (l0.emp_id && started > 0)
+    ? String(l0.emp_id) + '-' + String(started)
+    : '';
+  return (
+    ' data-session-id="' + escapeAttr(sid) + '"' +
+    ' data-emp-id="' + escapeAttr(String(l0.emp_id || '')) + '"' +
+    ' data-abaya-id="' + escapeAttr(String(l0.abaya_id || '')) + '"' +
+    ' data-abaya-code="' + escapeAttr(String(l0.abaya_code || '')) + '"' +
+    ' data-started-at-ms="' + escapeAttr(String(started || 0)) + '"' +
+    ' data-ended-at-ms="' + escapeAttr(String(ended || 0)) + '"'
+  );
+}
+
 /**
  * Per abaya_id: sum of completed segment seconds, in-progress seconds on the floor,
  * and total = completed + active.
@@ -1153,15 +1231,33 @@ function renderLiveSessions() {
     //   data-tick="active-today"  -> the green "active today" counter
     //   data-tick="build"         -> the amber "this build" counter
     // data-emp-id lets the tick find the right cell per worker.
+    //
+    // v1.2.49: per-abaya visual distinction mirrors the cloud day-modal
+    // (cloudflare/src/ui/ceo-pages.js v1.2.47). Two rows on the same
+    // abaya share the same accent (left border + Item-cell swatch) so the
+    // operator reads them as "one build, two sessions" without reading
+    // the abaya_code text. Audit data-* attrs pair with the per-abaya
+    // info for future offline ops scripts (read once on real time /
+    // abaya without re-querying the LAN).
+    const abayaAccent = abayaAccentFor(abKey);
+    // Custom pill on is_custom=1 abayas. Mirrors the existing pill on the
+    // "this build" cell — now also stamped on the active-row info row.
+    const customPillForInfo = abayaCustomPillFor(abKey);
+    // Audit attrs from the same fields the LAN already pushed
+    // (started_at, ended_at). The kiosk tap times are byte-equivalent to
+    // the server's Date.now() and the worker's actual tap — never a
+    // recompute. Mirrors the cloud's v1.2.44 END-TIME contract.
+    const auditAttrs = rowAuditAttrsFor(sess);
     return (
-      '<div data-emp-id="' + escapeAttr(id) + '" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd)">' +
+      '<div ' + auditAttrs + ' data-emp-id="' + escapeAttr(id) + '" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd);border-left:3px solid ' + abayaAccent + '">' +
         '<div class="emp-av" style="background:' + escapeAttr(color) + '">' + escapeHtml(initials) + '</div>' +
         '<div style="flex:1">' +
           '<div style="font-size:13px;font-weight:600">' +
             escapeHtml(empName) + outsideBadge + staleBadge +
           '</div>' +
-          '<div style="font-size:11px;color:var(--tx3)">' +
-            escapeHtml(empCode) + ' &middot; ' + escapeHtml(sessionProcess) + ' &middot; ' + escapeHtml(abayaCode) +
+          '<div style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:6px">' +
+            '<span aria-hidden="true" title="abaya ' + escapeAttr(abayaCode) + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + abayaAccent + ';flex:0 0 auto"></span>' +
+            '<span>' + escapeHtml(empCode) + ' &middot; ' + escapeHtml(sessionProcess) + ' &middot; ' + escapeHtml(abayaCode) + customPillForInfo + '</span>' +
           '</div>' +
           '<div style="margin-top:8px">' +
             '<div style="font-size:9px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;font-weight:700">Started</div>' +
@@ -1589,8 +1685,18 @@ function renderRecentInvoiceLogsNode() {
       const nums = escapeHtml(String(l.invoice_serial || '')).replace(/,/g, ', ');
       const cnt =
         l.invoice_count != null ? '<span style="color:#c2ef4e;font-weight:700">' + escapeHtml(String(l.invoice_count)) + '</span>' : '';
+      // v1.2.49: per-abaya visual distinction mirrors the cloud day-modal.
+      // Two rows on the same abaya share the swatch + left-border tint so
+      // the operator reads them as "one build, two sessions" without
+      // scanning text. Audit data attrs pair with the visual so future
+      // offline ops scripts have stable hooks. Stays offline-only because
+      // STATE.active / STATE.logs already carry the kiosk tap times
+      // verbatim from server.js (see AGENTS.md §2.2).
+      const accent = abayaAccentFor(l.abaya_id);
+      const auditAttrs = rowAuditAttrsFor(l);
       return (
-        '<div style="display:grid;grid-template-columns:48px minmax(0,1fr) 32px;gap:8px;padding:8px 0;border-bottom:1px solid rgba(54,45,89,.3);font-size:11px;align-items:start">' +
+        '<div ' + auditAttrs + ' style="display:grid;grid-template-columns:14px 48px minmax(0,1fr) 32px;gap:8px;padding:8px 0;border-bottom:1px solid rgba(54,45,89,.3);font-size:11px;align-items:start;border-left:3px solid ' + accent + '">' +
+        '<span aria-hidden="true" title="abaya ' + escapeAttr(l.abaya_code || l.abaya_id || '') + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + accent + ';margin-top:4px"></span>' +
         '<span style="color:var(--tx3)">' +
         t +
         '</span>' +
@@ -1634,17 +1740,27 @@ function renderRecentCheckerLogsNode() {
           ? '<span style="color:#6a5fc1;font-weight:800">' + escapeHtml(String(l.quantity)) + '</span>'
           : '\u2014';
       const tier = ab && ab.tier ? ' ' + dashTierBadge(ab.tier) : '';
+      // v1.2.49: per-abaya visual distinction (mirrors the cloud day-modal).
+      // The Item-cell already shows the abaya_code; a swatch to the left
+      // of it anchors the operator's eye so two rows on the same abaya
+      // are obvious. Stamping data-emp-id/data-abaya-id/etc. gives
+      // future offline ops scripts stable DOM hooks without re-querying
+      // the LAN server.
+      const accent = abayaAccentFor(l.abaya_id);
+      const customPill = abayaCustomPillFor(l.abaya_id);
+      const auditAttrs = rowAuditAttrsFor(l);
       return (
-        '<div style="display:grid;grid-template-columns:52px minmax(0,1fr) 72px 44px minmax(0,1.2fr);gap:8px;padding:10px 8px;border-bottom:1px solid rgba(54,45,89,.28);font-size:11px;align-items:start">' +
+        '<div ' + auditAttrs + ' style="display:grid;grid-template-columns:14px 52px minmax(0,1fr) 72px 44px minmax(0,1.2fr);gap:8px;padding:10px 8px;border-bottom:1px solid rgba(54,45,89,.28);font-size:11px;align-items:start;border-left:3px solid ' + accent + '">' +
+        '<span aria-hidden="true" title="abaya ' + escapeAttr(code) + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + accent + ';margin-top:6px"></span>' +
         '<span style="color:var(--tx3)">' +
         escapeHtml(t) +
         '</span>' +
         '<span style="font-weight:600;color:var(--tx2)">' +
         name +
         '</span>' +
-        '<span style="font-family:monospace;font-size:10px;color:var(--am)">' +
-        code +
-        tier +
+        '<span style="font-family:monospace;font-size:10px;color:var(--am);display:flex;align-items:center;gap:6px">' +
+        '<span aria-hidden="true" title="abaya ' + escapeAttr(code) + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + accent + ';flex:0 0 auto"></span>' +
+        '<span>' + code + tier + customPill + '</span>' +
         '</span>' +
         '<span style="text-align:right">' +
         qty +

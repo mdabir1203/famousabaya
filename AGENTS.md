@@ -110,6 +110,27 @@ If you ever need to change this — for example, to support a kiosk that
 sends a partial-second timestamp — extend `normalizeToUnixSec` to handle
 the new shape, don't introduce a recompute in the cloud read path.
 
+### 2.2 The audit-attribute mirror contract (v1.2.47)
+
+The day-modal sessions list stamps two DOM data attributes per row:
+`data-started-at-ms` and `data-ended-at-ms`. These carry the raw epoch
+**seconds** that the kiosk captured at the moment of Start / Finish tap
+(trace: `server.js:2360` for Start, `server.js:2430` for Finish; pushed
+verbatim by `cloudflare/src/handlers/ingest.js`). The UI multiplies by
+1000 only when stamping into the DOM, so the value matches `Date.now()`'s
+ms shape — but the underlying number is never derived.
+
+The contract mirrors §2.1 verbatim: any future agent who introduces a
+recompute, clamp, or round-to-day in the read path fails the
+`handleEmployeeDay response is ready for the day-modal audit data attrs
+(v1.2.47)` test (asserts `s.started_at === 1784005200` and
+`s.ended_at === 1784008800` byte-for-byte from the LAN push).
+
+A cross-day session (Start at 11:02 PM, Finish at 9:22 AM next day) is
+ONE row on the day modal — not split. The day modal anchors on
+`day_date` of the Start, and `data-started-at-ms` / `data-ended-at-ms`
+both carry the literal tap times regardless of calendar day.
+
 The function also handles **both** field-name shapes:
 
 ```js
@@ -353,7 +374,21 @@ Before any commit that touches `shared/`, `cloudflare/src/`,
   → `tools/desktop-launcher/package.json` (and the root `package.json` if
   the release pipeline cares), plus a `docs/releases/vX.Y.Z.md` note.
 - [ ] Did I run `npm test`?
-  → All 57+ tests pass.
+  → All 188 tests pass (2 pre-existing LAN-side regressions —
+  v1.2.31 `req_finishWork` and v1.2.32 `dropGhostActiveSessions` — fail
+  on baseline too; verify with `git stash` + `npm test` before blaming
+  your change).
+- [ ] Did I run `node scripts/verify-deploy.mjs` against the live
+  dashboard BEFORE pushing a deploy?
+  → Real browser screenshots + DOM assertions for the surface I
+  touched. Per the v1.2.47 verification policy: every change to a
+  dashboard-facing handler, UI render, or operator-visible aggregation
+  ships with a `VERIFICATION.md` that has at least one screenshot per
+  scenario and at least one DOM-assertion line per claim. The skill
+  (loaded via `skill({ name: "verification-rigorous" })`) is the
+  source of truth for the procedure; the runnable wrapper at
+  `scripts/verify-deploy.mjs` invokes it against the deployed worker
+  and blocks the deploy on FAIL. See §12 below.
 
 ## 11. The read-path scrub contract — drop ghosts + dups at the SQL layer (v1.2.45)
 
@@ -397,11 +432,35 @@ const stmtSome = env.DB.prepare(`
 
 Apply `activeSessionWhere` to **every** `FROM active_sessions` read that
 is dashboard-facing (state.js live tile, report.js active rows). Apply
-`dedupSessionsCte` to **every** `FROM sessions` aggregation that the
-dashboard renders (state.js perf/agg/hourly/garment, report.js by-employee/
-by-process). Internal handlers (employee-day.js, ingest.js) keep their
-own per-row logic — they don't need this scrub because they're called
-with a known emp_id.
+`dedupSessionsCte` to **every** `FROM sessions` **aggregation** that the
+dashboard renders — not just per-row fetches. As of v1.2.46 this
+includes:
+
+- `state.js` — `stmtPerf` / `stmtAgg` / `stmtProcSplit` / `stmtHourly` /
+  `stmtGarment` / `stmtAbayasDelivered` and any other `GROUP BY` over
+  `sessions`.
+- `report.js` — `by-employee` / `by-process` aggregations that the
+  CEO report renders.
+- **`employee-day.js` — `recent_days` (30-day history strip on the day
+  modal) AND `nearby_dates` (empty-day "X units" chip)**. This is the
+  fix from v1.2.46: PROCESS COMPLETED on the modal header used the
+  in-memory dedup pass for `data.totals.units` but the history strip
+  used a raw `COUNT(*) GROUP BY day_date`, so a worker-day with one
+  stale dup-pushed row would show "4u" on the strip while PROCESS
+  COMPLETED correctly said 3 — operator-visible contradiction inside
+  the same modal. Now both go through `dedupSessionsCte()`.
+
+Per-row fetches within `employee-day.js` (the in-modal `sessions` list
+itself) and `ingest.js` keep their own dedup logic — those are called
+with a known emp_id and they need the original `(started_at, ended_at)`
+order intact for the END TIME display. The aggregation queries are
+the surfaces that must use the CTE.
+
+**If you add a new dashboard-facing handler that does `COUNT(*)`,
+`SUM`, or any `GROUP BY` over `sessions`**, copy both helpers in the
+same commit. In-memory JS dedup is NOT sufficient — the per-day history
+strip bug is exactly what happens when JS dedup is applied to one
+surface but not the other.
 
 **Three enforcement layers:**
 
@@ -418,3 +477,138 @@ If you add a new dashboard-facing handler that reads from
 `active_sessions` or `sessions`, copy both helpers in the same commit.
 The unit tests in `tests/data-cleanup.test.mjs` pin the SQL shape and
 the roster size invariant.
+
+### 11.1 Offline dashboard parity (v1.2.49)
+
+The offline dashboard at `public/dashboard.html` (served from the LAN
+kiosk at `192.168.0.101:3111/dashboard`) is the operator's primary
+surface — it's open on the supervisor's laptop all day, while the
+cloud CEO dashboard is checked once a morning. Visual changes need to
+land in **both** places or the operator's eye gets confused.
+
+Three helpers in `public/dashboard.js` mirror the v1.2.47 cloud treatment:
+
+- `abayaAccentFor(abayaId)` — deterministic HSL accent. Same hash
+  formula as `cloudflare/src/ui/ceo-pages.js → edRowAccent` so the
+  two dashboards agree on which abaya gets which border.
+- `abayaCustomPillFor(abayaId)` — "Custom" pill HTML for the row when
+  the local catalog has `is_custom=1`. Same purple as the cloud.
+- `rowAuditAttrsFor(l)` — stamps the six `data-*` audit attributes
+  (`data-session-id`, `data-emp-id`, `data-abaya-id`,
+  `data-abaya-code`, `data-started-at-ms`, `data-ended-at-ms`).
+  Cloud uses `WL-<emp_id>-<ended_at>` (D1 PK) for `data-session-id`;
+  offline uses `<emp_id>-<started_at>` composite because the LAN has no
+  matching PK shape. The other five attrs are byte-equal to the cloud.
+  `started_at` / `ended_at` are the kiosk's verbatim `Date.now()`
+  values (§2 / §2.1 / §2.2), preserved without recompute.
+
+The three row renderers (Live Active Sessions, Recent Checker Logs,
+Recent Invoice Logs) each call `rowAuditAttrsFor(l)` once per row. If
+you add a new session-style surface, copy the call site — don't copy-
+paste the individual attrs, that risks duplication.
+
+`tests/dashboard-per-abaya.test.mjs` pins the helpers (4 source-grep
++ 4 sandbox behavioral tests). Pure-function checks via `new Function(...)`
+sandbox follow the same pattern `tests/dashboard-live-tick.test.mjs`
+uses for `computeInShiftSec` / `computeActiveTodaySec`.
+
+---
+
+## 12. The verification-before-deploy policy (v1.2.47)
+
+Every change that touches a dashboard-facing surface (handler in
+`cloudflare/src/handlers/`, UI render in `cloudflare/src/ui/`,
+operator-visible aggregation, the kiosk's Start/Finish flow, or any
+file that can alter what the factory operator sees on screen) ships
+with a `VERIFICATION.md` produced by **real browser interaction**, not
+code review or unit tests alone. The factory local server's
+`PORT=3111` server is unreachable from outside the LAN, so a
+test-only "did it run" smoke test is not sufficient — the change has
+to render correctly in the actual deployed cloud dashboard at
+`https://dashboard.farewellabaya.com`.
+
+**The wrapper script (`scripts/verify-deploy.mjs`)** drives the full
+loop:
+
+1. **Preflight.** Confirms the deployed URL returns a 200, that the
+   expected version tag is reachable, that Playwright + Chromium are
+   installed, and that the CEO_TOKEN environment variable is present
+   (passed interactively, never committed). Fails fast with a clear
+   reason if any of these is missing — never pushes a half-verified
+   deploy.
+2. **Sign in.** Loads the CEO login page, fills the password, submits,
+   asserts the dashboard renders (no "Session expired" banner). Captures
+   a screenshot at the post-login state.
+3. **Drive the changed surface.** For each scenario derived from the
+   diff (e.g. "open Mouthirrahman day modal for 09-20", "verify per-abaya
+   accent on the sessions list", "verify PROCESS COMPLETED matches
+   Last-30-days cell"), the script navigates to the surface, performs
+   the operator-visible interaction, and asserts DOM state at the
+   point of inspection. Every PASS gets a screenshot + a DOM-assertion
+   log line + a console/network excerpt — the three-artifact rule.
+4. **Block on FAIL.** If any scenario fails its assertions, the
+   wrapper exits non-zero BEFORE running `wrangler deploy`. The deploy
+   only happens after every assertion passes.
+5. **Deploy.** `npx wrangler deploy` against the cloudflare/ working
+   directory with the wrangler OAuth token the developer already has.
+6. **Post-deploy re-verify.** Runs the same Playwright scenarios
+   against the freshly deployed URL (cache-busted with `?v=<ts>`).
+   Asserts the deployed worker serves the new version (worker version
+   label / HTML head check). This is the second verification — the
+   same eyes-on proof, but against what the operator will actually see.
+7. **Emit `VERIFICATION.md`.** Single YAML frontmatter block + body
+   following the format in the `verification-rigorous` skill. Includes
+   scenario counts, screenshot paths, assertion logs, console excerpts,
+   and an explicit verdict (pass / partial / fail). The wrapper fails
+   loud if any check is missing — the skill's atomic quality
+   checklist runs before the file is written.
+
+**When the policy applies** (always run `scripts/verify-deploy.mjs`):
+
+- Any change to a cloud handler that the dashboard reads (`/api/state`,
+  `/api/report/employee-day`, `/api/report/*`, `/api/catalog/abayas`,
+  `/api/employees`, the SSE stream).
+- Any change to a UI render block in `cloudflare/src/ui/` (the day
+  modal, the live tile, the perf list, the KPI tiles, the freshness
+  pills).
+- Any change to the LAN kiosk's Start / Finish flow (`server.js`'s
+  `req_startWork` / `req_finishWork`, `public/kiosk.js`).
+- Any change that bumps the user-facing version.
+
+**When the policy does not apply** (skip `scripts/verify-deploy.mjs`):
+
+- Pure backend tests (handler logic that the dashboard never reads,
+  worker-internal migrations, snapshot writer columns that the local
+  factory dashboard doesn't expose).
+- Pure refactors that change nothing the operator can see (renaming
+  an internal helper, fixing a typo in a comment, bumping a non-user
+  dependency).
+- Documentation-only changes.
+
+**The "kiosk is the source of truth" rule still applies.** Even with
+browser verification, the contract from §2 / §2.1 / §2.2 is the
+authority on what `started_at` and `ended_at` mean. The Playwright run
+asserts the dashboard's display matches the kiosk's wire format; it
+does not weaken the contract.
+
+**Failure modes the policy guards against** (drawn from the v1.2.45
+incident):
+
+- The 2026-09-23 "4u vs 3" bug went out without eyes-on the day modal
+  because the unit tests passed. The verification policy adds a
+  per-release browser pass that would have caught it.
+- The 2026-09-16 "three end times for Wahid" dup-push bug shipped to
+  the cloud because the LAN-side idempotency guard landed on the
+  factory's worker schedules but the cloud read path wasn't updated.
+  The verification policy requires the post-deploy re-verify step
+  to confirm the dashboard reads from the new SQL surface.
+- The v1.2.33 wrangler-minifier backslash collapse that broke the
+  dashboard entirely shipped because the deploy was pushed on unit
+  tests alone. The verification policy makes "dashboard renders post-
+  deploy" the first assertion, blocking any deploy that blanks the
+  page.
+
+If a change is genuinely too small to warrant a full Playwright run
+(e.g. a single-line typo fix in a comment), the developer MUST still
+document in the release notes why the verification policy was waived.
+No silent skips.

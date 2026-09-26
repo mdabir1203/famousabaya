@@ -127,6 +127,7 @@ data/desktop-launcher/
 data/pm2-home/
 data/sqlite-snapshots/
 data/offline-dashboard-reports/
+verification-evidence/
 data/lan-update-mirror/
 data/ceo-ingest-rejected.jsonl
 
@@ -138,6 +139,9 @@ data/ceo-ingest-rejected.jsonl
 extract-css.cjs
 generate-static.cjs
 patch-*.cjs
+scratch-*.cjs
+scratch-*.mjs
+.scratch-*.cjs
 verify-css.cjs
 test-socket.cjs
 test-socket.mjs

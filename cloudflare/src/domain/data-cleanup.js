@@ -109,29 +109,54 @@ export function activeSessionWhere(nowSec) {
 
 /**
  * Build a SQL CTE that picks the canonical survivor per
- * (emp_id, started_at) cluster from `sessions`. The survivor is the
- * row with the LARGEST ended_at (most recent close); ties broken by
- * id (lexicographic — the PK embeds ended_at so this is consistent).
+ * (emp_id, started_at, day_date) cluster from `sessions`. The
+ * survivor is the row with the LARGEST ended_at (most recent close);
+ * ties broken by id (lexicographic — the PK embeds ended_at so this
+ * is consistent).
+ *
+ * Why include `day_date` in the partition key:
+ *
+ *   Each `session_finish` push lands in `sessions` with its OWN
+ *   `day_date` (computed from `ended_at` in factory TZ). When a worker
+ *   taps Start at 11 PM and Finish at 2 AM next day, two rows can
+ *   land — one for the live Start (no ended_at, but the eventual
+ *   Finish), another from a re-pushed Finish that landed on the
+ *   next-day `day_date`. If dedup only PARTITIONs by `(emp_id,
+ *   started_at)`, the survivor could be the next-day row even when
+ *   the operator is looking at the day the Start was tapped. Adding
+ *   `day_date` to the partition key scopes the dedup to the day the
+ *   aggregated row actually belongs to, mirroring the JS dedup pass
+ *   (which already filters by day_date first, then clusters by
+ *   started_at within the filtered row set).
  *
  * Usage:
  *
- *   const survivorCte = dedupSessionsCte();
  *   const sql = `
- *     WITH survivors AS (${survivorCte})
- *     SELECT s.* FROM sessions s
+ *     ${dedupSessionsCte()}
+ *     SELECT s.day_date, COUNT(*) FROM sessions s
  *     JOIN survivors w ON w.id = s.id
  *     WHERE s.day_date >= ? AND s.day_date <= ?
+ *     GROUP BY s.day_date
  *   `;
  *
- * The CTE returns one row per cluster — exactly the shape the dashboard
- * needs (one Wahid row, not eight). It costs the same row_read as a
- * plain `SELECT COUNT(*)` because D1 evaluates the window function in a
- * single pass over the sessions table.
+ * The CTE returns one row per cluster — exactly the shape the
+ * dashboard needs (one Wahid row, not eight). It costs the same
+ * row_read as a plain `SELECT COUNT(*)` because D1 evaluates the
+ * window function in a single pass over the sessions table.
  *
  * NOTE on D1 compatibility: ROW_NUMBER() OVER is supported as of
  * compatibility_date 2024-11-01 (see cloudflare/wrangler.toml). The
  * CTE form is single-statement — no temp tables, no multi-statement
  * parsing traps like the v1.2.43 first-cut migration 0023 had.
+ *
+ * v1.2.47 — `day_date` was added to the partition key. Without
+ * this, cross-day clusters (Start Sep 20 23:00, Finish Sep 21 02:30
+ * — day_date derived from ended_at Sep 21) caused the survivor to
+ * live on Sep 21 only, dropping the cluster from the Sep 20
+ * recent_days aggregation even though the in-modal sessions list
+ * (which uses the JS dedup pass + same-day filter) still showed it.
+ * The 4u vs 3 bug from v1.2.46 became a 2u vs 3 mismatch on
+ * Mouthirrahman 09-20.
  *
  * @returns {string} CTE fragment starting with "WITH survivors AS (...)".
  *                   Empty filter — works against any sessions query.
@@ -140,7 +165,7 @@ export function dedupSessionsCte() {
   return `WITH survivors AS (
     SELECT id FROM (
       SELECT id, ROW_NUMBER() OVER (
-        PARTITION BY emp_id, started_at
+        PARTITION BY emp_id, started_at, day_date
         ORDER BY ended_at DESC, id DESC
       ) AS rn
       FROM sessions
