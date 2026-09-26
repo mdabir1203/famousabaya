@@ -147,5 +147,9 @@ test-socket.cjs
 test-socket.mjs
 test-sio-client.cjs
 test-sio-http.cjs
+check-catalog.mjs
+cf111-catalog.json
+full-catalog.json
+docs/VERIFICATION-KIOSK-QA.md
 
 .great_cto/
