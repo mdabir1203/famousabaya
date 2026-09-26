@@ -1730,7 +1730,7 @@ const RAW_RUNTIME_STATE =
     ]],\
     ["esbuild", [\
       ["npm:0.27.3", {\
-        "packageLocation": "./.yarn/cache/esbuild-npm-0.27.3-85b6c20323-fdc3f87a3f.zip/node_modules/esbuild/",\
+        "packageLocation": "./.yarn/unplugged/esbuild-npm-0.27.3-85b6c20323/node_modules/esbuild/",\
         "packageDependencies": [\
           ["@esbuild/aix-ppc64", "npm:0.27.3"],\
           ["@esbuild/android-arm", "npm:0.27.3"],\
@@ -3531,7 +3531,7 @@ const RAW_RUNTIME_STATE =
     ]],\
     ["workerd", [\
       ["npm:1.20260611.1", {\
-        "packageLocation": "./.yarn/cache/workerd-npm-1.20260611.1-1f8c6d51bc-6c8651d456.zip/node_modules/workerd/",\
+        "packageLocation": "./.yarn/unplugged/workerd-npm-1.20260611.1-1f8c6d51bc/node_modules/workerd/",\
         "packageDependencies": [\
           ["@cloudflare/workerd-darwin-64", "npm:1.20260611.1"],\
           ["@cloudflare/workerd-darwin-arm64", "npm:1.20260611.1"],\
