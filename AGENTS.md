@@ -364,6 +364,12 @@ Before any commit that touches `shared/`, `cloudflare/src/`,
 - [ ] Did I add a new ingest path that writes to `sessions` or
   `active_sessions`?
   → Add the `e_bc_*` JS guard **and** the `RAISE(IGNORE)` SQL trigger.
+- [ ] Did I add a new local finish path (a place that deletes from
+  `ACTIVE_SESSIONS` and pushes `session_finish`)?
+  → Call `recentFinishTombstone.note(emp_id)` immediately after the
+  `delete ACTIVE_SESSIONS[emp_id]` so the cloud-stale resurrection
+  race doesn't flash the worker back as "Working" on the kiosk. See
+  §11.1 below for the contract.
 - [ ] Did I change a timestamp's unit or a field's name in the offline
   JSON?
   → Update both `server.js`'s hydration and `shared/sqlite-snapshot.cjs`'s
@@ -384,10 +390,11 @@ Before any commit that touches `shared/`, `cloudflare/src/`,
   → `tools/desktop-launcher/package.json` (and the root `package.json` if
   the release pipeline cares), plus a `docs/releases/vX.Y.Z.md` note.
 - [ ] Did I run `npm test`?
-  → All 188 tests pass (2 pre-existing LAN-side regressions —
-  v1.2.31 `req_finishWork` and v1.2.32 `dropGhostActiveSessions` — fail
-  on baseline too; verify with `git stash` + `npm test` before blaming
-  your change).
+  → All 199 tests pass (19 pre-existing failures: 17 sql.js path
+  resolution on Windows + 2 LAN-side regressions documented in v1.2.50
+  release notes — v1.2.31 `req_finishWork` and v1.2.32
+  `dropGhostActiveSessions`. Verify with `git stash` + `npm test`
+  before blaming your change).
 - [ ] Did I run `node scripts/verify-deploy.mjs` against the live
   dashboard BEFORE pushing a deploy?
   → Real browser screenshots + DOM assertions for the surface I
@@ -521,6 +528,253 @@ paste the individual attrs, that risks duplication.
 + 4 sandbox behavioral tests). Pure-function checks via `new Function(...)`
 sandbox follow the same pattern `tests/dashboard-live-tick.test.mjs`
 uses for `computeInShiftSec` / `computeActiveTodaySec`.
+
+### 11.2 The recent-finish tombstone (v1.2.51) — defends the kiosk against cloud-stale resurrection
+
+The factory local server is the source of truth for who is currently
+working on the floor (§1 / §11 above). When a worker taps Finish at
+the kiosk, the LAN immediately removes them from `ACTIVE_SESSIONS`
+and broadcasts the new state to every kiosk client — the worker
+disappears from the live board within ~50 ms.
+
+The cloud's `active_sessions` table is a write-through cache of past
+`session_start` events. The factory pushes `session_finish` when a
+worker taps Finish, and the cloud's ingest handler deletes the
+matching row from `active_sessions` at that moment. Both legs happen
+on best-effort — push latency is 200 ms-2 s in healthy conditions, up
+to 30 s on a busy cell tower or with auth retries. The push can also
+fail (network blip, worker 5xx) and sit in the
+`ceo-ingest-queue.jsonl` retry buffer for `CEO_INGEST_RETRY_MS` (30 s).
+
+`refreshCloudToday` runs every 30 s and pulls the cloud's view of
+active sessions. **Before v1.2.51** it merged any cloud row that had
+no matching local entry back into `ACTIVE_SESSIONS` — assuming the
+cloud's view was authoritative. This was wrong for the same-laptop
+case: if the LAN just removed Arman via a worker Finish tap, the
+cloud's stale "still active" row was not authoritative — the LAN was.
+The kiosk would then briefly show Arman as working again, ~30-60 s
+after his Finish tap, until the push eventually landed.
+
+**Fix**: track a short-lived in-memory tombstone per `emp_id` on the
+LAN server. While the tombstone is live, the cloud-active merge skips
+that `emp_id` so the LAN's "this worker is finished" view stays
+authoritative until the cloud catches up.
+
+The tombstone lives at `shared/recent-finish-tombstone.cjs`. The
+helper is pure (Map + TTL) and exposes `note()` / `isLive()` /
+`consume()` / `pruneExpired()` / `size()` / `clear()`. Default TTL is
+5 minutes (configurable via `RECENT_FINISH_TOMBSTONE_MS`, floor 30 s)
+— comfortable against any realistic push-retry cadence. The merge
+logic is in `shared/cloud-active-merge.cjs`, extracted from
+`server.js → refreshCloudToday` so it can be unit-tested without
+spinning up a server subprocess.
+
+**Three call sites** for `note()`:
+
+1. `server.js → req_finishWork` — the worker-tapped-Finish path.
+2. `server.js → /api/admin/close-stale-sessions` — the operator-driven
+   orphan-close path.
+3. (Future: any new local finish path. Add the call alongside the
+   `delete ACTIVE_SESSIONS[emp_id]`.)
+
+**One consumer** for `isLive()`:
+
+1. `server.js → refreshCloudToday` — the cloud-active merge loop
+   checks `recentFinishTombstone.isLive(empId)` for each row. A live
+   tombstone increments `stats.activeSuppressedByTombstone` and skips
+   the row.
+
+**Memory hygiene**: `setInterval` runs every 60 s and calls
+`pruneExpired()`. Logs `[recent-finish-tombstone] pruned N expired
+entries` only when there's something to report.
+
+**Scope**:
+
+- Per-process / in-memory only. Lost on server restart. That's
+  correct: on restart the LAN re-hydrates `ACTIVE_SESSIONS` from the
+  offline-report snapshot, and a stale cloud row would correctly
+  re-hydrate any worker that is actually still on the floor.
+- Not shared between factory laptops. **Known gap**: if Laptop A's
+  `session_finish` push fails AND Laptop B is running, Laptop B's
+  `refreshCloudToday` could still resurrect the worker. Fixing that
+  requires either a cloud-side tombstone or LAN coordination, neither
+  of which is in scope for v1.2.51. The 5-minute TTL still bounds the
+  problem (after 5 min the cloud's stale row will eventually trigger a
+  visible resurrection, surfacing the underlying push failure to the
+  operator rather than hiding it forever).
+
+**Tests**:
+
+- `tests/recent-finish-tombstone.test.mjs` — 14 unit tests covering
+  TTL behavior, refresh, prune, edge cases, and an integration
+  scenario that walks the actual Arman Reza timeline (T=0 finish,
+  T=2 s merge skip, T=30 s push retry, T=5m tombstone expires).
+- `tests/cloud-active-merge.test.mjs` — 14 unit tests covering the
+  tombstone-aware merge behavior: baseline (no tombstone) adds the
+  worker (legacy); tombstone live → skip + count as suppressed;
+  tombstone expires → resume adding; new Start within tombstone
+  window → LAN fields preserved; mixed workload (tombstoned + free);
+  roster translation; defensive callbacks.
+
+If you change the tombstone TTL default, the merge loop, or add a new
+local finish path, mirror the change in:
+
+- `shared/recent-finish-tombstone.cjs` — the helper.
+- `shared/cloud-active-merge.cjs` — the merge call site.
+- `server.js` — the tombstone declaration + the three call sites.
+- `tests/recent-finish-tombstone.test.mjs` and
+  `tests/cloud-active-merge.test.mjs` — extend or add tests.
+
+### 11.3 The LAN-local-vs-cloud-stale class (v1.2.52) — defending catalog, employees, work-types, and the boot hydrate
+
+§11.2 documents the **recent-finish tombstone**, the v1.2.51 fix for the
+"Arman Reza resurrection" bug. That fix is one instance of a wider
+class of bug: **the LAN mutates state locally, the LAN→cloud push is
+in flight, and the cloud→LAN pull overwrites the LAN's fresh state
+with the cloud's stale view before the push lands.**
+
+v1.2.51 only defended `ACTIVE_SESSIONS`. The same class of race exists
+in three other places that the operator hits regularly:
+
+| Where | Race | v1.2.52 fix |
+|---|---|---|
+| `refreshAbayaCatalogFromCloud` (every 60 s) | Operator marks `is_custom = 1` locally; push is in flight; pull arrives with `is_custom = 0` from cloud → operator's edit vanishes | `catalogLocalMutationTombstone` — note on every catalog mutation site, skip the pull while live |
+| `refreshEmployeesFromCloud` (every 60 s, same shape) | Operator adds/removes/renames an employee; pull reverts it | `employeesLocalMutationTombstone` — same pattern |
+| `refreshWorkTypesFromCloud` (every 60 s, same shape) | Operator edits work types (e.g. adds "Stone Work"); pull reverts it | `workTypesLocalMutationTombstone` — same pattern |
+| `hydrateCompletedLogsFromCloud` (boot-time, 5-30 s round-trip) | Worker taps Finish while the cloud history fetch is in flight; hydrate overwrites local-only rows | Local-overlay merge (`shared/cloud-history-merge.cjs`) — append local rows that don't duplicate a cloud row by `id` or `(emp_id, started_at)` |
+
+**All four are the same root cause class.** If you add a new
+cloud→LAN pull path that mutates LAN state, audit it against this
+table before shipping. If the table doesn't cover your case, add a
+new tombstone + tests, don't skip it.
+
+#### The `recent-mutation-tombstone` helper
+
+`shared/recent-mutation-tombstone.cjs` is the resource-level sibling
+of `shared/recent-finish-tombstone.cjs`:
+
+- `recent-finish-tombstone` — keyed by `emp_id` (Map), TTL-bounded,
+  per-Finish. Used by `refreshCloudToday` to skip a specific emp_id.
+- `recent-mutation-tombstone` — global per-resource (single
+  timestamp), TTL-bounded. Used by the catalog/employees/work-types
+  pulls to skip the whole merge while ANY local mutation is in flight.
+
+Both helpers are pure, in-memory, lost on restart (correct: a
+restart re-hydrates from the offline snapshot, and the next pull
+sees a clean slate). Both default to TTL ≥ push latency +
+`CEO_INGEST_RETRY_MS` ceiling (30 s default; configurable via
+`RECENT_CATALOG_MUTATION_TOMBSTONE_MS`,
+`RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS`,
+`RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS`; floor 5 s).
+
+#### The `cloud-history-merge` helper
+
+`shared/cloud-history-merge.cjs` is the boot-hydrate sibling. It's
+not a tombstone because the boot hydration is a one-shot pull, not
+a periodic merge: while the `/api/state/history` fetch is in flight
+(5-30 s), capture any local rows that arrive, then dedup-and-append
+to the cloud view. The function is pure:
+
+```js
+mergeCloudHistoryWithLocalOverlay(cloudRows, localRows) → {
+  merged,
+  localPreserved,            // brand-new local rows kept
+  localDuplicatesSkipped,    // local rows that duplicate a cloud row
+}
+```
+
+Dedup is by `id` (the cloud's `WL-<emp>-<ended_at>` stable id) OR by
+`(emp_id, started_at)` composite key. Catches both the "push landed
+during the fetch" case (id match) and the "push hasn't landed yet"
+case (composite key match). Conservative: malformed rows are
+preserved rather than dropped — losing a real session row is worse
+than double-counting a malformed one.
+
+#### Catalog / employees / work-types mutation callsites that `note()` the tombstone
+
+These are the LAN-local-write paths that mark the LAN as
+authoritative. Every new cloud-LAN merge path that mutates local
+state needs a matching `note()` here.
+
+Catalog (3 sites):
+- `loadCatalogFromXlsxFile` — auto-watch reload from `CATALOG_XLSX_PATH`
+- `/api/catalog` PUT handler — operator PUT
+- `/api/catalog-xlsx/upload` — xlsx upload handler
+
+Employees (3 sites):
+- `loadEmployeesFromManualFile` — manual JSON reload
+- `loadEmployeesFromXlsxFile` — xlsx reload
+- `persistEmployeeRosterAndReload` (manual JSON branch) — operator CRUD
+
+Work-types (2 sites):
+- `loadWorkTypesFromJsonFile` — disk reload (may pick up operator edits)
+- `saveWorkTypesToJsonFile` — operator-edit persistence
+
+**If you add a new mutation path for any of these three resources,
+add `note<X>LocalMutation()` at the assignment to `<X>`.** The wiring
+audit at `tests/server-cloud-pull-guards.test.mjs` greps server.js
+to confirm the callsite count matches the expected number — a new
+path without a matching `note()` is caught by extending that test.
+
+#### Known gaps
+
+The v1.2.52 fixes are scoped to the four paths in the table above.
+Other cloud-LAN sync paths that share the same root cause but are
+NOT yet defended:
+
+- **Multi-laptop LAN-B race** — if Laptop A's push fails AND Laptop
+  B's pull runs before the next retry, Laptop B's view overwrites
+  Laptop A's edit. The tombstone only defends the single-laptop
+  case. Fix requires either a cloud-side "row touched" cache or LAN
+  coordination; both out of scope for v1.2.52. The 30 s TTL still
+  bounds the worst case to 30 s of staleness.
+- **Cloud-pulled catalog with no LAN→cloud push** — the
+  `loadCatalogFromXlsxFile` auto-watch path mutates `abayaCatalog`
+  locally but doesn't push to the cloud (a separate bug). The
+  tombstone defends the LAN for 30 s; after that, the pull CAN
+  revert the auto-reload. The operator notices and re-uploads. The
+  missing-push is a separate feature/bug.
+- **Cloud-pulled roster during the LAN-side pre-hydrate window** —
+  `seedRosterFromCloudIfLocalMissing` reads from cloud and writes
+  to local. It's a boot-time seed (one-shot), not a periodic pull,
+  so the tombstone isn't relevant. The next `refreshEmployeesFromCloud`
+  after 60 s could pull from cloud (which by then has the seed) —
+  no race here.
+
+#### Tests
+
+- `tests/recent-mutation-tombstone.test.mjs` — 13 unit tests on the
+  helper (TTL behavior, NaN/Infinity rejection, custom clocks,
+  clear).
+- `tests/cloud-history-merge.test.mjs` — 15 unit tests on the merge
+  helper (id-dedup, composite-key-dedup, malformed-row handling,
+  realistic mixed loads, custom extractors).
+- `tests/server-cloud-pull-guards.test.mjs` — 12 source-grep audits
+  that pin the wiring: every mutation callsite calls the right
+  `note()`, every pull guards on the right `isLive()`, the boot log
+  surfaces all three tombstones, the hydrate uses the merge helper
+  (no raw `COMPLETED_LOGS = hydrated` overwrite).
+
+**Test count for v1.2.52: 40 new tests, all green.** Total repo
+test count after this release: 255 (was 215 before v1.2.51 + v1.2.52).
+
+#### Apply when
+
+- Adding a new cloud→LAN pull path that mutates local state (catalog,
+  employees, work-types, or any future resource): add a tombstone +
+  `note()` callsites + tests. Don't ship the pull without the
+  guard.
+- Adding a new local-mutation callsite for an existing resource:
+  add `note<X>LocalMutation()` at the assignment to the resource
+  array. Extend `tests/server-cloud-pull-guards.test.mjs` if the
+  count changes.
+- Adding a new boot-time hydrate pull: extract the per-row merge
+  logic into a shared pure helper (mirror `cloud-history-merge.cjs`),
+  call it from server.js, write unit tests.
+- The user reports a new variant of "my edit vanished" / "this
+  row came back from the cloud after I changed it locally" — check
+  this table. The fix is a tombstone at the pull, mirroring the
+  v1.2.52 pattern.
 
 ---
 

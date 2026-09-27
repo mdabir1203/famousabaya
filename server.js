@@ -49,6 +49,10 @@ const {
 const offlineReportStore = require('./shared/offline-report-store.cjs');
 const sqliteSnapshot = require('./shared/sqlite-snapshot.cjs');
 const reconcileCloudflare = require('./shared/reconcile-cloudflare.cjs');
+const { mergeCloudActiveIntoLocal } = require('./shared/cloud-active-merge.cjs');
+const { makeRecentFinishTombstone } = require('./shared/recent-finish-tombstone.cjs');
+const { makeRecentMutationTombstone } = require('./shared/recent-mutation-tombstone.cjs');
+const { mergeCloudHistoryWithLocalOverlay } = require('./shared/cloud-history-merge.cjs');
 const resendAlerts = require('./shared/alerting/resend-alerts.cjs');
 const chokidar = require('chokidar');
 
@@ -384,11 +388,19 @@ const CEO_QUEUE_FILE = (() => {
   return path.join(CEO_QUEUE_DIR, 'ceo-ingest-queue.jsonl');
 })();
 const CEO_QUEUE_DRAIN = CEO_QUEUE_FILE + '.draining';
+// v1.2.51 — Cloud ingest retry cadence. Default bumped from 30 s to
+// 10 minutes so the operator gets a quieter retry log on flaky networks
+// (and so a transient 401/403/5xx doesn't burn through a quota).
+// The matching recent-finish tombstone TTL is also bumped to 10 minutes
+// (see RECENT_FINISH_TOMBSTONE_MS) so a failed push is still shielded
+// from refreshCloudToday resurrection until the next retry has had a
+// chance to land. Floor is 5 s so a misconfigured env var can't pin the
+// queue at zero.
 const CEO_INGEST_RETRY_MS = Math.max(
   5000,
   Number(process.env.CEO_INGEST_RETRY_INTERVAL_MS) > 0
     ? Number(process.env.CEO_INGEST_RETRY_INTERVAL_MS)
-    : 30000
+    : 10 * 60 * 1000
 );
 
 let ceoIngestPendingCount = 0;
@@ -1010,6 +1022,10 @@ function loadFactoryWorkTypesFromDisk() {
     FACTORY_WORK_TYPES = raw.map(function (s) {
       return String(s == null ? '' : s).trim();
     }).filter(Boolean);
+    // v1.2.52 — note the local mutation. The boot-time disk read may
+    // pick up an operator-edited work-types.json; tombstone so the next
+    // 60s pull doesn't revert it before pushWorkTypesToCloud lands.
+    noteWorkTypesLocalMutation('disk-load');
     console.log('[work-types] Loaded', FACTORY_WORK_TYPES.length, 'types from disk');
   } catch (e) {
     console.warn('[work-types] Load failed — using defaults:', e.message);
@@ -1101,6 +1117,11 @@ function saveFactoryWorkTypesToDisk(nextList) {
     if (e.code !== 'ENOENT') throw e;
   }
   fs.renameSync(tmp, WORK_TYPES_JSON_PATH);
+  // v1.2.52 — note the local mutation. saveWorkTypesToJsonFile is the
+  // persistence step for operator edits to /api/admin/work-types; the
+  // tombstone keeps the next 60s pull from reverting the edit before
+  // the LAN→cloud push lands.
+  noteWorkTypesLocalMutation('operator-edit-persist');
   FACTORY_WORK_TYPES = nextList.slice();
   workTypesDataVersion += 1;
 }
@@ -1169,6 +1190,15 @@ function normalizeAbayaCatalogRows(rows) {
 
 async function refreshAbayaCatalogFromCloud() {
   if (!CF_URL) return;
+  // v1.2.52 — if a local catalog mutation happened within the last
+  // TTL window, the push is still in flight or queued for retry. Skip
+  // the cloud pull so the cloud's stale view doesn't overwrite the
+  // fresh local edit. The next pull cycle (30 s later by default)
+  // resumes once the tombstone expires. See
+  // shared/recent-mutation-tombstone.cjs and docs/releases/v1.2.52.md.
+  if (isCatalogLocalMutationTombstoneLive()) {
+    return;
+  }
   try {
     const res = await fetch(CF_URL + '/api/catalog/abayas', {
       signal: AbortSignal.timeout(8000),
@@ -1282,7 +1312,24 @@ async function hydrateCompletedLogsFromCloud(days) {
         invoice_serial: r.invoice_serial || '',
       };
     });
-    COMPLETED_LOGS = hydrated;
+    // v1.2.52 — LAN-local-vs-cloud-stale guard for the boot hydration
+    // path. While `/api/state/history` was in flight (5-30 s round-trip),
+    // a worker Finish tap may have landed locally. The hydration's
+    // wholesale-replace semantics would lose that row. Capture any
+    // local rows that arrived during the fetch (after the entry
+    // length-check passed but before we overwrite), then merge in any
+    // rows that don't duplicate a cloud row by (id) or
+    // (emp_id, started_at). See docs/releases/v1.2.52.md §3.
+    const localRowsDuringHydrate = COMPLETED_LOGS.slice();
+    const overlay = mergeCloudHistoryWithLocalOverlay(hydrated, localRowsDuringHydrate);
+    COMPLETED_LOGS = overlay.merged;
+    if (overlay.localPreserved > 0) {
+      console.log(
+        '[hydrate] preserved ' + overlay.localPreserved +
+        ' local-only row(s) that arrived during the /api/state/history round-trip' +
+        (overlay.localDuplicatesSkipped > 0 ? ' (skipped ' + overlay.localDuplicatesSkipped + ' duplicate(s))' : '')
+      );
+    }
     // Save a fresh snapshot so the next boot skips hydration.
     try {
       const now = Date.now();
@@ -1301,6 +1348,8 @@ async function hydrateCompletedLogsFromCloud(days) {
     return {
       hydrated: true,
       count: hydrated.length,
+      localPreserved: overlay.localPreserved,
+      localDuplicatesSkipped: overlay.localDuplicatesSkipped,
       days: j.requestedDays,
       truncated: !!j.truncated,
       fromYmd: j.fromYmd,
@@ -1380,6 +1429,13 @@ let workTypesCloudVersion = '0';
 
 async function refreshEmployeesFromCloud() {
   if (!CF_URL || EMPLOYEES_XLSX_PATH) return;
+  // v1.2.52 — see shared/recent-mutation-tombstone.cjs. While the
+  // tombstone is live, the LAN's local roster edit has the floor; we
+  // skip the cloud pull so a stale cloud copy (from before the push
+  // landed) doesn't revert the operator's edit.
+  if (isEmployeesLocalMutationTombstoneLive()) {
+    return;
+  }
   try {
     const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/employees', { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return;
@@ -1421,6 +1477,13 @@ async function refreshEmployeesFromCloud() {
 
 async function refreshWorkTypesFromCloud() {
   if (!CF_URL) return;
+  // v1.2.52 — see shared/recent-mutation-tombstone.cjs. While the
+  // tombstone is live, the LAN's local work-types edit has the floor;
+  // we skip the cloud pull so a stale cloud copy (from before the push
+  // landed) doesn't revert the operator's edit.
+  if (isWorkTypesLocalMutationTombstoneLive()) {
+    return;
+  }
   try {
     const res = await fetch(String(CF_URL).replace(/\/+$/, '') + '/api/work-types', { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return;
@@ -2007,8 +2070,97 @@ function broadcastState() {
  *
  * Throttled: max once per 10s per call site. Errors are swallowed + logged.
  */
+// v1.2.51 — recent-finish tombstone.
+//
+// When the LAN locally finishes a session (req_finishWork / close-stale-
+// sessions / /api/kiosk/finish-work), the cloud's active_sessions row
+// may stay around for the duration of the session_finish push latency
+// + retry cycle. During that window, refreshCloudToday used to
+// unconditionally re-add the worker to ACTIVE_SESSIONS from the stale
+// cloud row — making the kiosk briefly show the worker as "Working"
+// again (the Arman Reza resurrection bug).
+//
+// While a tombstone is live for an emp_id, refreshCloudToday's merge
+// skips that emp_id so the LAN's "this worker is finished" view stays
+// authoritative until the cloud catches up. TTL default is 10 minutes
+// — long enough to cover at least one full CEO_INGEST_RETRY_MS cycle
+// (also 10 minutes by default). See shared/recent-finish-tombstone.cjs
+// and docs/releases/v1.2.51.md.
+//
+// Configurable via RECENT_FINISH_TOMBSTONE_MS env var; floor 30 s.
+const RECENT_FINISH_TOMBSTONE_MS = Math.max(
+  30000,
+  Number(process.env.RECENT_FINISH_TOMBSTONE_MS) > 0
+    ? Number(process.env.RECENT_FINISH_TOMBSTONE_MS)
+    : 10 * 60 * 1000
+);
+const recentFinishTombstone = makeRecentFinishTombstone({ ttlMs: RECENT_FINISH_TOMBSTONE_MS });
 let _refreshCloudTodayInFlight = false;
 let _refreshCloudTodayLastAt = 0;
+
+// v1.2.52 — resource-level mutation tombstones for catalog (abaya_catalog)
+// and employees. Same root-cause class as recentFinishTombstone (above) but
+// generalized to whole-collection resources where per-row granularity is
+// overkill. While a tombstone is live, the corresponding refresh<X>FromCloud
+// pull skips the merge so a stale-cloud row can't overwrite a fresh LAN
+// edit that hasn't pushed yet. See shared/recent-mutation-tombstone.cjs
+// and docs/releases/v1.2.52.md.
+//
+// Defaults: 30 s. Covers one CEO_INGEST_RETRY_MS cycle (also 30 s) plus a
+// safety margin, so a normal 200 ms-15 s push has landed before the next
+// pull is allowed to overwrite. If a push actually takes longer than this
+// (network brownout, cloudflare 5xx storm) the tombstone expires and a
+// stale pull will overwrite — which the operator can spot and re-edit.
+// Floor 5 s so a misconfigured env var can't pin the tombstone at zero.
+const RECENT_CATALOG_MUTATION_TOMBSTONE_MS = Math.max(
+  5000,
+  Number(process.env.RECENT_CATALOG_MUTATION_TOMBSTONE_MS) > 0
+    ? Number(process.env.RECENT_CATALOG_MUTATION_TOMBSTONE_MS)
+    : 30000
+);
+const RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS = Math.max(
+  5000,
+  Number(process.env.RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS) > 0
+    ? Number(process.env.RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS)
+    : 30000
+);
+const RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS = Math.max(
+  5000,
+  Number(process.env.RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS) > 0
+    ? Number(process.env.RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS)
+    : 30000
+);
+const catalogLocalMutationTombstone = makeRecentMutationTombstone({
+  ttlMs: RECENT_CATALOG_MUTATION_TOMBSTONE_MS,
+});
+const employeesLocalMutationTombstone = makeRecentMutationTombstone({
+  ttlMs: RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS,
+});
+const workTypesLocalMutationTombstone = makeRecentMutationTombstone({
+  ttlMs: RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS,
+});
+
+// Helpers. Called from every local-mutation callsite (kiosk PUT, xlsx
+// upload, xlsx auto-watch, manual JSON edit). Keep these cheap — the
+// tombstone is in-memory only, no I/O.
+function noteCatalogLocalMutation(label) {
+  catalogLocalMutationTombstone.note(label);
+}
+function noteEmployeesLocalMutation(label) {
+  employeesLocalMutationTombstone.note(label);
+}
+function noteWorkTypesLocalMutation(label) {
+  workTypesLocalMutationTombstone.note(label);
+}
+function isCatalogLocalMutationTombstoneLive() {
+  return catalogLocalMutationTombstone.isLive();
+}
+function isEmployeesLocalMutationTombstoneLive() {
+  return employeesLocalMutationTombstone.isLive();
+}
+function isWorkTypesLocalMutationTombstoneLive() {
+  return workTypesLocalMutationTombstone.isLive();
+}
 let _refreshCloudTodayLastOkAt = 0;
 let _refreshCloudTodayLastErr = null;
 let _refreshCloudTodayLastMergeStats = null;
@@ -2132,6 +2284,11 @@ async function refreshCloudToday(opts) {
     // translate `e_bc_<barcode>` → the matching local `eN` by looking up
     // employees[].barcode. If no match, fall back to the cloud id (the
     // dashboard will simply not render the row, which is fine).
+    //
+    // v1.2.51 — extract to shared/cloud-active-merge.cjs so the merge
+    // logic + recent-finish tombstone defense can be unit-tested without
+    // spinning up a full server subprocess. The helper is pure: it gets
+    // and sets ACTIVE_SESSIONS via callbacks and reports per-call counters.
     const cloudActive = (j.active && typeof j.active === 'object') ? j.active : {};
     // Build barcode → local-emp lookup once per merge.
     const bcToLocalEmp = Object.create(null);
@@ -2141,38 +2298,15 @@ async function refreshCloudToday(opts) {
         bcToLocalEmp[String(e.barcode).trim()] = e;
       }
     }
-    for (const k of Object.keys(cloudActive)) {
-      const ca = cloudActive[k] || {};
-      let empId = ca.emp_id != null ? String(ca.emp_id) : (k.startsWith('e_') ? k : '');
-      if (!empId) continue;
-      // Translate e_bc_<barcode> to local eN if we have a matching employee.
-      if (empId.startsWith('e_bc_')) {
-        const bc = empId.slice('e_bc_'.length);
-        const localEmp = bcToLocalEmp[bc] || bcToLocalEmp[String(Number(bc)).padStart(8, '0')];
-        if (localEmp) empId = localEmp.id;
-      }
-      const started = typeof ca.started_at === 'number'
-        ? ca.started_at
-        : (ca.started_at ? Number(ca.started_at) * 1000 : Date.now());
-      const log_id = 'WL-cloudmirror-' + empId + '-' + started;
-      const local = ACTIVE_SESSIONS[empId];
-      if (local) {
-        // Trust the local entry for the abaya_id (the terminal knows what
-        // it's working on right now), but update display fields.
-        if (ca.process && local.process !== ca.process) local.process = ca.process;
-        if (ca.emp_name) local.emp_name = ca.emp_name;
-        stats.activeReplaced++;
-      } else {
-        ACTIVE_SESSIONS[empId] = {
-          emp_id: empId,
-          abaya_id: ca.abaya_id != null ? String(ca.abaya_id) : '',
-          log_id,
-          started_at: started,
-          process: ca.process || ca.emp_process || '',
-        };
-        stats.activeAdded++;
-      }
-    }
+    const mergeStats = mergeCloudActiveIntoLocal(cloudActive, {
+      getLocal: (empId) => ACTIVE_SESSIONS[empId],
+      setLocal: (empId, sess) => { ACTIVE_SESSIONS[empId] = sess; },
+      bcToLocalEmp,
+      tombstone: recentFinishTombstone,
+    });
+    stats.activeAdded = mergeStats.activeAdded;
+    stats.activeReplaced = mergeStats.activeReplaced;
+    stats.activeSuppressedByTombstone = mergeStats.activeSuppressedByTombstone;
 
     _refreshCloudTodayLastOkAt = Date.now();
     _refreshCloudTodayLastErr = null;
@@ -2198,6 +2332,13 @@ function getCloudRefreshHealth() {
     lastOkAt: _refreshCloudTodayLastOkAt,
     lastErr: _refreshCloudTodayLastErr,
     lastStats: _refreshCloudTodayLastMergeStats,
+    // v1.2.51 — surface the tombstone size so the operator can see
+    // how many emp_ids are currently shielded from a stale-cloud-
+    // resurrection. Should normally be 0 between sessions; a
+    // sustained non-zero count is a useful signal that the
+    // session_finish push is consistently failing.
+    recentFinishTombstoneSize: recentFinishTombstone.size(),
+    recentFinishTombstoneTtlMs: recentFinishTombstone.ttlMs,
   };
 }
 
@@ -2481,6 +2622,12 @@ io.on('connection', (socket) => {
     const abaya_barcode = abEnd >= 0 ? abayaCatalog[abEnd].barcode : null;
 
     delete ACTIVE_SESSIONS[emp_id];
+    // v1.2.51 — recent-finish tombstone. The cloud's active_sessions row
+    // for this emp_id may stay around for 30-60 s while the session_finish
+    // push is in-flight or queued for retry; refreshCloudToday's merge
+    // must skip this emp_id until the cloud catches up so the kiosk
+    // doesn't briefly show the worker as working again.
+    recentFinishTombstone.note(emp_id);
     broadcastState();
     var cbPayload = {
       ok: true,
@@ -2597,6 +2744,12 @@ io.on('connection', (socket) => {
         // Also drop the in-memory row so the next call won't retry — the
         // existing COMPLETED_LOGS entry already represents this session.
         delete ACTIVE_SESSIONS[emp_id];
+        // v1.2.51 — recent-finish tombstone. The original session_finish
+        // push may still be in flight or queued for retry; until it
+        // lands, the cloud still has this emp_id in active_sessions.
+        // Without the tombstone, refreshCloudToday would resurrect the
+        // worker from that stale row ~30 s after we drop it here.
+        recentFinishTombstone.note(emp_id);
         results.push({ emp_id, ok: true, alreadyClosed: true, started_at: sess.started_at });
         skippedCount++;
         continue;
@@ -2640,6 +2793,11 @@ io.on('connection', (socket) => {
       };
       COMPLETED_LOGS.push(record);
       delete ACTIVE_SESSIONS[emp_id];
+      // v1.2.51 — recent-finish tombstone. Same defense as req_finishWork:
+      // refreshCloudToday must NOT re-merge this emp_id from a stale cloud
+      // active_sessions row while the session_finish push is still in
+      // flight or queued for retry.
+      recentFinishTombstone.note(emp_id);
       setImmediate(persistOfflineDashboardReport);
       setImmediate(() => { void persistSqliteSnapshot(); });
       // v1.2.31: same as req_finishWork — do NOT gate the cloud push on
@@ -3146,6 +3304,11 @@ function loadEmployeesFromManualFile() {
   try {
     const raw = JSON.parse(fs.readFileSync(EMPLOYEES_MANUAL_PATH, 'utf8'));
     if (!Array.isArray(raw) || raw.length === 0) return;
+    // v1.2.52 — note the local mutation so the next pull skips until
+    // the LAN→cloud push has landed. loadEmployeesFromManualFile is
+    // called every time the operator edits employees-manual.json on
+    // disk; each reload = fresh LAN state the cloud pull must not revert.
+    noteEmployeesLocalMutation('manual-file-reload');
     EMPLOYEES = raw;
     rebuildACMap();
     EMP_PERF = EMPLOYEES.map(function (e) {
@@ -3283,6 +3446,11 @@ function loadEmployeesFromXlsxFile() {
     const parsed = parseEmployeesXlsxFile(resolved);
     if (parsed.length === 0) { console.warn('[employees-xlsx] No valid rows found in', resolved); return; }
     lastEmployeesXlsxMtime = mt;
+    // v1.2.52 — note the local mutation. pushEmployeesToCloud happens
+    // higher up in persistEmployeeRosterAndReload (line 3516 area); the
+    // tombstone keeps the next pull from reverting the LAN edit before
+    // that push lands.
+    noteEmployeesLocalMutation('xlsx-file-reload');
     const prevPerfById = Object.create(null);
     for (let pi = 0; pi < EMP_PERF.length; pi++) {
       const row = EMP_PERF[pi];
@@ -3450,6 +3618,11 @@ async function persistEmployeeRosterAndReload(nextEmployees) {
     for (let pi = 0; pi < EMP_PERF.length; pi++) {
       prevPerfById[EMP_PERF[pi].id] = EMP_PERF[pi];
     }
+    // v1.2.52 — note the local mutation. The manual-JSON branch of
+    // persistEmployeeRosterAndReload sets EMPLOYEES directly (no xlsx
+    // reload); we tombstone here so the next 60s pull doesn't revert
+    // the operator's edit before pushEmployeesToCloud lands.
+    noteEmployeesLocalMutation('manual-json-branch');
     EMPLOYEES = nextEmployees;
     rebuildACMap();
     EMP_PERF = EMPLOYEES.map(function (e) {
@@ -3682,6 +3855,9 @@ function loadCatalogFromXlsxFile() {
     if (abayas.length === 0) { console.warn('[catalog-xlsx] No valid rows found in', resolved); return; }
     lastCatalogXlsxMtime = mt;
     abayaCatalog = normalizeAbayaCatalogRows(abayas);
+    // v1.2.52 — note the local mutation so the next refreshAbayaCatalogFromCloud
+    // pull skips the merge until the LAN→cloud push has had a chance to land.
+    noteCatalogLocalMutation('catalog-xlsx-file');
     attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
     io.emit('catalog_update', { version: catalogCloudVersion });
@@ -3752,6 +3928,10 @@ app.put('/api/catalog/abayas', async (req, res) => {
     return res.status(400).json({ ok: false, error: v.error });
   }
   abayaCatalog = normalizeAbayaCatalogRows(v.norm);
+  // v1.2.52 — note the local mutation. pushCatalogToCloud at the end of
+  // this handler is racing the next 60s pull; the tombstone keeps the
+  // pull from overwriting the operator's edit before the push lands.
+  noteCatalogLocalMutation('catalog-put');
   attachItemImagesFromDisk();
   catalogCloudVersion = String(Date.now());
   io.emit('catalog_update', { version: catalogCloudVersion });
@@ -3830,6 +4010,9 @@ app.post('/api/import/catalog-xlsx', uploadCatalogXlsx, async (req, res) => {
       return res.status(400).json({ ok: false, error: v.error });
     }
     abayaCatalog = normalizeAbayaCatalogRows(v.norm);
+    // v1.2.52 — note the local mutation (catalog-xlsx upload). Same
+    // defensive pattern as the /api/catalog PUT handler.
+    noteCatalogLocalMutation('catalog-xlsx-upload');
     attachItemImagesFromDisk();
     catalogCloudVersion = String(Date.now());
     io.emit('catalog_update', { version: catalogCloudVersion });
@@ -4107,6 +4290,14 @@ app.post('/api/kiosk/finish-work', (req, res) => {
   session.items = session.items.concat(items || []);
   session.end_time = new Date();
   delete ACTIVE_SESSIONS[emp.id];
+  // v1.2.51 — recent-finish tombstone. This HTTP fallback does NOT push
+  // session_finish to the cloud (it predates the cloud ingest layer),
+  // so the cloud's active_sessions row for this emp_id stays around
+  // until the next session_start overwrites it. Without the tombstone,
+  // refreshCloudToday would resurrect the worker from that stale row
+  // ~30 s after every Finish tap here. Tombstone TTL covers the
+  // typical inter-Start window — see shared/recent-finish-tombstone.cjs.
+  recentFinishTombstone.note(emp.id);
   io.emit('session_finished', { employee: emp, session });
   res.json({
     ok: true,
@@ -4620,6 +4811,16 @@ server.listen(PORT, bindHost, () => {
   );
   console.log(`  Offline snapshot: ${persistence.offlineSnapshotFile} (writable=${persistence.offlineReportDirWritable})`);
   console.log(`  CEO queue file:   ${persistence.ceoQueueFile} (writable=${persistence.ceoQueueDirWritable})`);
+  console.log(`  Recent-finish tombstone: ttl=${Math.round(RECENT_FINISH_TOMBSTONE_MS / 1000)}s (defends kiosk against cloud-stale resurrection)`);
+  // v1.2.52 — resource-level tombstones that defend the catalog,
+  // employees, and work-types against a stale cloud pull racing the
+  // LAN→cloud push. Same root-cause class as recentFinishTombstone
+  // (above) but generalized to whole-collection resources. The boot
+  // log reports the TTL so an operator inspecting factory logs sees
+  // the guards are active. See shared/recent-mutation-tombstone.cjs.
+  console.log(`  Catalog local-mutation tombstone: ttl=${Math.round(RECENT_CATALOG_MUTATION_TOMBSTONE_MS / 1000)}s (defends abaya_catalog pull against LAN-fresher edits)`);
+  console.log(`  Employees local-mutation tombstone: ttl=${Math.round(RECENT_EMPLOYEES_MUTATION_TOMBSTONE_MS / 1000)}s (defends roster pull against LAN-fresher edits)`);
+  console.log(`  Work-types local-mutation tombstone: ttl=${Math.round(RECENT_WORK_TYPES_MUTATION_TOMBSTONE_MS / 1000)}s (defends work-types pull against LAN-fresher edits)`);
   refreshAbayaCatalogFromCloud();
   setInterval(refreshAbayaCatalogFromCloud, 60000);
   // Roster (employees + work types) follows the same live cadence as the catalog,
@@ -4669,6 +4870,18 @@ server.listen(PORT, bindHost, () => {
   }
   refreshWorkingHoursFromCloud();
   setInterval(refreshWorkingHoursFromCloud, 5 * 60 * 1000);
+
+  // v1.2.51 — recent-finish tombstone hygiene. Prune expired entries
+  // every 60 s so a long-running factory server doesn't accumulate
+  // tombstones for the whole shift (worst case: 60 finishes/min × 5 min
+  // TTL = ~300 entries — modest but tidy). The prune is a no-op when
+  // nothing has expired.
+  setInterval(() => {
+    const removed = recentFinishTombstone.pruneExpired();
+    if (removed > 0) {
+      console.log(`[recent-finish-tombstone] pruned ${removed} expired entries (${recentFinishTombstone.size()} active)`);
+    }
+  }, 60 * 1000);
 
   // Cloud-today mirror: every 30s, pull today's data from the Worker and
   // merge into local state. Bypasses the case where terminals can only
