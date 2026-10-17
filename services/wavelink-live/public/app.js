@@ -16,7 +16,8 @@ let pc = null;
 let dataChannel = null;
 let localStream = null;
 let responseStartedAt = null;
-const handledCalls = new Set();
+let toolStartedAt = null;
+const activeDelegations = new Set();
 
 function setStatus(title, copy, state = 'disconnected') {
   statusTitle.textContent = title;
@@ -103,41 +104,46 @@ function sendEvent(event) {
   if (dataChannel?.readyState === 'open') dataChannel.send(JSON.stringify(event));
 }
 
-async function runToolCall(item) {
-  const callId = item.call_id;
-  if (!callId || handledCalls.has(callId)) return;
-  handledCalls.add(callId);
+async function runDelegation(event) {
+  const delegationId = event.delegation?.id;
+  if (!delegationId || activeDelegations.has(delegationId)) return;
+  activeDelegations.add(delegationId);
   const started = performance.now();
-  statusCopy.textContent = 'Checking the latest factory data…';
+  toolStartedAt = started;
+  setStatus('Checking factory data', 'The voice connection stays live while the read-only lookup runs.', 'connected');
+
   try {
     const response = await requestJson('/api/tools/factory-summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool: item.name }),
+      body: JSON.stringify({ tool: 'get_factory_summary' }),
     });
     showMs('metric-tool', performance.now() - started);
+    const r = response.result;
+    const spoken = [
+      `Verified AbayaTrack factory summary for ${r.factory_day || 'the current factory day'}.`,
+      r.completed_today == null ? 'Completed units are unavailable.' : `${r.completed_today} units completed today.`,
+      r.active_workers == null ? 'Active worker count is unavailable.' : `${r.active_workers} workers currently active.`,
+      r.efficiency_today_pct == null ? 'Efficiency is unavailable.' : `Efficiency is ${r.efficiency_today_pct} percent.`,
+      r.data_as_of ? `Data timestamp: ${r.data_as_of}.` : 'The source did not provide a data timestamp.',
+      r.ingest_lag_ms != null && r.ingest_lag_ms > 300000 ? 'Warning: the source data may be stale.' : '',
+    ].filter(Boolean).join(' ');
     sendEvent({
-      type: 'conversation.item.create',
-      item: {
-        type: 'function_call_output',
-        call_id: callId,
-        output: JSON.stringify(response.result),
-      },
+      type: 'session.commentary.append',
+      event_id: `factory-summary-${crypto.randomUUID()}`,
+      delegation_id: delegationId,
+      content: spoken,
     });
-    responseStartedAt = performance.now();
-    sendEvent({ type: 'response.create' });
-  } catch (error) {
+    setStatus('Factory summary ready', 'The verified read-only result has been returned to the voice assistant.', 'connected');
+  } catch {
     showMs('metric-tool', performance.now() - started);
     sendEvent({
-      type: 'conversation.item.create',
-      item: {
-        type: 'function_call_output',
-        call_id: callId,
-        output: JSON.stringify({ ok: false, error: 'Factory summary unavailable. Do not guess.' }),
-      },
+      type: 'session.commentary.append',
+      event_id: `factory-summary-error-${crypto.randomUUID()}`,
+      delegation_id: delegationId,
+      content: 'The factory summary could not be retrieved. Tell the user the data is unavailable and do not guess.',
     });
-    responseStartedAt = performance.now();
-    sendEvent({ type: 'response.create' });
+    setStatus('Data unavailable', 'No factory facts were invented or substituted.', 'connected');
   }
 }
 
@@ -145,44 +151,71 @@ function onDataMessage(message) {
   let event;
   try { event = JSON.parse(message.data); } catch { return; }
 
-  if (event.type === 'session.started' || event.type === 'session.created') {
-    setStatus('Listening', 'Ask about today’s production, active work, or factory efficiency.', 'connected');
+  if (event.type === 'session.started') {
+    setStatus('Listening', 'Ask: “Give me today’s factory summary.”', 'connected');
   }
-  if (event.type === 'input_audio_buffer.speech_started') {
-    setStatus('Listening to you', 'You can interrupt the assistant at any time.', 'connected');
-    orb.classList.remove('speaking');
+  if (event.type === 'session.input_transcript.delta' && event.delta) {
+    // Render deltas as temporary text only; no transcript is persisted.
+    addTranscriptDelta('user', event.delta);
   }
-  if (event.type === 'response.created') {
+  if (event.type === 'session.output_transcript.delta' && event.delta) {
+    addTranscriptDelta('assistant', event.delta);
+  }
+  if (event.type === 'session.input_transcript.done' && event.transcript) {
+    finalizeTranscript('user', event.transcript);
+  }
+  if (event.type === 'session.output_transcript.done' && event.transcript) {
+    finalizeTranscript('assistant', event.transcript);
+  }
+  if (event.type === 'session.delegation.created' && event.delegation?.target === 'client') {
+    void runDelegation(event);
+  }
+  if (event.type === 'response.event' && event.event?.type === 'response.created') {
     if (responseStartedAt != null) {
       showMs('metric-response', performance.now() - responseStartedAt);
       responseStartedAt = null;
     }
-    orb.classList.add('speaking');
-    setStatus('Responding', 'The live audio path remains active while the assistant speaks.', 'connected');
   }
-  if (event.type === 'response.done' || event.type === 'output_audio_buffer.stopped') {
+  if (event.type === 'session.output_audio.started') {
+    orb.classList.add('speaking');
+    setStatus('Responding', 'You can interrupt the assistant at any time.', 'connected');
+  }
+  if (event.type === 'session.output_audio.stopped' || event.type === 'session.output_audio.done') {
     orb.classList.remove('speaking');
     setStatus('Listening', 'Go ahead — ask another question.', 'connected');
   }
-  if (event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript) {
-    addMessage('user', event.transcript);
+  if (event.type === 'session.closed') {
+    setStatus('Session closed', 'Start a new conversation when you are ready.', 'disconnected');
   }
-  if (event.type === 'response.output_audio_transcript.done' && event.transcript) {
-    addMessage('assistant', event.transcript);
+  if (event.type === 'error') statusCopy.textContent = event.error?.message || 'The voice session reported an error.';
+}
+
+let transcriptDraft = { user: '', assistant: '' };
+let transcriptNodes = { user: null, assistant: null };
+function addTranscriptDelta(role, delta) {
+  if (!transcriptNodes[role]) {
+    const empty = transcript.querySelector('.empty-state');
+    if (empty) empty.remove();
+    const node = document.createElement('div');
+    node.className = `message ${role}`;
+    const speaker = document.createElement('span');
+    speaker.className = 'speaker';
+    speaker.textContent = role === 'user' ? 'YOU' : 'WAVELINK LIVE';
+    const content = document.createElement('span');
+    content.className = 'message-content';
+    node.append(speaker, content);
+    transcript.append(node);
+    transcriptNodes[role] = content;
   }
-  if (event.type === 'response.output_item.done' && event.item?.type === 'function_call') {
-    void runToolCall(event.item);
-  }
-  if (event.type === 'response.function_call_arguments.done') {
-    void runToolCall({
-      call_id: event.call_id,
-      name: event.name,
-      arguments: event.arguments,
-    });
-  }
-  if (event.type === 'error') {
-    statusCopy.textContent = event.error?.message || 'The voice session reported an error.';
-  }
+  transcriptDraft[role] += delta;
+  transcriptNodes[role].textContent = transcriptDraft[role];
+  transcript.scrollTop = transcript.scrollHeight;
+}
+function finalizeTranscript(role, text) {
+  if (transcriptNodes[role]) transcriptNodes[role].textContent = text;
+  else addMessage(role, text);
+  transcriptDraft[role] = '';
+  transcriptNodes[role] = null;
 }
 
 async function startSession() {
@@ -206,7 +239,7 @@ async function startSession() {
     dataChannel.addEventListener('message', onDataMessage);
     dataChannel.addEventListener('open', () => {
       showMs('metric-start', performance.now() - startedAt);
-      setStatus('Listening', 'Ask: “Give me today’s factory summary.”', 'connected');
+      setStatus('Connected', 'Waiting for the live session to become ready…', 'connected');
       stopButton.disabled = false;
     });
     dataChannel.addEventListener('close', () => {
@@ -235,6 +268,7 @@ async function startSession() {
 async function stopSession() {
   startButton.disabled = false;
   stopButton.disabled = true;
+  try { if (dataChannel?.readyState === 'open') sendEvent({ type: 'session.close' }); } catch {}
   try { dataChannel?.close(); } catch {}
   try { pc?.close(); } catch {}
   try { localStream?.getTracks().forEach((track) => track.stop()); } catch {}
@@ -245,6 +279,8 @@ async function stopSession() {
   orb.classList.remove('active', 'speaking');
   connectionPill.classList.remove('live');
   connectionPill.textContent = 'DISCONNECTED';
+  transcriptDraft = { user: '', assistant: '' };
+  transcriptNodes = { user: null, assistant: null };
   if (statusTitle.textContent !== 'Could not start') setStatus('Ready when you are', 'Start a session and ask about today’s production.', 'disconnected');
 }
 
