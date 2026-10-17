@@ -26,8 +26,8 @@ jobs:
         with:
           version: "4.13.0"
       - run: yarn install --immutable
-      - run: node --check services/wavelink-live/server.mjs
+      - run: yarn node --check services/wavelink-live/server.mjs
       - run: node --check services/wavelink-live/providers/index.mjs
       - run: node --check services/wavelink-live/providers/openai-live.mjs
       - run: node --check services/wavelink-live/public/app.js
-      - run: node --test tests/wavelink-live.test.mjs
+      - run: yarn node --test tests/wavelink-live.test.mjs
