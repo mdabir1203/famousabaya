@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAnswer as createLiveAnswer } from './providers/openai-live.mjs';
+import { getVoiceProvider } from './providers/index.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(ROOT, 'public');
@@ -209,10 +209,8 @@ const server = createServer(async (req, res) => {
       if (method === 'POST' && url.pathname === '/api/live/session') {
         const sdp = await readBody(req, 96 * 1024);
         if (!sdp.trim().startsWith('v=')) return json(res, 400, { error: 'A valid SDP offer is required' });
-        if ((process.env.LIVE_VOICE_PROVIDER || 'openai-live') !== 'openai-live') {
-          return json(res, 503, { error: 'Configured voice provider adapter is not available' });
-        }
-        const result = await createLiveAnswer({ sdp, instructions: INSTRUCTIONS });
+        const provider = getVoiceProvider();
+        const result = await provider.createAnswer({ sdp, instructions: INSTRUCTIONS });
         return json(res, 201, { sdp: result.sdp, session_id: result.sessionId });
       }
 
