@@ -128,6 +128,7 @@ async function runDelegation(event) {
       r.data_as_of ? `Data timestamp: ${r.data_as_of}.` : 'The source did not provide a data timestamp.',
       r.ingest_lag_ms != null && r.ingest_lag_ms > 300000 ? 'Warning: the source data may be stale.' : '',
     ].filter(Boolean).join(' ');
+    responseStartedAt = performance.now();
     sendEvent({
       type: 'session.commentary.append',
       event_id: `factory-summary-${crypto.randomUUID()}`,
@@ -137,6 +138,7 @@ async function runDelegation(event) {
     setStatus('Factory summary ready', 'The verified read-only result has been returned to the voice assistant.', 'connected');
   } catch {
     showMs('metric-tool', performance.now() - started);
+    responseStartedAt = performance.now();
     sendEvent({
       type: 'session.commentary.append',
       event_id: `factory-summary-error-${crypto.randomUUID()}`,
@@ -177,6 +179,10 @@ function onDataMessage(message) {
     }
   }
   if (event.type === 'session.output_audio.started') {
+    if (responseStartedAt != null) {
+      showMs('metric-response', performance.now() - responseStartedAt);
+      responseStartedAt = null;
+    }
     orb.classList.add('speaking');
     setStatus('Responding', 'You can interrupt the assistant at any time.', 'connected');
   }
@@ -297,3 +303,5 @@ refreshAuth().catch(() => {
   voicePanel.hidden = true;
   loginError.textContent = 'Cannot reach the Wavelink Live server.';
 });
+
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
