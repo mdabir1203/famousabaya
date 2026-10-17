@@ -1,0 +1,33 @@
+name: Wavelink Live prototype
+
+on:
+  pull_request:
+    paths:
+      - "services/wavelink-live/**"
+      - "tests/wavelink-live.test.mjs"
+      - ".github/workflows/wavelink-live.yml"
+  push:
+    branches: ["feat/wavelink-live-prototype"]
+    paths:
+      - "services/wavelink-live/**"
+      - "tests/wavelink-live.test.mjs"
+      - ".github/workflows/wavelink-live.yml"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: yarnpkg/action-setup@v3
+        with:
+          version: "4.13.0"
+      - run: yarn install --immutable
+      - run: node --check services/wavelink-live/server.mjs
+      - run: node --check services/wavelink-live/providers/index.mjs
+      - run: node --check services/wavelink-live/providers/openai-live.mjs
+      - run: node --check services/wavelink-live/public/app.js
+      - run: node --test tests/wavelink-live.test.mjs
