@@ -126,7 +126,7 @@ async function runDelegation(event) {
       r.active_workers == null ? 'Active worker count is unavailable.' : `${r.active_workers} workers currently active.`,
       r.efficiency_today_pct == null ? 'Efficiency is unavailable.' : `Efficiency is ${r.efficiency_today_pct} percent.`,
       r.data_as_of ? `Data timestamp: ${r.data_as_of}.` : 'The source did not provide a data timestamp.',
-      r.ingest_lag_ms != null && r.ingest_lag_ms > 300000 ? 'Warning: the source data may be stale.' : '',
+      r.ingest_lag_ms != null && r.ingest_lag_ms > 300000 ? `The latest recorded factory activity was about ${Math.round(r.ingest_lag_ms / 60000)} minutes ago; the floor may simply be idle.` : '',
     ].filter(Boolean).join(' ');
     responseStartedAt = performance.now();
     sendEvent({
