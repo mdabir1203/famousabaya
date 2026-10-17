@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1522">
+  <meta name="description" content="Wavelink Live — responsive voice intelligence for AbayaTrack factory operations.">
+  <title>Wavelink Live · Factory Intelligence</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Wavelink Live home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        <span>WAVELINK <b>LIVE</b></span>
+      </a>
+      <span class="environment"><i></i> ABAYATRACK OPERATIONS</span>
+    </header>
+
+    <section class="hero">
+      <p class="eyebrow">REAL-TIME OPERATIONS INTELLIGENCE</p>
+      <h1>Ask the factory.<br><span>Get the signal.</span></h1>
+      <p class="subhead">A live voice interface to verified production data. Speak naturally; the audio path stays responsive while data is retrieved in the background.</p>
+    </section>
+
+    <section id="login-panel" class="panel login-panel" hidden>
+      <form id="login-form">
+        <label for="password">Prototype access password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button class="primary" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="voice-panel" class="panel voice-panel" hidden>
+      <div class="session-top">
+        <div><p class="eyebrow">VOICE SESSION</p><h2 id="status-title">Ready when you are</h2></div>
+        <span id="connection-pill" class="pill">DISCONNECTED</span>
+      </div>
+      <div class="orb-wrap" aria-hidden="true">
+        <div id="voice-orb" class="voice-orb"><div class="orb-core"></div></div>
+        <div class="orb-ring ring-one"></div><div class="orb-ring ring-two"></div>
+      </div>
+      <p id="status-copy" class="status-copy">Start a session and ask about today's production.</p>
+      <div class="actions">
+        <button id="start-button" class="primary" type="button">Start conversation <span aria-hidden="true">↗</span></button>
+        <button id="stop-button" class="secondary" type="button" disabled>End session</button>
+      </div>
+      <div class="transcript-wrap">
+        <div class="section-heading"><h3>Conversation</h3><span>LIVE · NOT STORED</span></div>
+        <div id="transcript" class="transcript" aria-live="polite"><p class="empty-state">Your live transcript will appear here.</p></div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>SESSION START</span><strong id="metric-start">—</strong></div>
+        <div class="metric"><span>TOOL ROUND-TRIP</span><strong id="metric-tool">—</strong></div>
+        <div class="metric"><span>RESPONSE EVENT</span><strong id="metric-response">—</strong></div>
+      </div>
+      <p class="privacy-note"><span aria-hidden="true">●</span> Read-only factory summary · No order changes · No transcript persistence</p>
+      <button id="logout-button" class="text-button" type="button">Sign out</button>
+    </section>
+
+    <footer><span>WAVELINK · TRUSTED OPERATIONS</span><span>Prototype build 0.1</span></footer>
+  </main>
+  <audio id="remote-audio" autoplay playsinline></audio>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
