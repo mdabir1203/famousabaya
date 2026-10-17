@@ -1,6 +1,6 @@
-const OPENAI_LIVE_URL = 'https://api.openai.com/v1/live/sessions';
+const LIVE_SESSIONS_URL = 'https://api.openai.com/v1/live/sessions';
 
-export async function createAnswer({ sdp, instructions, tools, env = process.env }) {
+export async function createAnswer({ sdp, instructions, env = process.env }) {
   const apiKey = String(env.OPENAI_API_KEY || '').trim();
   if (!apiKey) {
     const error = new Error('Voice provider is not configured');
@@ -8,7 +8,8 @@ export async function createAnswer({ sdp, instructions, tools, env = process.env
     throw error;
   }
 
-  const response = await fetch(OPENAI_LIVE_URL, {
+  // GPT-Live unified WebRTC setup: SDP + session configuration stay server-side.
+  const response = await fetch(LIVE_SESSIONS_URL, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -18,8 +19,9 @@ export async function createAnswer({ sdp, instructions, tools, env = process.env
       session: {
         model: env.LIVE_VOICE_MODEL || 'gpt-live-1',
         instructions,
-        tools,
-        tool_choice: 'auto',
+        delegation: { type: 'client' },
+        audio: { output: { voice: env.LIVE_VOICE_NAME || 'marin' } },
+        store: false,
       },
       transport: { type: 'webrtc', sdp },
     }),
@@ -27,7 +29,6 @@ export async function createAnswer({ sdp, instructions, tools, env = process.env
   });
 
   if (!response.ok) {
-    // Never relay provider response bodies: they may contain internal details.
     const error = new Error('Voice session initialization failed');
     error.statusCode = response.status === 429 ? 429 : 502;
     throw error;
@@ -35,14 +36,12 @@ export async function createAnswer({ sdp, instructions, tools, env = process.env
 
   const payload = await response.json();
   const answer = payload?.transport?.sdp;
-  if (typeof answer !== 'string' || !answer.trim()) {
+  const sessionId = payload?.session?.id;
+  if (typeof answer !== 'string' || !answer.trim() || typeof sessionId !== 'string') {
     const error = new Error('Voice provider returned an invalid session answer');
     error.statusCode = 502;
     throw error;
   }
 
-  return {
-    sdp: answer,
-    sessionId: typeof payload?.session?.id === 'string' ? payload.session.id : null,
-  };
+  return { sdp: answer, sessionId };
 }
