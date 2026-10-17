@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAnswer as createOpenAILiveAnswer } from './providers/openai-live.mjs';
+import { createAnswer as createLiveAnswer } from './providers/openai-live.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(ROOT, 'public');
@@ -16,30 +16,22 @@ const SESSION_TTL_SECONDS = 60 * 60 * 8;
 const MAX_BODY_BYTES = 128 * 1024;
 const TOOL_TIMEOUT_MS = 3_500;
 
-const FACTORY_TOOL = [{
-  type: 'function',
-  name: 'get_factory_summary',
-  description: 'Read a concise, current summary of today’s AbayaTrack factory operations. Use for questions about production today, completed units, active workers, efficiency, and data freshness. Do not infer delayed orders or customer details; this tool does not provide them.',
-  parameters: { type: 'object', properties: {}, additionalProperties: false },
-}];
-
 const INSTRUCTIONS = [
   'You are Wavelink Live, a concise voice assistant for the AbayaTrack factory operations team.',
-  'For questions about current factory operations, call get_factory_summary instead of guessing.',
+  'For questions about current factory operations, delegate to the application to retrieve a verified factory summary. Do not guess while the lookup is running.',
   'Clearly state when data is unavailable or stale. Do not invent counts, causes, delayed orders, employee details, or business facts.',
   'Keep spoken answers short. Explain metrics in plain language.',
-  'The available tool is read-only. Never claim to have changed an order, contacted a customer, or performed a write operation.',
+  'The available application action is read-only. Never claim to have changed an order, contacted a customer, or performed a write operation.',
 ].join(' ');
 
 function json(res, status, data, extraHeaders = {}) {
-  const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     ...extraHeaders,
   });
-  res.end(body);
+  res.end(JSON.stringify(data));
 }
 
 function readBody(req, limit = MAX_BODY_BYTES) {
@@ -82,16 +74,14 @@ function cookieValue(req) {
 }
 
 function authenticated(req) {
-  const secret = sessionSecret();
-  if (!secret) return false;
+  if (!sessionSecret()) return false;
   const value = cookieValue(req);
   const dot = value.indexOf('.');
   if (dot < 1) return false;
   const expiry = value.slice(0, dot);
   const signature = value.slice(dot + 1);
   if (!/^\d{10,}$/.test(expiry) || Number(expiry) <= Math.floor(Date.now() / 1000)) return false;
-  const expected = signSession(expiry);
-  return constantTimeStringEqual(signature, expected);
+  return constantTimeStringEqual(signature, signSession(expiry));
 }
 
 function originAllowed(req) {
@@ -142,7 +132,6 @@ async function getFactorySummary() {
   }
 
   const active = state.active && typeof state.active === 'object' ? state.active : {};
-  const activeWorkers = Object.keys(active).length;
   const completedToday = Number(state.completed_today);
   const efficiencyToday = Number(state.efficiency_today);
   const asOfMs = Number(state.ts);
@@ -151,7 +140,7 @@ async function getFactorySummary() {
     source: 'abayatrack',
     factory_day: typeof state.factory_today === 'string' ? state.factory_today : null,
     completed_today: Number.isFinite(completedToday) ? completedToday : null,
-    active_workers: activeWorkers,
+    active_workers: Object.keys(active).length,
     efficiency_today_pct: Number.isFinite(efficiencyToday) ? efficiencyToday : null,
     data_as_of: Number.isFinite(asOfMs) && asOfMs > 0 ? new Date(asOfMs).toISOString() : null,
     ingest_lag_ms: Number.isFinite(Number(state.ingest_lag_ms)) ? Number(state.ingest_lag_ms) : null,
@@ -160,12 +149,9 @@ async function getFactorySummary() {
 
 async function serveStatic(pathname, res) {
   const requested = pathname === '/' ? '/index.html' : pathname;
-  const safePath = normalize(requested).replace(/^([.][.][/\\])+/, '').replace(/^[/\\]+/, '');
+  const safePath = normalize(requested).replace(/^([.][.][/\\\\])+/, '').replace(/^[/\\\\]+/, '');
   const filePath = join(PUBLIC_DIR, safePath);
-  if (!filePath.startsWith(PUBLIC_DIR)) {
-    json(res, 404, { error: 'Not found' });
-    return;
-  }
+  if (!filePath.startsWith(PUBLIC_DIR)) return json(res, 404, { error: 'Not found' });
   try {
     const content = await readFile(filePath);
     const type = ({
@@ -173,12 +159,13 @@ async function serveStatic(pathname, res) {
       '.js': 'text/javascript; charset=utf-8',
       '.css': 'text/css; charset=utf-8',
       '.svg': 'image/svg+xml',
+      '.webmanifest': 'application/manifest+json; charset=utf-8',
     })[extname(filePath)] || 'application/octet-stream';
     res.writeHead(200, {
       'Content-Type': type,
       'Cache-Control': extname(filePath) === '.html' ? 'no-store' : 'public, max-age=300',
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self' https://api.openai.com; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+      'Content-Security-Policy': "default-src 'self'; connect-src 'self'; media-src 'self' blob:; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
       'Referrer-Policy': 'no-referrer',
       'Permissions-Policy': 'microphone=(self)',
     });
@@ -196,24 +183,19 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && url.pathname === '/api/health') {
       return json(res, 200, { ok: true, service: 'wavelink-live', provider: process.env.LIVE_VOICE_PROVIDER || 'openai-live' });
     }
-
     if (method === 'GET' && url.pathname === '/api/auth/status') {
       return json(res, 200, { authenticated: authenticated(req) });
     }
-
     if (method === 'POST' && url.pathname === '/api/auth/login') {
       if (!originAllowed(req)) return json(res, 403, { error: 'Origin rejected' });
       if (!sessionSecret()) return json(res, 503, { error: 'Session security is not configured' });
       const configuredPassword = String(process.env.LIVE_APP_PASSWORD || '');
       if (!configuredPassword) return json(res, 503, { error: 'Login is not configured' });
       const body = JSON.parse(await readBody(req));
-      if (!constantTimeStringEqual(body?.password || '', configuredPassword)) {
-        return json(res, 401, { error: 'Invalid credentials' });
-      }
+      if (!constantTimeStringEqual(body?.password || '', configuredPassword)) return json(res, 401, { error: 'Invalid credentials' });
       setSessionCookie(res);
       return json(res, 200, { ok: true });
     }
-
     if (method === 'POST' && url.pathname === '/api/auth/logout') {
       if (!originAllowed(req)) return json(res, 403, { error: 'Origin rejected' });
       clearSessionCookie(res);
@@ -226,16 +208,15 @@ const server = createServer(async (req, res) => {
 
       if (method === 'POST' && url.pathname === '/api/live/session') {
         const sdp = await readBody(req, 96 * 1024);
-        if (!sdp.trim() || !sdp.startsWith('v=')) return json(res, 400, { error: 'A valid SDP offer is required' });
+        if (!sdp.trim().startsWith('v=')) return json(res, 400, { error: 'A valid SDP offer is required' });
         if ((process.env.LIVE_VOICE_PROVIDER || 'openai-live') !== 'openai-live') {
           return json(res, 503, { error: 'Configured voice provider adapter is not available' });
         }
-        const result = await createOpenAILiveAnswer({ sdp, instructions: INSTRUCTIONS, tools: FACTORY_TOOL });
+        const result = await createLiveAnswer({ sdp, instructions: INSTRUCTIONS });
         return json(res, 201, { sdp: result.sdp, session_id: result.sessionId });
       }
 
       if (method === 'POST' && url.pathname === '/api/tools/factory-summary') {
-        // The browser may send only a known tool name; arbitrary query arguments are not accepted.
         const body = JSON.parse((await readBody(req, 4 * 1024)) || '{}');
         if (body?.tool !== 'get_factory_summary') return json(res, 400, { error: 'Unknown tool' });
         const startedAt = performance.now();
@@ -249,7 +230,6 @@ const server = createServer(async (req, res) => {
 
       return json(res, 404, { error: 'Not found' });
     }
-
     if (method === 'GET' || method === 'HEAD') return await serveStatic(url.pathname, res);
     return json(res, 405, { error: 'Method not allowed' });
   } catch (error) {
@@ -258,6 +238,4 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  process.stdout.write(`Wavelink Live listening on http://${HOST}:${PORT}\n`);
-});
+server.listen(PORT, HOST, () => process.stdout.write(`Wavelink Live listening on http://${HOST}:${PORT}\n`));
