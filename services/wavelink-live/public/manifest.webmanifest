@@ -1,0 +1,12 @@
+{
+  "name": "Wavelink Live",
+  "short_name": "Wavelink Live",
+  "description": "Real-time voice intelligence for AbayaTrack operations",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1522",
+  "theme_color": "#0b1522",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
