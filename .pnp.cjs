@@ -1641,20 +1641,19 @@ const RAW_RUNTIME_STATE =
       }]\
     ]],\
     ["engine.io", [\
-      ["npm:6.6.8", {\
-        "packageLocation": "./.yarn/cache/engine.io-npm-6.6.8-a0357bf910-3cf705d4be.zip/node_modules/engine.io/",\
+      ["npm:6.6.11", {\
+        "packageLocation": "./.yarn/cache/engine.io-npm-6.6.11-bc5bdd748f-b15b395dbb.zip/node_modules/engine.io/",\
         "packageDependencies": [\
           ["@types/cors", "npm:2.8.19"],\
           ["@types/node", "npm:25.9.3"],\
           ["@types/ws", "npm:8.18.1"],\
           ["accepts", "npm:1.3.8"],\
-          ["base64id", "npm:2.0.0"],\
           ["cookie", "npm:0.7.2"],\
           ["cors", "npm:2.8.6"],\
           ["debug", "virtual:2aa532c1f49066b59fcb4bddb85d46b307c0cb749b137fb60fb864ab70bb03332a1ba03b8e24891c225741d1f7ab01a9d2ae738fc966f7ddfc02ac074fee79eb#npm:4.4.3"],\
-          ["engine.io", "npm:6.6.8"],\
+          ["engine.io", "npm:6.6.11"],\
           ["engine.io-parser", "npm:5.2.3"],\
-          ["ws", "virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1"]\
+          ["ws", "virtual:e6e235124f4ad4755b7629af1640891c603520cbf875d49147b9a7deb863c15644b216c8933334d0f3ef1fb62836147d616e9c1a4c879ed1fef0cb906d9c3836#npm:8.21.0"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -2408,7 +2407,7 @@ const RAW_RUNTIME_STATE =
           ["sharp", "npm:0.34.5"],\
           ["undici", "npm:7.24.8"],\
           ["workerd", "npm:1.20260611.1"],\
-          ["ws", "virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1"],\
+          ["ws", "virtual:77a9b6723141df548491d30ce14093dd42b980a6e3dd56b19880892b473d4bcdb7b6ba6607fe9aaec1ecbd4b3d66b08179b7fff376b1b387b64a1b7b902b9f33#npm:8.20.1"],\
           ["youch", "npm:4.1.0-beta.10"]\
         ],\
         "linkType": "HARD"\
@@ -3167,7 +3166,7 @@ const RAW_RUNTIME_STATE =
           ["base64id", "npm:2.0.0"],\
           ["cors", "npm:2.8.6"],\
           ["debug", "virtual:2aa532c1f49066b59fcb4bddb85d46b307c0cb749b137fb60fb864ab70bb03332a1ba03b8e24891c225741d1f7ab01a9d2ae738fc966f7ddfc02ac074fee79eb#npm:4.4.3"],\
-          ["engine.io", "npm:6.6.8"],\
+          ["engine.io", "npm:6.6.11"],\
           ["socket.io", "npm:4.8.3"],\
           ["socket.io-adapter", "npm:2.5.7"],\
           ["socket.io-parser", "npm:4.2.6"]\
@@ -3181,7 +3180,7 @@ const RAW_RUNTIME_STATE =
         "packageDependencies": [\
           ["debug", "virtual:2aa532c1f49066b59fcb4bddb85d46b307c0cb749b137fb60fb864ab70bb03332a1ba03b8e24891c225741d1f7ab01a9d2ae738fc966f7ddfc02ac074fee79eb#npm:4.4.3"],\
           ["socket.io-adapter", "npm:2.5.7"],\
-          ["ws", "virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1"]\
+          ["ws", "virtual:77a9b6723141df548491d30ce14093dd42b980a6e3dd56b19880892b473d4bcdb7b6ba6607fe9aaec1ecbd4b3d66b08179b7fff376b1b387b64a1b7b902b9f33#npm:8.20.1"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -3610,14 +3609,14 @@ const RAW_RUNTIME_STATE =
         ],\
         "linkType": "SOFT"\
       }],\
-      ["virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1", {\
-        "packageLocation": "./.yarn/__virtual__/ws-virtual-90586bcf34/0/cache/ws-npm-8.20.1-b0e0eae8d5-ce16243321.zip/node_modules/ws/",\
+      ["virtual:77a9b6723141df548491d30ce14093dd42b980a6e3dd56b19880892b473d4bcdb7b6ba6607fe9aaec1ecbd4b3d66b08179b7fff376b1b387b64a1b7b902b9f33#npm:8.20.1", {\
+        "packageLocation": "./.yarn/__virtual__/ws-virtual-2ed8c8cc29/0/cache/ws-npm-8.20.1-b0e0eae8d5-ce16243321.zip/node_modules/ws/",\
         "packageDependencies": [\
           ["@types/bufferutil", null],\
           ["@types/utf-8-validate", null],\
           ["bufferutil", null],\
           ["utf-8-validate", null],\
-          ["ws", "virtual:a0357bf910c444cb5202a5a3b0b6618f13c91b48120705739789fd26d608165ba62c6c14ba83fc8ba99b07b45de05585860bb721110eb43ad3ca228af80b2fda#npm:8.20.1"]\
+          ["ws", "virtual:77a9b6723141df548491d30ce14093dd42b980a6e3dd56b19880892b473d4bcdb7b6ba6607fe9aaec1ecbd4b3d66b08179b7fff376b1b387b64a1b7b902b9f33#npm:8.20.1"]\
         ],\
         "packagePeers": [\
           "@types/bufferutil",\
