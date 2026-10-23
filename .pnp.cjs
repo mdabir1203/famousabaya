@@ -1881,7 +1881,7 @@ const RAW_RUNTIME_STATE =
         "packageLocation": "./.yarn/cache/extrareqp2-npm-1.0.0-0380882311-822861bcce.zip/node_modules/extrareqp2/",\
         "packageDependencies": [\
           ["extrareqp2", "npm:1.0.0"],\
-          ["follow-redirects", "virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.0"]\
+          ["follow-redirects", "virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.1"]\
         ],\
         "linkType": "HARD"\
       }]\
@@ -1954,19 +1954,19 @@ const RAW_RUNTIME_STATE =
       }]\
     ]],\
     ["follow-redirects", [\
-      ["npm:1.16.0", {\
-        "packageLocation": "./.yarn/cache/follow-redirects-npm-1.16.0-816e4f62d9-a1e2900163.zip/node_modules/follow-redirects/",\
+      ["npm:1.16.1", {\
+        "packageLocation": "./.yarn/cache/follow-redirects-npm-1.16.1-ccb9c0c35d-544e24ccb9.zip/node_modules/follow-redirects/",\
         "packageDependencies": [\
-          ["follow-redirects", "npm:1.16.0"]\
+          ["follow-redirects", "npm:1.16.1"]\
         ],\
         "linkType": "SOFT"\
       }],\
-      ["virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.0", {\
-        "packageLocation": "./.yarn/__virtual__/follow-redirects-virtual-bf14847746/0/cache/follow-redirects-npm-1.16.0-816e4f62d9-a1e2900163.zip/node_modules/follow-redirects/",\
+      ["virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.1", {\
+        "packageLocation": "./.yarn/__virtual__/follow-redirects-virtual-9059a8f2be/0/cache/follow-redirects-npm-1.16.1-ccb9c0c35d-544e24ccb9.zip/node_modules/follow-redirects/",\
         "packageDependencies": [\
           ["@types/debug", null],\
           ["debug", null],\
-          ["follow-redirects", "virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.0"]\
+          ["follow-redirects", "virtual:0380882311eb5656a879ca34ceaca594b42336fe39b591411cf53382031abfa426e1dd78240f94d49fe52248c7333297c35b5aefab55a53661c35ddf59233da3#npm:1.16.1"]\
         ],\
         "packagePeers": [\
           "@types/debug",\
