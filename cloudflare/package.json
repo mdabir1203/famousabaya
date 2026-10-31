@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "wrangler": "^4.88.0"
+    "wrangler": "^4.156.0"
   },
   "scripts": {
     "wrangler-deploy": "node ../scripts/run-cloudflare-wrangler.cjs deploy --config wrangler.toml",
